@@ -8,8 +8,8 @@ require "dev/build_container"
 require "dev/lifecycle/snapshot"
 
 module Dev
-  # The build container's own checkout of the project (dev#421, ADR-0008
-  # closed): the container is a remote that happens to be local, so it
+  # The build container's own checkout of the project: the container is
+  # a remote that happens to be local, so it
   # works on a snapshot it fetched, never on the host's tree. One
   # workspace per checkout, under the container's data root —
   # `<data root>/workspaces/<project>-<workspace id>` — so it outlives the

@@ -9,16 +9,13 @@ module Dev
     # its own values.
     class UnknownPlatformError < ArgumentError; end
 
-    # The platform axis of a build: dev's closed id set, one spelling in
-    # dev.yml, the DSL, the lock, the CLI and the build name (dev#192, K8).
-    # Arch is implied by era — an arch split is a new id, never a suffix.
-    # An application host (the game a mod runs in, the server a server
-    # build is) is not a platform: it lives in the target's name and its
-    # builder. A target with nothing platform-specific declares no
-    # `platforms:` and gets no segment, so there is no `noarch` id.
+    # The platform axis of a build: one closed id set spelled the same way in
+    # dev.yml, the DSL, the lock, the CLI and the build name. Arch is implied
+    # by the id; an arch split is a new id, never a suffix. A target with
+    # nothing platform-specific declares no `platforms:` and gets no segment.
     #
     # Not Dev::Platform (the OS/arch key of a store tree): that names where
-    # an artifact *runs*, this names what a toolchain *emits*.
+    # an artifact runs, this names what a toolchain emits.
     class Platform < T::Enum
       extend T::Sig
 
@@ -28,10 +25,8 @@ module Dev
         Macos = new("macos")
       end
 
-      # What a host of each OS produces natively — the `host` side of the
-      # capability check (dev#192, K8). Arch is implied by era, so the OS
-      # alone decides: a Mac is the macos era's arm64, a Linux or Windows
-      # host the x86_64 one.
+      # What a host of each OS produces natively: a Mac the arm64 macos id,
+      # a Linux or Windows host the x86_64 one.
       HOST_OS_PLATFORMS = T.let(
         { "darwin" => Macos, "linux" => Linux64, "windows" => Win64 }.freeze,
         T::Hash[String, Platform],

@@ -11,15 +11,14 @@ require_relative "../value_equality"
 module Dev
   module Lifecycle
     # The build grammar, `<target>[-<platform>[-<config>]]`, as one parser
-    # for every surface that spells a build — the CLI argument,
+    # for every surface that spells a build: the CLI argument,
     # `deploy.<channel>.targets`, `release.targets`, the store's directory
-    # names (dev#192, *The model*). Fully qualified it names one build;
-    # partially qualified it is a pattern over the target's declared axes,
-    # an omitted segment meaning "any". Unambiguous under Target's rule that
-    # no target name ends in a platform or config id.
+    # names. Fully qualified it names one build; partially qualified it is a
+    # pattern over the target's declared axes, an omitted segment meaning
+    # "any".
     #
     # Longest declared target prefix first, then an optional platform id,
-    # then an optional config id — never a regexp over the whole name.
+    # then an optional config id.
     class BuildPattern < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived
@@ -173,11 +172,9 @@ module Dev
       end
 
       # The pattern split along the platform axis, the config axis left as
-      # written: one pattern per declared platform it admits — itself when
-      # it names one already, or when the target declares none. What a
-      # channel ships one artifact per (dev#192, K5): a platform is a
-      # destination's fact (a Windows box, a Steam depot), a config the
-      # operator's choice.
+      # written: one pattern per declared platform it admits, or itself when
+      # it names one already or the target declares none. A channel ships
+      # one artifact per entry of this split.
       #
       # @return [Array<BuildPattern>] in the target's platform order
       sig { returns(T::Array[BuildPattern]) }

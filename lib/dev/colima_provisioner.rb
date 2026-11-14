@@ -35,8 +35,8 @@ module Dev
   # enlarges a VM's disk on start (`--disk` above the current size) and
   # cannot shrink one, so `--disk` is passed only when the hint exceeds what
   # the VM has, and a stopped VM keeps its disk under a smaller hint. The
-  # container's data root — its engine, toolchain, gems — lives on this disk
-  # (ADR-0008), which is what the hint is for.
+  # container's data root — its engine, toolchain, gems — lives on this
+  # disk, which is what the hint is for.
   class ColimaProvisioner
     extend T::Sig
 

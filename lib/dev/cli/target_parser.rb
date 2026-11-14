@@ -8,7 +8,7 @@ module Dev
   module Cli
     # Parses the dev.yml `targets:` mapping into Lifecycle::Target values —
     # the dev.yml boundary for the lifecycle vocabulary, as CommandParser is
-    # for commands (dev#192, K1). Each entry's `desc`, `platforms`,
+    # for commands. Each entry's `desc`, `platforms`,
     # `configs` and `environment` are coerced here; the ids go through the
     # enums' parse, so an id outside dev's closed sets fails at load with
     # the set listed, and `environment` becomes references the composition
@@ -40,8 +40,8 @@ module Dev
       # name.
       class InvalidEnvironmentError < ArgumentError; end
 
-      # `build:` that is not a non-empty command line, or a `builder:` key —
-      # the integration form, which lands with dev#433.
+      # `build:` that is not a non-empty command line, or a `builder:` key,
+      # which no builder form takes.
       class InvalidBuilderError < ArgumentError; end
 
       # `package:` that is not a non-empty command line; `packager:` naming
@@ -139,8 +139,8 @@ module Dev
       def parse_builder(name, target_hash)
         if target_hash.key?(BUILDER_KEY)
           raise InvalidBuilderError,
-            "target '#{name}': `#{BUILDER_KEY}:` names an integration builder, which lands with d3mlabs/dev#433 — " \
-              "declare a `#{BUILD_KEY}:` script until then"
+            "target '#{name}': `#{BUILDER_KEY}:` is not a builder form — " \
+              "declare a `#{BUILD_KEY}:` script"
         end
         return nil unless target_hash.key?(BUILD_KEY)
 

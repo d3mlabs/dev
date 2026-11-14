@@ -10,18 +10,18 @@ require "dev/project_container"
 
 module Dev
   module Cli
-    # How a remote dispatch reaches the host that runs the verb (dev#192,
-    # K8): the second level of the sealed Dispatch type. The remote path —
+    # How a remote dispatch reaches the host that runs the verb: the
+    # second level of the sealed Dispatch type. The remote path —
     # snapshot the tree, push it, cross, run the verb there, leave the
     # artifact with the host — is written once in Dispatch::Remote against
     # this interface; what differs per host is how the verb is *invoked*
     # and *watched* and how the host gets the snapshot: `ActionsRunner`
     # dispatches dev's generic workflow on the snapshot branch and watches
     # the run (the job's checkout fetches the snapshot); `LocalContainer`
-    # (dev#421) `docker exec`s into the project's container, which fetches
+    # `docker exec`s into the project's container, which fetches
     # the branch itself into its own workspace and is watched by waiting.
     #
-    # Neither a build host (ADR-0008's (machine, platform) pair — the
+    # Neither a build host (the (machine, platform) pair — the
     # result) nor a placement (the host rule's input): a transport is the
     # means, named by the runner label the snapshot branch is minted for.
     module Transport
@@ -132,7 +132,7 @@ module Dev
         end
       end
 
-      # The project's own build container as the degenerate runner (K9):
+      # The project's own build container as the degenerate runner:
       # reached by `docker exec` (ProjectContainer), the verb's words run by
       # the dev inside — `dev build <build>` — in the container's workspace
       # at the snapshot, which the container fetches from the forge with its

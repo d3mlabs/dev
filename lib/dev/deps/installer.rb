@@ -11,10 +11,10 @@ module Dev
     # Reads locked dependencies and dispatches to integrations.
     #
     # Cross-cutting install concerns (env filtering, install ordering) live
-    # here — not in Integration or Lockfile. So does the shape of the
-    # report (plans#52, dev#573): one Ui frame per batch dispatched, titled
-    # by the lock keys it spans, inside which the integration speaks; a
-    # type with no selected pins has no batch, and so says nothing.
+    # here, not in Integration or Lockfile. So does the shape of the
+    # report: one Ui frame per batch dispatched, titled by the lock keys it
+    # spans, inside which the integration speaks; a type with no selected
+    # pins has no batch, and so says nothing.
     class Installer
       extend T::Sig
 
@@ -66,7 +66,7 @@ module Dev
       # batch; and the host prerequisite (brew, through which every such tool
       # arrives) installs before everything. Groups play no part: they are
       # purpose, selected by --group/--except, and nothing installs first
-      # because of its group name (ADR-0011). A cycle is refused.
+      # because of its group name. A cycle is refused.
       #
       # Selection (env, host, groups, except) is {select}'s one pure filter.
       # Filtering happens here — at install, never at resolve — so the lockfile

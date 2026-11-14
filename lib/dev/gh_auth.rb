@@ -6,8 +6,8 @@ require "open3"
 module Dev
   # The host's GitHub identity, as the gh CLI holds it — the one credential
   # dev carries to every private GitHub surface: the gh releases the store
-  # pulls, and the container registry the environment image lives in
-  # (dev#277). A workflow's GITHUB_TOKEN rides the same path through GH_TOKEN,
+  # pulls, and the container registry the environment image lives
+  # in. A workflow's GITHUB_TOKEN rides the same path through GH_TOKEN,
   # which gh honours; a self-hosted runner's own login is it otherwise. No
   # second secret, no repo-level grant.
   #

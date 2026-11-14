@@ -16,10 +16,9 @@ require_relative "package_command"
 module Dev
   module Cli
     module Builtins
-      # `dev release [<version>|major|minor|patch]`: cut a release and stop
-      # (dev#192, K4) — no word is the patch bump of the version in source
-      # (dev#525). The
-      # cut is lifted from dev's `bin/release.rb`: a clean tree, a bump
+      # `dev release [<version>|major|minor|patch]`: cut a release and
+      # stop; no word is the patch bump of the version in source. The cut
+      # is a clean tree, a bump
       # commit when the project keeps its version in source, the tag, the
       # push — resumable, so a retry whose cut already landed (HEAD tagged)
       # finishes the release instead of cutting a second one. Then each
@@ -31,7 +30,7 @@ module Dev
       # comes first) — and the archives are attached to the GitHub release
       # as `<build>-<version>.<ext>` with `release.json` beside them.
       # **Nothing is deployed**: distribution is `deploy <channel> --release
-      # <version>` per channel (dev#425), a week later from the same bytes
+      # <version>` per channel, a week later from the same bytes
       # if need be.
       #
       # The stage: `before` resolves the version (given, or the next of the
@@ -43,8 +42,8 @@ module Dev
       # previous tag, and whether the checkout is behind or ahead of
       # origin as last fetched, since the cut never pulls — and asks
       # `Proceed?` unless `--yes`; with no terminal to ask at it refuses,
-      # never proceeds silently or hangs (dev#514). The verb orchestrates
-      # from wherever it was invoked (K10), so its own dispatch is native
+      # never proceeds silently or hangs. The verb orchestrates
+      # from wherever it was invoked, so its own dispatch is native
       # and each `package` resolves its own. The seam is the cut and the
       # push, one step each under a `Cutting` frame, then `package` per
       # release build in its own frame, each artifact read back from the
@@ -182,7 +181,7 @@ module Dev
           show_plan(env, ui: context.ui)
           confirm!(args, ui: context.ui)
           # The verb orchestrates from here: the cut is this checkout's git,
-          # and each `package` it runs resolves its own dispatch (K10) — so
+          # and each `package` it runs resolves its own dispatch — so
           # the dispatch is native and the invocation it is handed is never
           # spoken to a host.
           Dispatch::Native.new.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, tag.version])) { env }
@@ -230,7 +229,7 @@ module Dev
 
         # The version to release: the one word given when it is a version;
         # the next of the version in source when it is a bump word, or when
-        # nothing is given (the patch — a routine release, dev#525).
+        # nothing is given (the patch — a routine release).
         #
         # @param args [Cli::ParsedArgs]
         # @param root [Pathname] the project root, where `VERSION` is read
@@ -373,7 +372,7 @@ module Dev
         end
 
         # The epilogue: what was released from where, each archive, and the
-        # split's hint — `release` deploys nothing (ADR-0010).
+        # split's hint — `release` deploys nothing.
         #
         # @param env [ReleaseEnv]
         # @param sha [String] the tag's commit

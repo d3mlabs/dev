@@ -14,15 +14,14 @@ require_relative "target_parser"
 
 module Dev
   module Cli
-    # The boundary coercion for dev.yml: #load parses it once and rejects the
-    # removed keys at parse time — `ruby:`, the Dockerfile path's
-    # `build.container` block with every command's `container:` flag
-    # (dev#307, dev#311), and every command's `runs_on:` (now `environment:`,
-    # dev#409) — each with where it went. dependencies.rb is not read here —
-    # the toolchain is a dependency, and only the deps commands evaluate that
+    # The boundary coercion for dev.yml: #load parses it once and rejects
+    # the removed keys at parse time (`ruby:`, the `build.container` block
+    # with every command's `container:` flag, and every command's
+    # `runs_on:`), each with where it went. dependencies.rb is not read
+    # here; only the deps commands evaluate that file.
     # file.
     #
-    # With `targets:` declared (dev#192) it also holds the rules that span
+    # With `targets:` declared it also holds the rules that span
     # targets and commands: `build` and `package` are derived from the
     # targets, so a project may not declare them as commands; no command may
     # be named like a build, so a positional `dev build <build>` is never
@@ -48,39 +47,39 @@ module Dev
       # clean `dev:` error.
       class UnsupportedDevYamlRubyError < RuntimeError; end
 
-      # Raised when dev.yml still carries a retired key: the Dockerfile
-      # path's `build.container` block and a command's `container:` flag
-      # (the environment is the lock's `image` block, dev#277), or a
-      # command's `runs_on:` (the key is `environment:`, dev#409). The
-      # message lists each key with its migration. RuntimeError so the CLI
-      # boundary reports it as a clean `dev:` error.
+      # Raised when dev.yml still carries a retired key: the
+      # `build.container` block and a command's `container:` flag (the
+      # environment is the lock's `image` block), or a command's `runs_on:`
+      # (the key is `environment:`). The message lists each key with its
+      # migration. RuntimeError so the CLI boundary reports it as a clean
+      # `dev:` error.
       class RetiredKeysError < RuntimeError; end
 
       # Raised when a project with `targets:` declares `commands: build:` or
-      # `commands: package:` — the verbs are derived from the targets
-      # (dev#192, K1); what the project wanted to run is a target's builder.
+      # `commands: package:`: the verbs are derived from the targets, and
+      # what the project wanted to run is a target's builder.
       class DerivedCommandDeclaredError < RuntimeError; end
 
       # Raised when a project with `targets:` names a command like one of its
       # builds (or a pattern over them): `dev build <build>` is positional,
-      # so the two vocabularies may not overlap (dev#192, *The model*).
+      # so the two vocabularies may not overlap.
       class BuildNamedCommandError < RuntimeError; end
 
-      # Raised when a `deploy` child declares `targets:` — the shape of a
-      # channel — in a project that declares no `targets:` at the top level:
-      # there is no build for it to accept (dev#192, K5).
+      # Raised when a `deploy` child declares `targets:` (the shape of a
+      # channel) in a project that declares no `targets:` at the top level:
+      # there is no build for it to accept.
       class ChannelWithoutTargetsError < RuntimeError; end
 
-      # Raised when `release` declares `targets:` — the shape of a release
-      # declaration — in a project that declares no `targets:` at the top
-      # level: there is no build for a release to contain (dev#192, K4).
+      # Raised when `release` declares `targets:` (the shape of a release
+      # declaration) in a project that declares no `targets:` at the top
+      # level: there is no build for a release to contain.
       class ReleaseWithoutTargetsError < RuntimeError; end
 
       # The verbs `targets:` derives; a project may not declare them.
       DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
-      # The key `runs_on:` became (dev#409) — the command parser's key, named
-      # here for the migration messages.
+      # The key `runs_on:` became: the command parser's key, named here for
+      # the migration messages.
       ENVIRONMENT_KEY = CommandParser::ENVIRONMENT_KEY
       # The retired spelling of ENVIRONMENT_KEY.
       RUNS_ON_KEY = "runs_on"
@@ -98,7 +97,7 @@ module Dev
         T::Hash[String, String],
       )
       # The block's keys that fed the Dockerfile build and have no successor.
-      GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone (d3mlabs/dev#311)"
+      GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone"
 
       sig do
         params(
@@ -181,7 +180,7 @@ module Dev
 
         raise ChannelWithoutTargetsError,
           "dev.yml declares a `deploy` channel (`#{ChannelParser::ACCEPTS_KEY}:` on a `deploy` child) but no `targets:` — " \
-            "a channel accepts builds, so declare the targets they come from (d3mlabs/dev#192)"
+            "a channel accepts builds, so declare the targets they come from"
       end
 
       # With targets declared, `commands: release:` is what a release contains
@@ -206,7 +205,7 @@ module Dev
 
         raise ReleaseWithoutTargetsError,
           "dev.yml declares what a release contains (`#{ReleaseParser::TARGETS_KEY}:` on `release`) but no `targets:` — " \
-            "a release packages builds, so declare the targets they come from (d3mlabs/dev#192)"
+            "a release packages builds, so declare the targets they come from"
       end
 
       # With targets declared, `build` and `package` exist as derived verbs,
@@ -227,7 +226,7 @@ module Dev
         keys = declared.map { |verb| "`commands: #{verb}:`" }.join(" and ")
         raise DerivedCommandDeclaredError,
           "dev.yml declares #{keys} beside `targets:`, but #{declared.join(" and ")} #{declared.one? ? "is" : "are"} " \
-            "derived from `targets:` — declare what it ran as a target's builder and delete the command (d3mlabs/dev#192)"
+            "derived from `targets:` — declare what it ran as a target's builder and delete the command"
       end
 
       # With targets declared, no command at any depth may be named like a
@@ -249,7 +248,7 @@ module Dev
         raise BuildNamedCommandError,
           "dev.yml names #{offending.one? ? "a command" : "commands"} like a build: " \
             "#{offending.map { |path| "'#{path.join(" ")}'" }.join(", ")} — the lifecycle verbs take a build " \
-            "positionally (`dev build <build>`), so rename the command or the target (d3mlabs/dev#192)"
+            "positionally (`dev build <build>`), so rename the command or the target"
       end
 
       # Every command path in the tree, parents before children, in
@@ -284,8 +283,8 @@ module Dev
         return if lines.empty?
 
         raise RetiredKeysError,
-          "dev.yml carries retired keys — migrate each (the Dockerfile path is gone, d3mlabs/dev#311: " \
-            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`, d3mlabs/dev#409):" \
+          "dev.yml carries retired keys — migrate each (the Dockerfile path is gone: " \
+            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`):" \
             "\n  #{lines.join("\n  ")}"
       end
 

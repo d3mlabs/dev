@@ -19,16 +19,13 @@ module Dev
     # An integration that shells to a tool carries that need in a
     # dependencies.rb of its own ({.manifest_path}), in the same DSL a
     # project uses; dev locks the manifest's exports into the using
-    # project's lock and installs them before this integration's batch
-    # (ADR-0011).
+    # project's lock and installs them before this integration's batch.
     #
-    # What an install says, it says through its Ui (plans#52, dev#573),
-    # inside the frame the Installer opens for its batch: a **step** for a
-    # child handed the terminal (an installer that may prompt, sudo), a
-    # **spin** for a captured call it parses, a **note** for a fact with its
-    # glyph (`{{v}}` already installed, `{{x}}` a warning after the step it
-    # qualifies). An integration with nothing to report says nothing; none
-    # writes to stdout directly.
+    # What an install says, it says through its Ui, inside the frame the
+    # Installer opens for its batch: a step for a child handed the terminal
+    # (an installer that may prompt, sudo), a spin for a captured call it
+    # parses, a note for a fact with its glyph. An integration with nothing
+    # to report says nothing; none writes to stdout directly.
     class Integration
       extend T::Sig
 
@@ -101,11 +98,8 @@ module Dev
         #
         # By convention the manifest sits in a folder named after the class
         # file, beside it: lib/dev/deps/xcode_integration.rb carries
-        # lib/dev/deps/xcode_integration/dependencies.rb. This is the
-        # built-in convention: an integration from outside dev-core arrives
-        # as a dependency, and its needs are that dependency's own manifest
-        # (#300), not a file beside its class. Overridable for a built-in
-        # whose manifest lives elsewhere.
+        # lib/dev/deps/xcode_integration/dependencies.rb. Overridable for a
+        # built-in whose manifest lives elsewhere.
         #
         # @return [Pathname, nil] the manifest, or nil for an integration
         #   that needs no tooling of its own

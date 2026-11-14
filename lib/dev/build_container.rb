@@ -20,7 +20,7 @@ require "dev/registry_login"
 module Dev
   # Content-addressed Docker image management for build containers.
   #
-  # The image is the project's `image` pin (dev#277, `Dev::EnvironmentImage`):
+  # The image is the project's `image` pin (`Dev::EnvironmentImage`):
   # its tag is the digest of the Dockerfile dev generates, so a change to the
   # floor, the platform, the apt set or dev's template is a new tag and a
   # rebuild. `ensure_environment_image!` resolves it: local → (publisher:
@@ -35,7 +35,7 @@ module Dev
   # Whether the engine is big enough for the project is not asked here
   # either: that gate (EngineResourcesCheck) has one owner per path — the
   # engine provisioner when the path provisions, the command runner when it
-  # does not — so each path reads `docker info` once, live (dev#400).
+  # does not — so each path reads `docker info` once, live.
   #
   # Usage:
   #   BuildContainer.new(engine:).ensure_environment_image!(image)
@@ -95,8 +95,8 @@ module Dev
     # bare `-e NAME`, and the env those names resolve in (docker reads a
     # valueless `-e` from the client's own environment). argv is
     # world-readable — `ps`, /proc — and the env is the process's own, so
-    # a credential appears in the second half and never in the first
-    # (dev#317). `#execute` spawns it through the engine, env merged over
+    # a credential appears in the second half and never in the
+    # first. `#execute` spawns it through the engine, env merged over
     # the engine's.
     class Invocation < T::Struct
       const :argv, T::Array[String]
@@ -122,7 +122,7 @@ module Dev
     # Linux host's bind mount reads the same on both sides.
     DATA_ROOT_MOUNT = Dev::DataRoot::LINUX_ROOT
 
-    # The container's data root is its own, not the host's (ADR-0008): a
+    # The container's data root is its own, not the host's: a
     # named volume on the engine's disk, one per VM and shared by every
     # project — one data root per build host, as one ~/.dev per machine.
     # Docker initialises an empty named volume from the image's content and
@@ -137,10 +137,10 @@ module Dev
     # generated image puts the prefix on PATH (EnvironmentImage), so the two
     # are one constant.
     #
-    # A brew prefix has one owner, and brew's only writer is that owner
-    # (dev#337). On a Mac the VM is one user's, so one volume per VM. On
+    # A brew prefix has one owner, and brew's only writer is that
+    # owner. On a Mac the VM is one user's, so one volume per VM. On
     # Linux the engine is shared by the host's users — the operator and the
-    # runner user (dev#310) each run containers as themselves — so the
+    # runner user each run containers as themselves — so the
     # volume is per host user: `dev-linuxbrew-<user>` (see .prefix_volume).
     LINUXBREW_MOUNT = EnvironmentImage::LINUXBREW_PREFIX
     LINUXBREW_VOLUME = "dev-linuxbrew"
@@ -153,7 +153,7 @@ module Dev
     # @param registry_login [Dev::RegistryLogin, nil] the registry session
     #   around pulls and pushes; defaults to one over this engine and the registry credential (gh's token, or DEV_REGISTRY_TOKEN)
     # @param host_os [String] "darwin" / "linux" / "windows" — the shape of
-    #   the container's data root (ADR-0008: a volume behind a Mac's VM
+    #   the container's data root (a volume behind a Mac's VM
     #   boundary, the host's own directory bind-mounted on Linux)
     # @param host_user [String] the host user's name, whose prefix volume a
     #   Linux container mounts
@@ -215,7 +215,7 @@ module Dev
 
       # What every container of this image in this checkout is named under,
       # whatever its tag: the set key for "this image's containers here" —
-      # a project with several persisted images (dev#307) has one per image,
+      # a project with several persisted images has one per image,
       # and one image's stale container is never another's.
       #
       # @param image_tag    [String]
@@ -362,8 +362,8 @@ module Dev
 
     # Build a docker run command for executing a shell command in a one-shot
     # container of the image. The container mounts its own data root and
-    # the declared volumes, and nothing of the checkout (ADR-0008 as closed
-    # by dev#421): the project it works on is the snapshot it fetches into
+    # the declared volumes, and nothing of the checkout: the project it
+    # works on is the snapshot it fetches into
     # its workspace under that data root (ContainerWorkspace), so the
     # shell command is what reaches it, from the working directory the
     # image declares.
@@ -427,7 +427,7 @@ module Dev
     end
 
     # Whether the container's data root is the host's own directory (the
-    # Linux bind mount, dev#308) rather than a volume of its own: when it
+    # Linux bind mount) rather than a volume of its own: when it
     # is, what the container writes to its store is already in the host's.
     #
     # @return [Boolean]
@@ -452,13 +452,13 @@ module Dev
       Pathname(data_root_mount) / relative
     end
 
-    # The container's data root and Linuxbrew prefix (ADR-0008).
+    # The container's data root and Linuxbrew prefix.
     #
     # On a Mac the data root is the container's own: a named volume at its
     # fixed path, filled from the lock by the dev inside (DEV_DATA_ROOT,
     # set by env_flags); nothing of the host's directory is mounted, the
     # VM boundary being the reason. On Linux there is no boundary, so the
-    # host's data root *is* the container's (dev#308): bind-mounted at the
+    # host's data root *is* the container's: bind-mounted at the
     # host's own path, so every absolute path the store embeds reads the
     # same from both sides — one copy, nothing installed twice. The
     # Linuxbrew prefix is a named volume on both — the host user's own on
@@ -681,7 +681,7 @@ module Dev
     # The facts `dev container status` renders; probes only, nothing changes.
     #
     # The registry probe runs inside a login session (the image's private
-    # registry, dev#313) — outside one, a private registry answers 401 and
+    # registry) — outside one, a private registry answers 401 and
     # the image looks unpublished. A host with no credential to log in with
     # gets the local half and nil for the registry's: unknown, not absent.
     #
@@ -788,7 +788,7 @@ module Dev
 
     # Create the detached, idle service container: its own data root and any
     # extra volumes (e.g. the engine) — nothing of the checkout, which it
-    # fetches as snapshots into its workspace (ADR-0008, dev#421) — the
+    # fetches as snapshots into its workspace — the
     # label contract, the inside marker (inherited by every `docker exec`),
     # and `sleep infinity` so it stays up.
     #

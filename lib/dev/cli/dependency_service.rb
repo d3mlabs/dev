@@ -9,8 +9,8 @@ module Dev
     # Narrow front over Dev::Deps::Staleness for the command use case: the
     # guard policy before a command runs, the current staleness messages, and
     # the installed-stamp write (lock!) after a stamping command succeeds.
-    # Deliberately narrow — Lockfile and ArtifactStore consumers stay direct
-    # for now; this fronts only Staleness.
+    # It fronts only Staleness; Lockfile and ArtifactStore consumers stay
+    # direct.
     class DependencyService
       extend T::Sig
 
@@ -50,8 +50,8 @@ module Dev
       end
 
       # Record the installed stamp after a fully-successful provisioning
-      # command, and sweep the stamps of checkouts that are gone while at it
-      # (dev#529). Callers reach this only when execution didn't raise, so a
+      # command, and sweep the stamps of checkouts that are gone while at
+      # it. Callers reach this only when execution didn't raise, so a
       # failed install keeps nagging.
       #
       # @return [void]

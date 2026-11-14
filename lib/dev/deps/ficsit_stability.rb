@@ -8,12 +8,10 @@ module Dev
     # SMR's `VersionStabilities` — how a published version is offered:
     # `release` is what every player gets, `beta` and `alpha` are what a
     # player opts into per mod in the Mod Manager. The ficsit publisher
-    # maps dev's two tracks onto two of the three (dev#192, K5): an
-    # artifact from the store ships on the testing track and lands as a
-    # **beta** — SMR's unreleased state, a version players must ask for —
-    # and a release's archive ships on the live track as a **release**.
-    # Alpha is never emitted: a working-tree build is the least stable
-    # thing dev ships, and beta is the state testers already look in.
+    # maps dev's two tracks onto two of the three: an artifact from the
+    # store ships on the testing track and lands as a beta, a release's
+    # archive ships on the live track as a release. Alpha is never emitted;
+    # beta is the state testers already look in.
     class FicsitStability < T::Enum
       extend T::Sig
 

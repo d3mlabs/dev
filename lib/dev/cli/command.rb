@@ -17,7 +17,7 @@ module Dev
     #   hierarchy's two declared open edges; subclasses live under
     #   lib/dev/cli/builtins/)
     # - LifecycleCommand: a build-lifecycle verb (build, package, deploy,
-    #   release — dev#192) — a Ruby stage around a replaceable seam, run as
+    #   release): a Ruby stage around a replaceable seam, run as
     #   before → seam → after (the other open edge)
     # - ProjectCommand: pure data parsed from a dev.yml `commands:` entry
     # - OverriddenCommand: a project command occupying a builtin's slot (the
@@ -40,7 +40,7 @@ module Dev
     # runtime `inherited` hook rides down the singleton chain to every
     # descendant, so builtins subclassing an abstract BuiltinCommand class
     # raise at definition time unless sorbet-runtime internals are faked open
-    # (the ivar pokes this file used to carry). A sealed module's `included`
+    # (an ivar poke would be needed otherwise). A sealed module's `included`
     # hook fires only for its direct includers — the five heirs below —
     # because `include` never transfers singleton methods, so subclassing
     # BuiltinCommand or LifecycleCommand is an honest open edge with nothing
@@ -66,7 +66,7 @@ module Dev
       class Category < T::Enum
         enums do
           # The build lifecycle's verbs over the project's targets (build,
-          # package, deploy, release — dev#192).
+          # package, deploy, release).
           Lifecycle = new
           # Environment provisioning and dependency state (up, deps,
           # container, engine, runner, down).
@@ -104,7 +104,7 @@ module Dev
       # Whether a fully-successful run records the installed stamp
       # (DependencyService#lock!). Stamping commands must run their process
       # halves spawn-and-wait — exec-replace would make the stamp
-      # unreachable (#85); CommandExecutor derives wait-vs-exec from this.
+      # unreachable; CommandExecutor derives wait-vs-exec from this.
       sig { overridable.returns(T::Boolean) }
       def stamps?
         false
@@ -134,8 +134,8 @@ module Dev
       # The argument candidates a command offers to shell completion when the
       # walk down the tree ends on it: `words` are the ones typed after its
       # own name (flags included), the result is printed as-is — in *this*
-      # order, which is the command's to decide (#211: order can carry
-      # meaning). Must work offline and never raise into the shell. Nothing
+      # order, which is the command's to decide, since order can carry
+      # meaning. Must work offline and never raise into the shell. Nothing
       # by default; a leaf that knows its arguments overrides.
       #
       # @param words [Array<String>] the words typed after this command so far
@@ -194,30 +194,22 @@ module Dev
       def call(args:, context:); end
     end
 
-    # A build-lifecycle verb (dev#192, K1b): dev's stage **around** a
-    # replaceable seam — the builder for `build`, the packager for `package`,
-    # the channel's protocol for `deploy` — run by LifecycleExecutor as
-    # before → seam → after. Not a BuiltinCommand: a builtin is one body; an
-    # OverriddenCommand runs the builtin then the project's run with the
-    # same argv. A verb needs a step *after* the seam (`package` stamps the
-    # manifest, `deploy` records the receipt), so every seam is spawn-and-wait
-    # (Lifecycle::Shell; an exec-replace would make `after` unreachable, as
-    # dev#85 found for the stamp), a failure in the seam short-circuits
-    # `after` (it raises; nothing catches it before the CLI boundary), and
-    # the seam never sees argv: `before` **consumes** the flags into the
-    # verb's `Env` — the typed form of what the seam runs against, which the
-    # script forms spell as `DEV_*` (Lifecycle::ScriptEnv) — and returns the
-    # Dispatch outcome: `Run(env)` to run the seam here, `Done` when the
-    # dispatch ran the verb on another host (dev#420).
+    # A build-lifecycle verb: dev's stage around a replaceable seam (the
+    # builder for `build`, the packager for `package`, the channel's
+    # protocol for `deploy`), run by LifecycleExecutor as before → seam →
+    # after. Not a BuiltinCommand: a builtin is one body. A verb needs a
+    # step after the seam (`package` stamps the manifest, `deploy` records
+    # the receipt), so every seam is spawn-and-wait, a failure in the seam
+    # short-circuits `after`, and the seam never sees argv: `before`
+    # consumes the flags into the verb's `Env` (the typed form of what the
+    # seam runs against, which the script forms spell as `DEV_*`) and
+    # returns the Dispatch outcome: `Run(env)` to run the seam here, `Done`
+    # when the dispatch ran the verb on another host.
     #
-    # The hierarchy's second open edge, a class for the same reason as
-    # BuiltinCommand. Subclasses — one per verb, under lib/dev/cli/builtins/ —
-    # fix `Env` to their own struct and take their collaborators (the
-    # targets' placements, the ports, the store, the DispatchResolver)
-    # through the constructor. A project node never lands on a verb's slot:
-    # `build`/`package`/`release` admit none, and `deploy`'s channel merge is
-    # the repository's third case when the lock contributes channels
-    # (dev#422). Always `Category::Lifecycle`.
+    # The hierarchy's second open edge. Subclasses, one per verb under
+    # lib/dev/cli/builtins/, fix `Env` to their own struct and take their
+    # collaborators through the constructor. A project node never lands on
+    # a verb's slot. Always `Category::Lifecycle`.
     class LifecycleCommand
       extend T::Sig
       extend T::Helpers
@@ -229,7 +221,7 @@ module Dev
       # and what its seam and `after` read instead of argv.
       Env = type_member
 
-      # One thing a verb acts on, as its own usage lists it (dev#192, K2):
+      # One thing a verb acts on, as its own usage lists it:
       # a build for `build`/`package`, with the placement its target
       # declares for it — the usage printer renders the placement as the
       # environment column, under the host rule — and a note when this
@@ -276,7 +268,7 @@ module Dev
       end
 
       # Where the verb's seam runs when that is one place — a channel's
-      # protocol (dev#192, K5) — as the usage printer's environment column
+      # protocol, as the usage printer's environment column
       # and sentence read it, the way a project command's placement is read.
       # Nil for a verb placed per build (`build`, `package`: the listing
       # carries each build's), and for one the composition root could not

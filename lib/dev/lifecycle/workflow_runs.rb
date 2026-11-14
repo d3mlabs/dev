@@ -9,16 +9,12 @@ require_relative "workflow_run"
 
 module Dev
   module Lifecycle
-    # The forge's side of a `workflow_dispatch` (dev#192, K7), over gh:
-    # dispatch a workflow on a ref with inputs, find the run that dispatch
-    # made, watch it to its end, bring an artifact of it back. The one
-    # thing GitHub does not do is return the run: the dispatch endpoint
-    # answers 204 and nothing else. What makes the run findable without
-    # diffing run lists (the fragile half of cellbound-3d's drivers, which
-    # this retires) is the snapshot branch: it exists for this dispatch
-    # alone, so the workflow's runs on that branch are exactly the one
-    # asked for — the first listing that is not empty is it. The listing
-    # lags the dispatch by seconds, so `locate` polls, bounded.
+    # The forge's side of a `workflow_dispatch`, over gh: dispatch a
+    # workflow on a ref with inputs, find the run that dispatch made, watch
+    # it to its end, bring an artifact of it back. The dispatch endpoint
+    # returns no run id, so the run is found by its snapshot branch, which
+    # exists for this dispatch alone. The listing lags the dispatch by
+    # seconds, so `locate` polls, bounded.
     class WorkflowRuns
       extend T::Sig
 

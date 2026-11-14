@@ -7,12 +7,10 @@ require_relative "verb_invocation"
 module Dev
   module Lifecycle
     # The contract of the generic workflow dev ships
-    # (`share/workflows/dev-lifecycle.yml`; dev#192, K7): the one file name
-    # a project carries it under — `gh workflow run` names a workflow by
-    # file — and its three inputs, spelled once here and read by the
-    # workflow. dev does not write the file into the project: a workflow
-    # is the project's to review and commit, so a dispatch that finds it
-    # missing refuses with the copy named, source path included.
+    # (`share/workflows/dev-lifecycle.yml`): the file name a project carries
+    # it under and its three inputs, spelled once here. dev does not write
+    # the file into the project; a dispatch that finds it missing refuses
+    # with the copy named.
     class LifecycleWorkflow
       extend T::Sig
 

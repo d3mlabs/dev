@@ -67,9 +67,9 @@ module Dev
       class BoundChannel < T::Struct
         const :channel, Lifecycle::Channel
         const :placement, T.nilable(Placement)
-        # Why the channel cannot ship — a declared channel with no protocol
-        # (ChannelBinder#faults). It lists; `deploy <channel>` refuses with
-        # this; nothing else is affected (dev#509).
+        # Why the channel cannot ship: a declared channel with no protocol.
+        # It lists; `deploy <channel>` refuses with this; nothing else is
+        # affected.
         const :fault, T.nilable(ChannelBinder::Fault), default: nil
       end
 
@@ -227,8 +227,7 @@ module Dev
           Kernel.exit(2)
         when ArgumentError, RuntimeError, RunnerRegistry::QueryError, RunnerRegistry::AmendError, RunnerSetup::Error
           # The last three are GitHub's (or gh's) answer at the runner
-          # boundary — a refusal, a failed query, an unresolvable checkout —
-          # reported in GitHub's words, not re-raised as a dev bug (dev#493).
+          # boundary, reported in GitHub's words rather than as a dev bug.
           $stderr.puts "dev: #{error}"
           Kernel.exit(1)
         else
@@ -264,9 +263,9 @@ module Dev
         help = Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:)
         complete = Builtins::CompleteCommand.new(out: @out, root_provider:)
         bindings = bind_placements(manifest, context.project!)
-        # The project's container as a build host (ADR-0008, dev#421), one
-        # instance for the command runner and the lifecycle verbs alike, with
-        # the sync step that carries the tree to it.
+        # The project's container as a build host, one instance for the
+        # command runner and the lifecycle verbs alike, with the sync step
+        # that carries the tree to it.
         hosts = @hosts_factory.call(context.project!)
         service = CommandService.new(
           repository: CommandRepository.new(
@@ -283,30 +282,24 @@ module Dev
       end
 
       # Bind every lock-referencing name in dev.yml before the tree is
-      # assembled (dev#409): each project command's `environment:`, each
-      # target's per platform with the image capability check (dev#192,
-      # K8), each channel's publisher against the publishers the lock
-      # contributes — the declared channels merged with the contributed ones
-      # (ChannelBinder, dev#422) — and each channel's protocol placement
-      # (K5). An unknown or ambiguous name, a build pointed at an image that
-      # does not produce its platform, a channel with neither `run:` nor a
-      # contributed publisher, fails here, at load, and the usage printer
-      # reads each command's placement; the target placements are what
-      # `build` and `package` dispatch by (dev#414), the channel placements
-      # what `deploy` does (dev#415).
+      # assembled: each project command's `environment:`, each target's per
+      # platform with the image capability check, each channel's publisher
+      # against the publishers the lock contributes, and each channel's
+      # protocol placement. An unknown or ambiguous name, a build pointed at
+      # an image that does not produce its platform, a channel with neither
+      # `run:` nor a contributed publisher, fails here, at load. The target
+      # placements are what `build` and `package` dispatch by, the channel
+      # placements what `deploy` does.
       #
-      # A lock out of step with the manifest — a pin locked by another dev's
-      # template, a retired build-deps.lock, an image pinned before its block
-      # declared the `target_platforms` a build now asks of it (dev#450) —
-      # is a different failure: its remediation (`dev deps update`) is a
-      # project builtin served by this very tree, so it must not make the
-      # tree unbuildable. The commands stay in the tree unbound and no target
-      # or channel is placed: the error's message goes to stderr once, help
-      # lists the commands, builds and the declared channels (the lock's
-      # contribution is unknown) without their environments, and a project
-      # command, build or deploy asked to run refuses
-      # (ProjectCommand#placement!, BuildDispatcher, DeployCommand) rather
-      # than guess.
+      # A lock out of step with the manifest (a pin locked by another dev's
+      # template, a build-deps.lock, an image pinned before its block
+      # declared `target_platforms`) is a different failure: its remediation
+      # (`dev deps update`) is a project builtin served by this very tree,
+      # so it must not make the tree unbuildable. The commands stay in the
+      # tree unbound and no target or channel is placed: the error's message
+      # goes to stderr once, help lists the commands, builds and the
+      # declared channels without their environments, and a project
+      # command, build or deploy asked to run refuses rather than guess.
       #
       # @param manifest [ProjectManifest]
       # @param project [ProjectContext]
@@ -477,8 +470,8 @@ module Dev
             category: Command::Category::Workflow,
             children: { "gc" => Builtins::CacheGcCommand.new },
           ),
-          # Hidden plumbing for a target's `package:` script (dev#192): dev's
-          # own archive forms over any directory.
+          # Hidden plumbing for a target's `package:` script: dev's own
+          # archive forms over any directory.
           "pack" => Builtins::PackCommand.new(out: @out),
         }, T::Hash[String, Command])
         builtins["container"] = container_group if container_group
@@ -487,10 +480,10 @@ module Dev
         unless services_down.empty?
           builtins["down"] = Builtins::DownCommand.new(service_dependencies: services_down, out: @out)
         end
-        # The lifecycle verbs are derived from `targets:` (dev#192, K1, K4): a
-        # project that declares none has nothing to build, so they are absent
-        # rather than present and refusing. `deploy` likewise from the
-        # channels (K5), which need targets to accept builds from.
+        # The lifecycle verbs are derived from `targets:`: a project that
+        # declares none has nothing to build, so they are absent rather than
+        # present and refusing. `deploy` likewise from the channels, which
+        # need targets to accept builds from.
         builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:, hosts:)) if manifest.targets.any?
         builtins.merge!(runner_builtins)
         # The global builtins are dispatched before the Runner (bin/dev); they
@@ -521,22 +514,18 @@ module Dev
         )
       end
 
-      # `build` and `package` over the project's targets: one selector (argv →
-      # build), one dispatcher (build → where it runs, under the host rule the
-      # rest of the tree places by, or on a remote host — the remote
-      # dispatches wired here over the checkout, dev#420), one store under
-      # the data root, shared by both verbs so they agree on every name. The
-      # project's `VERSION` file, when any, leads the build id. `deploy`,
-      # when the project has channels — declared, or contributed by the
-      # lock: the fan-out heading one command per channel, each selecting
-      # from the same store or, under `--release`, from the same download of
-      # the release's archives (dev#425), dispatching its protocol by the
-      # channel's bound placement through the same resolver, and recording
-      # into one ledger on the forge (K6) — which `deploy status`, the last
-      # child, reads back per channel. `release`, when the project declares
-      # what one contains (`commands: release:`, K4): the cut over this
-      # checkout's git, the same `package` instance run per release build,
-      # the release archive on the forge — the one `deploy --release` reads.
+      # `build` and `package` over the project's targets: one selector (argv
+      # → build), one dispatcher (build → where it runs, natively or on a
+      # remote host), one store under the data root, shared by both verbs so
+      # they agree on every name. The project's `VERSION` file, when any,
+      # leads the build id. `deploy`, when the project has channels: the
+      # fan-out heading one command per channel, each selecting from the
+      # same store or, under `--release`, from the same download of the
+      # release's archives, dispatching by the channel's bound placement and
+      # recording into one ledger on the forge, which `deploy status` reads
+      # back per channel. `release`, when the project declares what one
+      # contains: the cut over this checkout's git, the same `package`
+      # instance run per release build, the release archive on the forge.
       #
       # @param manifest [ProjectManifest]
       # @param project [ProjectContext]

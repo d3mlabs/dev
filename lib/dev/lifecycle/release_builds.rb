@@ -8,21 +8,16 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a release contains (dev#192, K4): the builds `release <version>`
-    # packages at the tag and attaches to the GitHub release, as dev.yml's
-    # `release:` declares them — `release.targets`, a list in the build
-    # grammar, or `release: {}`, every build of every packageable target.
-    # In either form a release build is **fully qualified in config**: the
-    # archives of a release are one per build, and "cellbound-3d-win64 at
-    # 1.2.0" has to mean one file, so a pattern that spans two configs is
-    # refused at load with the config to name, and the empty form refuses a
-    # packageable target with several configs with the same fix. The
-    # platform axis may be left open — a release of `cellbound-3d-release`
-    # is one archive per platform, as a channel ships one per platform.
+    # What a release contains: the builds `release <version>` packages at
+    # the tag and attaches to the GitHub release, from `release.targets` (a
+    # list in the build grammar) or `release: {}` (every build of every
+    # packageable target). A release build is fully qualified in config,
+    # since a release holds one archive per build; a pattern spanning two
+    # configs is refused at load with the config to name. The platform axis
+    # may be left open.
     #
     # Owns the two other invariants of the list: every build is of a
-    # packageable target (a `packager: none` target has no archive to
-    # attach), and no build appears twice (two assets of one name).
+    # packageable target, and no build appears twice.
     class ReleaseBuilds
       extend T::Sig
       include Dev::ValueEquality::Derived

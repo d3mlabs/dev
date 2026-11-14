@@ -19,10 +19,10 @@ module Dev
       # install what the lockfile pins for this machine, optionally narrowed to
       # dependency groups and integrations — shared with the `up` builtin,
       # which composes this command. Every build host runs the same install
-      # against its own data root (ADR-0008), the project's interpreters
+      # against its own data root, the project's interpreters
       # included: the locked Ruby and Python are brew pins that install and
       # activate in brew's batch ahead of bundler and pip, on a workstation and
-      # inside the build container alike (dev#269). The only inside/outside
+      # inside the build container alike. The only inside/outside
       # difference is that the host-side hygiene hooks (skill links, learnings)
       # stay off inside.
       # `--group build --integration brew` narrows an install to the toolchain
@@ -153,7 +153,7 @@ module Dev
 
         # The integrations that install on this build host — the same set on a
         # workstation, a box and inside a build container, each against its own
-        # data root (ADR-0008).
+        # data root.
         #
         # @param project [ProjectContext]
         # @param ui [Dev::Ui] what the integrations say their installs through

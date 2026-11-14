@@ -9,8 +9,8 @@ module Dev
   # formula from a third-party tap its *user* has not trusted, and trust is
   # per user (`~/.homebrew/trust.json`), so the operator's does not carry
   # over to the other identities a host runs brew as: the Linux runner user
-  # (dev#310 — the first `brew upgrade` of dev in a job was refused the
-  # formula) and the macOS agent user (dev#374 — a `/build` pass ran
+  # (the first `brew upgrade` of dev in a job was refused the
+  # formula) and the macOS agent user (a `/build` pass ran
   # `brew trust` itself, a per-user host mutation mid-run, before `dev deps`
   # would resolve a tap-sourced pin). One step, called by both bootstraps
   # (RunnerUser, AgentBootstrap); each hands it the way it runs a command
@@ -53,8 +53,8 @@ module Dev
     # per-user file and needs no API data, but brew's implicit auto-update
     # takes a download lock under the prefix — owned by the operator, not
     # the identity trusting here — and fails the whole command on it
-    # (dev#475: "Already trusted tap", then a lock error, then dev's false
-    # warning). Same rule as every other brew read dev spawns (dev#372).
+    # ("Already trusted tap", then a lock error, then dev's false
+    # warning). Same rule as every other brew read dev spawns.
     TRUST_ENV = T.let(%w[HOMEBREW_NO_AUTO_UPDATE=1].freeze, T::Array[String])
 
     class << self

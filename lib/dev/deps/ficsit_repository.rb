@@ -31,8 +31,8 @@ module Dev
     # versions, each with its targets, integrity hashes and transitive mod
     # dependencies.
     #
-    # **Write side** (Lifecycle::Publisher#publish — the `ficsit` channel,
-    # dev#192 K5, dev#427): the shipments `deploy` selected are per-target
+    # Write side (Lifecycle::Publisher#publish, the `ficsit` channel): the
+    # shipments `deploy` selected are per-target
     # Alpakit zips (one per build, `packager: as-is`); the publisher merges
     # them into SMR's multi-target zip (MultiTargetPluginMerger), finds the
     # mod by the reference the plugins carry, and uploads the zip as one

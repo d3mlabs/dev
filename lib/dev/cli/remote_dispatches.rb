@@ -12,13 +12,13 @@ require_relative "transport"
 
 module Dev
   module Cli
-    # Builds the remote dispatch for a host the resolver chose (dev#192,
-    # K8): the wiring of a Dispatch::Remote — the sync step over the
+    # Builds the remote dispatch for a host the resolver chose: the
+    # wiring of a Dispatch::Remote — the sync step over the
     # project's checkout, the forge client, the project's copy of the
     # generic workflow, the UI the crossing line prints on — made once per
     # run at the composition root and handed to DispatchResolver, which
     # owns the decision and nothing of the construction. One method per
-    # transport: `actions_runner` and `local_container` (dev#421).
+    # transport: `actions_runner` and `local_container`.
     class RemoteDispatches
       extend T::Sig
 

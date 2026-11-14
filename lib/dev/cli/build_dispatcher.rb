@@ -10,7 +10,7 @@ require_relative "target_placement"
 module Dev
   module Cli
     # Where a build's verb executes, answered from what the composition root
-    # bound at load (dev#192, K8): the build's target placement — its
+    # bound at load: the build's target placement — its
     # `environment:` for the build's platform — checked buildable on this
     # machine (TargetPlacement's host half of the capability check), then
     # resolved against the host rule into a Dispatch (DispatchResolver). The

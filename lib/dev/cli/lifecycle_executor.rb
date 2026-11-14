@@ -8,7 +8,7 @@ require_relative "execution_context"
 
 module Dev
   module Cli
-    # The template strategy for a lifecycle verb (dev#192, K1b): before →
+    # The template strategy for a lifecycle verb: before →
     # seam → after, in this process, interpreting the Dispatch outcome
     # `before` returns. Run(env): the seam and then `after`, both with that
     # env and nothing of argv. Done: the dispatch ran the verb on another

@@ -22,7 +22,7 @@ module Dev
       #   dev runner unregister --org                 # the checkout's owner
       #
       # Destructive, so it asks — naming scope, runner, dir and whether a
-      # service is installed, once for several slots (dev#470) —
+      # service is installed, once for several slots —
       # unless `--yes`. Enrollments are resolved by discovery alone (every
       # `~/actions-runner*/.runner`), so a scope several dirs serve that are
       # not one set of slots is refused with the dirs to name instead. A leaf of
@@ -81,7 +81,7 @@ module Dev
         # never gh): every local scope once, in discovery order, then every
         # `~`-dir — so typing an owner narrows to scopes and `~` to dirs.
         # Nothing once an enrollment is named; flags never count as one. The
-        # order is deliberate and the plumbing keeps it (#211).
+        # order is deliberate and the plumbing keeps it.
         sig { override.params(words: T::Array[String]).returns(T::Array[String]) }
         def completions(words)
           return [] if words.any? { |word| !word.start_with?("--") }

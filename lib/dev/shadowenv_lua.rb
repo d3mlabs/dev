@@ -19,7 +19,7 @@ module Dev
     LISP_FILENAME = "510_lua.lisp"
 
     # The boundary a test stubs to stay clear of this module's install seams
-    # (ProvisioningGuard's message, dev#208).
+    # (ProvisioningGuard's message).
     STUB_HINT = "Dev::ShadowenvLua.stubs(:setup!)"
 
     module_function

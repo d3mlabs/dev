@@ -14,20 +14,16 @@ require_relative "target"
 
 module Dev
   module Lifecycle
-    # A cut release read back from the forge for `deploy --release`
-    # (dev#192, K4; dev#425): `release.json` first — always fresh, since
-    # the release is the truth about itself — then the archives a channel
+    # A cut release read back from the forge for `deploy --release`:
+    # `release.json` first, always fresh, then the archives a channel
     # selected from it, each downloaded under its asset name into the
-    # store's `.releases/<tag>/` and **verified** against the digest
-    # `release.json` records before it ships; a split set's parts the same
-    # way against its `MANIFEST`. A file already there that verifies is not
-    # downloaded again, so a release fanned out over several channels
-    # crosses the wire once; one that does not verify is removed and
-    # refused — the deploy ships what the cut made or nothing.
+    # store's `.releases/<tag>/` and verified against the digest
+    # `release.json` records; a split set's parts against its `MANIFEST`.
+    # A file already there that verifies is not downloaded again; one that
+    # does not verify is removed and refused.
     #
-    # The counterpart of ReleaseAssets, which named the archives for the
-    # upload: this is the download, and the Shipments it hands back carry
-    # the release as their Provenance.
+    # The counterpart of ReleaseAssets: this is the download, and the
+    # Shipments it hands back carry the release as their Provenance.
     #
     # The forge, the store and the targets are fixed for a checkout and so
     # are constructor-owned; the tag and the entries are per call.

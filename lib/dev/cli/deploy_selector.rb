@@ -7,24 +7,24 @@ require_relative "parsed_args"
 
 module Dev
   module Cli
-    # What `dev deploy <channel>` makes of its argv (dev#192, K4, K5): the
+    # What `dev deploy <channel>` makes of its argv: the
     # shipments — one archive per build — selected from a **source**, never
     # built, never guessed. The channel's accept set, narrowed by the
     # positional when one is given (`[BUILD]`, a name or a pattern in the
     # grammar), is spelled out per platform (Channel#artifact_patterns): one
     # archive ships per entry, and the config axis is the operator's choice —
     # `--config` chooses; without it the source must hold exactly one
-    # candidate, and two is a refusal listing them (cellbound-3d#181's
-    # "unique match or explicit"). A build outside the accept set ships only
+    # candidate, and two is a refusal listing them. A build outside the
+    # accept set ships only
     # under `--force`. The verb's flags are consumed here and never reach the
     # protocol.
     #
-    # The source decides the track (K5). Without `--release` it is the
+    # The source decides the track. Without `--release` it is the
     # **store**: working artifacts, the testing track; a missing one is
     # refused with the `dev package` that would make it, a stale one — not
     # packaged from a clean tree at this commit — unless `--allow-stale`, and
     # then reported. With `--release <version>` it is the **release** on the
-    # forge (dev#425): its `release.json` says which archives it carries,
+    # forge: its `release.json` says which archives it carries,
     # the selected ones are downloaded and sha-checked (ReleaseArchives), and
     # they ship on the live track; a build the release has no archive of is
     # refused — a release is cut whole or not at all, deploy adds nothing to
@@ -52,7 +52,7 @@ module Dev
 
       # What ships: the shipments in accept order, which of them are stale
       # (allowed through by `--allow-stale`; none from a release), and the
-      # track they land on — decided by where they came from (K5): testing
+      # track they land on — decided by where they came from: testing
       # from the store, live from a release.
       class Selection < T::Struct
         const :shipments, T::Array[Lifecycle::Shipment]

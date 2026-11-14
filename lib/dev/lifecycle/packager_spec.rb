@@ -6,15 +6,13 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a target declares for its Packager port (dev#192, K1): a
-    # `package:` script line, or one of dev's built-ins by name —
-    # `archive` (the default, needing no line; `{ archive: { format: tar,
-    # split: 2GiB } }` for its tar form), `as-is`, `none`. The integration
-    # form (`packager: rubygem`) lands with dev#433 as a further variant.
+    # What a target declares for its Packager port: a `package:` script
+    # line, or one of the built-ins by name: `archive` (the default; `{
+    # archive: { format: tar, split: 2GiB } }` for its tar form), `as-is`,
+    # `none`.
     #
     # A declaration, not the port: Ports turns it into a Packager for this
-    # checkout (the built-ins are their own ports; a script needs the
-    # project root). Sealed, so the composition matches exhaustively.
+    # checkout. Sealed, so the composition matches exhaustively.
     module PackagerSpec
       extend T::Sig
       extend T::Helpers
@@ -22,7 +20,7 @@ module Dev
       abstract!
       sealed!
 
-      # The names a `packager:` line may carry today.
+      # The names a `packager:` line may carry.
       BUILTIN_NAMES = T.let(["archive", "as-is", "none"].freeze, T::Array[String])
 
       # The declaration as `dev help` renders it.

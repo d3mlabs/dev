@@ -1,5 +1,5 @@
 #!/bin/sh
-# The `dev-core` target's builder (dev.yml `targets:`, dev#429): the
+# The `dev-core` target's builder (dev.yml `targets:`): the
 # org-blank tool as its formula installs it — bin, lib, share and
 # VERSION (what `dev version` reads), with the license and the README —
 # laid out into $DEV_INSTALL. Nothing compiles: the install is the file

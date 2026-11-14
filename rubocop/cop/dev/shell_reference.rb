@@ -7,7 +7,7 @@ require "rubocop"
 module RuboCop
   module Cop
     module Dev
-      # dev's one layering rule, held by the gate (ADR-0014, dev#537): the
+      # dev's one layering rule, held by the gate: the
       # shell — `Dev::Cli`, everything under lib/dev/cli/ — depends on the
       # features and the vocabulary under lib/dev; nothing there depends on
       # the shell. A `Dev::Cli::*` constant referenced from a feature file is
@@ -16,7 +16,7 @@ module RuboCop
       #
       # References are what the rule is about — what Ruby lets through —
       # not `require` lines, which miss a reference riding on a transitive
-      # load (the leak shape dev#533 had). A comment is prose and stays the
+      # load. A comment is prose and stays the
       # layer-boundaries rule's business. Tests, bin/ and the bootstrap
       # files beside lib/dev name the shell freely: the rule is about the
       # production layers, and the shell is the one that composes them.
@@ -28,7 +28,7 @@ module RuboCop
       #   # good — the vocabulary, which lives beside the features
       #   sig { params(ui: Dev::Ui).void }
       class ShellReference < Base
-        MSG = "`%<constant>s` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it (ADR-0014)."
+        MSG = "`%<constant>s` is the shell's (`Dev::Cli`); a feature or the vocabulary under lib/dev may not reference it."
 
         # Where the features and the vocabulary live, and the shell inside them.
         FEATURES = %r{\Alib/dev(?:/|\z)}

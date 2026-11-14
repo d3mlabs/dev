@@ -122,7 +122,7 @@ module Dev
       # Goes through the ShadowenvExec seam for the same reason as
       # BundlerIntegration: the project's provisioned Ruby, with dev's own
       # and any harness's gem env scrubbed so a sandboxed session cannot
-      # redirect the resolution into its ephemeral cache (dev#89).
+      # redirect the resolution into its ephemeral cache.
       #
       # @return [Array<Pathname>] install paths of every gem in the bundle
       sig { returns(T::Array[Pathname]) }

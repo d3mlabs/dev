@@ -7,7 +7,7 @@ require "dev/wsl_host"
 
 module Dev
   # The Windows Task Scheduler task that boots a WSL2 distro at logon and
-  # keeps it up (dev#261) — as a value: what the task must be, the
+  # keeps it up — as a value: what the task must be, the
   # PowerShell that registers, starts and reads it, and the verdicts over
   # what Task Scheduler reports.
   #
@@ -16,7 +16,7 @@ module Dev
   # systemd units inside (the runner services, dockerd) are not sessions,
   # so after a reboot nothing starts the distro, and a task that merely
   # runs `wsl ... /bin/true` brings the services up and then lets WSL kill
-  # them (cellbound-3d#280, snappy#119 — the defect this absorbs). The
+  # them. The
   # action therefore *holds* a session: `conhost.exe --headless wsl.exe -d
   # <distro> -u root -- sleep infinity` (conhost keeps the window off the
   # desktop; the task runs in the interactive session). The settings are

@@ -162,7 +162,7 @@ module Dev
 
     # Execute a docker invocation and answer with the child's exit status,
     # for the callers whose own verdict is the child's — a command run
-    # inside a container (dev#421): dev exits as the container's process
+    # inside a container: dev exits as the container's process
     # did. The shell's conventions where no status exists: 128 + the
     # signal that killed the child, 127 when it could not be spawned.
     #

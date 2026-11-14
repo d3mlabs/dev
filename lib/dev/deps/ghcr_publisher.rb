@@ -14,34 +14,24 @@ require_relative "oci_repository"
 
 module Dev
   module Deps
-    # The write side of the image entry (dev#192 K5, dev#428): each shipped
-    # archive — a `docker save` tarball of one tagged image — is loaded
-    # into the engine, tagged for the track and pushed to GHCR, the
-    # registry the project's own environment image is pulled from
-    # (ADR-0010: a store is publishable exactly when the project depends on
-    # it). Every project whose lock pins an `image` gets the `deploy ghcr`
-    # channel with no dev.yml line; its first consumers are the org's image
-    # repos, whose targets are the images they build.
+    # The write side of the image entry: each shipped archive, a `docker
+    # save` tarball of one tagged image, is loaded into the engine, tagged
+    # for the track and pushed to GHCR. Every project whose lock pins an
+    # `image` gets the `deploy ghcr` channel with no dev.yml line.
     #
-    # The archive decides the **repository** (the `ghcr.io/<org>/<name>`
-    # its image was saved under — the builder's business, dev#434) and the
-    # track decides the **tag**: a release's archive is pushed as its
-    # version (`ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3`, what
-    # consumers pin), a working artifact as `testing-<build id>`, a tag no
-    # floor ever names (BuildId's `+` is not in docker's tag grammar, so it
-    # is spelled `-`). Every archive is loaded and checked before the first
-    # push, so a tarball that is not an image, carries no tag, or names
-    # another registry refuses the whole deploy with nothing uploaded. The
-    # archives are read-only input: the engine's image store is the
-    # publisher's own, and nothing lands in the scratch. Credentials are
-    # the registry login's (RegistryLogin: gh's token, or the one
-    # DEV_REGISTRY_TOKEN names, with the write scope), held for the pushes
-    # only.
+    # The archive decides the repository (the `ghcr.io/<org>/<name>` its
+    # image was saved under) and the track decides the tag: a release's
+    # archive is pushed as its version, a working artifact as
+    # `testing-<build id>` with the id's `+` spelled `-`. Every archive is
+    # loaded and checked before the first push, so a tarball that is not an
+    # image, carries no tag, or names another registry refuses the whole
+    # deploy with nothing uploaded. The archives are read-only input;
+    # nothing lands in the scratch. Credentials are the registry login's
+    # (RegistryLogin), held for the pushes only.
     #
     # The engine and the login are resolved on first use, not at
-    # construction: the Registry builds every contributed publisher at
-    # load for every command (Dev::Cli::ProjectPublishers), and the operator's
-    # engine record is read — and failed on — only when a deploy pushes.
+    # construction, since every contributed publisher is built at load for
+    # every command.
     class GhcrPublisher
       extend T::Sig
       include Lifecycle::Publisher

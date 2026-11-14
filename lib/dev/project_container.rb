@@ -15,8 +15,8 @@ require "dev/lifecycle/gh"
 require "dev/lifecycle/snapshot"
 
 module Dev
-  # The project's build container as the build host it is (ADR-0008,
-  # dev#421): where a command or a lifecycle verb runs when it leaves this
+  # The project's build container as the build host it is: where a
+  # command or a lifecycle verb runs when it leaves this
   # machine for a container of the project's image. One way in, for every
   # caller — a `docker exec` (a persisted image's service container, or a
   # named one `dev up` is provisioning) or a one-shot `docker run --rm`
@@ -30,10 +30,9 @@ module Dev
   # missing runtime secret never blocks a command that does not need it)
   # and the host's gh token as GH_TOKEN unless the run_env named one
   # (ContainerGithubToken) — the fetch and whatever calls `gh` inside have
-  # the auth the host holds. Names on argv, values in the spawn env
-  # (dev#317).
+  # the auth the host holds. Names on argv, values in the spawn env.
   #
-  # The engine-floor gate (EngineResourcesCheck, dev#400) is this path's
+  # The engine-floor gate (EngineResourcesCheck) is this path's
   # own: the project's `engine:` hint is measured against the engine once,
   # before the image is reached for. `dev up` has its own owner
   # (EngineProvisioner) and measures after sizing; neither path reads
@@ -163,7 +162,7 @@ module Dev
 
     # Bring a directory of the container's store to the host's — what
     # `--fetch` asks for. A no-op when the two stores are one (a Linux
-    # host's data root bind-mounted, dev#308); a `docker cp` out of a
+    # host's data root bind-mounted); a `docker cp` out of a
     # one-shot container of the image otherwise.
     #
     # @param image [EnvironmentImage]
@@ -183,8 +182,7 @@ module Dev
 
     private
 
-    # The engine-injected docker operations, constructed at this seam (the
-    # composition point plans#26 names).
+    # The engine-injected docker operations, constructed at this seam.
     #
     # @return [BuildContainer]
     sig { returns(BuildContainer) }

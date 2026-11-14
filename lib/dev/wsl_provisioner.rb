@@ -74,8 +74,8 @@ module Dev
     #
     # @param cpus [Integer, nil] VM cpu minimum (repo resources hint)
     # @param memory_gib [Integer, nil] VM memory minimum in GiB
-    # @param force [Boolean] write even while containers are running (the
-    #   `dev engine up --force` of #187); the restart is still the user's, so
+    # @param force [Boolean] write even while containers are running
+    #   (`dev engine up --force`); the restart is still the user's, so
     #   nothing is stopped here
     # @return [void]
     # @raise [UnsatisfiableHintError] when the hint exceeds the hardware

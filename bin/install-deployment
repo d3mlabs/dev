@@ -1,14 +1,13 @@
 #!/bin/sh
-# The `dev` target's builder (dev.yml `targets:`, dev#429): the d3mlabs
+# The `dev` target's builder (dev.yml `targets:`): the d3mlabs
 # deployment's payload — deploy/d3mlabs/config.yml, the system layer of
 # dev's layered settings, and deploy/d3mlabs/Brewfile, the org's host
 # tooling `dev up` converges — laid out into $DEV_INSTALL. Dev's archive
 # packager zips it into the release asset Formula/dev.rb in the d3mlabs
 # tap points at; the formula installs the two files into etc/dev/
-# (pkgetc). Until dev#429 the payload was authored as heredocs inside the
-# formula, because it had no artifact of its own.
+# (pkgetc).
 #
-# README and LICENSE ride along as the keg's payload (dev#517): the two
+# README and LICENSE ride along as the keg's payload: the two
 # etc files land outside the keg, and brew refuses an empty one
 # ("Empty installation") — the formula installs them under doc.
 #

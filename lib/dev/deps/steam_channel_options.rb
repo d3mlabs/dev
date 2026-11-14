@@ -8,9 +8,9 @@ require "dev/lifecycle/track"
 
 module Dev
   module Deps
-    # What a project's `deploy steam` channel says of its Steam app (dev#192
-    # K5, dev#426): the options under the channel's `steam:` key in dev.yml,
-    # in Steamworks' own words —
+    # What a project's `deploy steam` channel says of its Steam app: the
+    # options under the channel's `steam:` key in dev.yml, in Steamworks'
+    # own words:
     #
     #   steam:
     #     app: 480                                   # the AppID
@@ -19,13 +19,9 @@ module Dev
     #       cellbound-3d-steamworks-linux64: 482
     #     branches: { testing: beta, live: default } # optional: the branch per track
     #
-    # The app and its depots are the destination's facts, which is why they
-    # live on the channel and in no build (K0); the branch is the track's
-    # — a working artifact goes to the testing branch (`beta` unless named),
-    # a release's archive to the live one (`default` unless named). Parsed
-    # here, once, at the start of a deploy; the publisher holds typed
-    # values from then on. The dev.yml boundary for this vocabulary, so
-    # the messages name the key and the fix.
+    # The app and its depots are the destination's facts, so they live on
+    # the channel and in no build; the branch is the track's. Parsed once,
+    # at the start of a deploy, so the messages name the key and the fix.
     class SteamChannelOptions < T::Struct
       extend T::Sig
 
@@ -108,7 +104,7 @@ module Dev
           options.fetch(key) do
             raise MissingOptionError,
               "channel 'deploy #{channel}': `#{KEY}: #{key}:` is missing — the steam publisher needs the AppID and a DepotID " \
-                "per accepted build (d3mlabs/dev#192)"
+                "per accepted build"
           end
         end
 

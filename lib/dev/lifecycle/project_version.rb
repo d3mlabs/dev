@@ -8,25 +8,15 @@ require_relative "build_id"
 module Dev
   module Lifecycle
     # The semver half of a BuildId: the project's own version when it keeps
-    # one in source as a `VERSION` file at its root (dev's convention, and
-    # what `release` bumps — dev#424), BuildId::DEFAULT_SEMVER otherwise. A
-    # project without a version still gets build ids that sort and compare;
-    # only the leading number is uninformative.
+    # one in a `VERSION` file at its root, BuildId::DEFAULT_SEMVER otherwise.
     #
-    # A gem whose gemspec reads `VERSION` has a **mirror** of it: bundler
-    # records the gem's own version in `Gemfile.lock` (GemfileLock — the
-    # `PATH` spec and the `CHECKSUMS` entry), and a bump that moves one
-    # file and not the other leaves a lock the next `bundle` rewrites — a
-    # dirty tree right after the release commit (dev's `bin/release.rb`
-    # bumped both for that reason; dev#429 keeps it so, dev#521 the
-    # checksum line). The bump therefore writes `VERSION` and, when the
-    # lock mirrors it, the own gem's lines.
+    # A gem whose gemspec reads `VERSION` has a mirror of it in
+    # `Gemfile.lock` (the `PATH` spec and the `CHECKSUMS` entry). A bump
+    # writes both, so the tree is clean right after the release commit.
     #
-    # The **next** version is the one part of a `major.minor.patch` bumped
-    # and the parts after it zeroed — what `release` cuts when given no
-    # version, or a bump word (dev#525; `bin/release.rb` bumped the patch).
-    # Only a three-number version has a next: a pre-release or anything
-    # else is released by name.
+    # The next version is one part of `major.minor.patch` bumped and the
+    # parts after it zeroed. Only a three-number version has a next; a
+    # pre-release is released by name.
     module ProjectVersion
       FILE_NAME = "VERSION"
       GEMFILE_LOCK = GemfileLock::FILE_NAME
@@ -35,8 +25,8 @@ module Dev
       # can be bumped.
       class NotSemverError < ArgumentError; end
 
-      # The part of a `major.minor.patch` a bump moves — `release`'s bump
-      # words, as the operator types them.
+      # The part of a `major.minor.patch` a bump moves, as the operator
+      # types it to `release`.
       class Part < T::Enum
         enums do
           Major = new("major")

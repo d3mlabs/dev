@@ -5,12 +5,12 @@ require "dev/gh_auth"
 
 module Dev
   # The credential dev logs the engine in to a container registry with. By
-  # default it is the host's gh login (GhAuth, dev#277): one identity for the
+  # default it is the host's gh login (GhAuth): one identity for the
   # private releases and the registry alike. A host whose gh identity the
   # registry will not take states another in DEV_REGISTRY_TOKEN — a hosted
   # job runs `dev up` under a GitHub App token for the private releases, and
   # GHCR refuses App installation tokens outright, while it accepts the job's
-  # own GITHUB_TOKEN (dev#351). dev does not guess which token a job holds
+  # own GITHUB_TOKEN. dev does not guess which token a job holds
   # for what; the job says so, the way it already says GH_TOKEN.
   #
   # An explicit token is tried as given: the login name is the anonymous one

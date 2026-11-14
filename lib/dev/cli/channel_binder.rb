@@ -6,7 +6,7 @@ require "dev/lifecycle"
 module Dev
   module Cli
     # The composition root's step between parsing dev.yml and building
-    # `deploy` (dev#192 K1b, K5; dev#422): the project's channel set is the
+    # `deploy`: the project's channel set is the
     # declared channels **merged** with the ones the lock contributes, by
     # name, under one rule — the one place a project declaration meets a
     # lifecycle builtin:
@@ -21,7 +21,7 @@ module Dev
     #   publisher, or the lock pins no type reaching it — and what to do
     #   (#faults): it lists, and `deploy <channel>` refuses with the
     #   fault; nothing else does
-    #   (dev#509 — a manifest ahead of the installed dev must not take
+    #   (a manifest ahead of the installed dev must not take
     #   `dev deps install` down with it);
     # - a contributed channel the project does not declare appears as it is,
     #   accepting every packageable build (the `release: {}` default), or
@@ -39,7 +39,7 @@ module Dev
     class ChannelBinder
       extend T::Sig
 
-      # Why a declared channel has no protocol, and what to do (dev#509).
+      # Why a declared channel has no protocol, and what to do.
       # `summary` is the cause alone, for `dev help deploy`'s Protocol line;
       # `message` is the refusal `deploy <channel>` raises, cause and fixes.
       class Fault < T::Struct
@@ -116,7 +116,7 @@ module Dev
         Fault.new(
           summary:,
           message: "channel 'deploy #{channel}' has no protocol: it declares no `run:` and #{summary} — #{fix}, " \
-                   "or declare `run:` (a script shipping `$DEV_ARTIFACT`) (d3mlabs/dev#192)",
+                   "or declare `run:` (a script shipping `$DEV_ARTIFACT`)",
         )
       end
 

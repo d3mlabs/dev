@@ -11,19 +11,15 @@ require_relative "release_tag"
 
 module Dev
   module Lifecycle
-    # The assets a release attaches for one artifact (dev#192, K4): the
-    # archive under its release name, `<build>-<version>.<ext>` — the
-    # store's `<build>.<ext>` with the version after the build — gathered
-    # into one directory the upload reads from. The archive is never
-    # copied or rewritten: the asset is a symlink to the file in the
-    # store, named as the release names it, and its digest is the one
-    # `build-id.json` stamped. The one exception is the split tar form,
-    # whose archive is a `MANIFEST` listing its parts by name: the parts
-    # are linked under their release names and a MANIFEST naming them is
-    # written beside, so what a reader downloads reads as one set.
+    # The assets a release attaches for one artifact: the archive under its
+    # release name, `<build>-<version>.<ext>`, gathered into one directory
+    # the upload reads from. The archive is never copied or rewritten: the
+    # asset is a symlink to the file in the store and its digest is the one
+    # `build-id.json` stamped. For the split tar form the parts are linked
+    # under their release names and a MANIFEST naming them is written
+    # beside, so what a reader downloads reads as one set.
     #
-    # The gathering directory is the caller's (a temporary one, gone after
-    # the upload); nothing here persists.
+    # The gathering directory is the caller's; nothing here persists.
     class ReleaseAssets
       extend T::Sig
 

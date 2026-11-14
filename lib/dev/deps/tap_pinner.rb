@@ -22,7 +22,7 @@ module Dev
     # tap dev created is removed, a developer's own clone returns to the
     # ref it was on. An image build pins and never restores: the image is
     # the artifact. A host converging one keg pins, installs and restores,
-    # so brew reads its usual sources again (dev#356).
+    # so brew reads its usual sources again.
     class TapPinner
       extend T::Sig
 

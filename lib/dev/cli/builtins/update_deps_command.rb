@@ -83,7 +83,7 @@ module Dev
 
           # The needs table: each integration's own manifest, so a declaration
           # pulls the tooling its integration shells to into this project's
-          # lock (ADR-0011).
+          # lock.
           needs = Dev::Deps::IntegrationNeeds.new.table(Dev::Deps::Registry.integration_classes)
           resolver = Dev::Deps::Resolver.new(
             repositories: Dev::Deps::Registry.repositories(project_root: project_root),
@@ -96,7 +96,7 @@ module Dev
           # one on disk — is a question about that lock, answered here against
           # the lock on disk (PinCarryover), once per resolution. That includes
           # a declaration whose registry did not answer: a subset re-lock keeps
-          # the lock's pin for one it would carry anyway (dev#373), and any
+          # the lock's pin for one it would carry anyway, and any
           # other re-lock surfaces the registry's failure. The needs'
           # declarations are part of what the resolution answered.
           lockfile = Dev::Deps::Lockfile.new(dir: project_root)
@@ -107,7 +107,7 @@ module Dev
           # Interpreters before lockers: the lockers run their ecosystem tool
           # under the project's shadowenv (bundle lock under the project Ruby),
           # and a fresh checkout has no .shadowenv.d yet — wrapping alone would
-          # solve under the ambient Ruby (dev#76). So the interpreter pins are
+          # solve under the ambient Ruby. So the interpreter pins are
           # resolved and installed first, through brew like any formula, which
           # activates them; the Gemfile's ruby directive is the locked version.
           # The carry-over runs on this resolution too: the Ruby that bundle
@@ -203,7 +203,7 @@ module Dev
         # the same install `dev deps install` would run for them, bottle,
         # verification and activation included — so the lockers that follow
         # run under the interpreters the lock is about to pin. One frame, as
-        # the Installer would open for the batch (dev#573).
+        # the Installer would open for the batch.
         #
         # @param project [ProjectContext]
         # @param interpreters [Array<Dev::Deps::Dependency>] the :ruby/:python pins

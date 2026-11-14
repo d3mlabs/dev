@@ -11,14 +11,14 @@ require "dev/tap_trust"
 
 module Dev
   class AgentBootstrap
-    # The agent host contract on a Linux dev host (plans#59): the same facts
+    # The agent host contract on a Linux dev host: the same facts
     # as the Mac's, established with the host's own CLIs — `useradd` and
     # `usermod` for the identities, the same visudo-staged sudoers drop-in,
     # a systemd unit drop-in for the service env. Three identities meet
-    # here (dev#310): the operator registers, the *runner user* owns the
+    # here: the operator registers, the *runner user* owns the
     # enrollment and its service — so the spawn edge is `runner → agent`,
-    # and the brew edge targets the runner user's Linuxbrew prefix
-    # (dev#337) — and the agent holds nothing on the host.
+    # and the brew edge targets the runner user's Linuxbrew prefix. The
+    # agent holds nothing on the host.
     #
     # Nothing is provisioned for the data root: `/var/lib/dev` and its
     # group exist from LinuxDataRootProvisioner (the `dev up` and
@@ -28,16 +28,15 @@ module Dev
     # No engine step. The agent needs an engine only for an image-built
     # repo, and the only engine on a Linux box is the runner user's rootful
     # docker, whose socket is root-equivalent — handing it across the UID
-    # line would make the agent user decorative (plans#26 layer 5). For
-    # such a repo the agent runs *inside* the project's container, spawned
-    # there by the dispatcher (plans#61); until that lands, a served repo
-    # that pins an image is refused here with that pointer.
+    # line would make the agent user decorative. A served repo that pins
+    # an image is refused here: its agent belongs inside the project's
+    # container, not on this host.
     class Linux < AgentBootstrap
       extend T::Sig
 
       # A served repo pins an image, and this host has no agent engine to
       # offer: the agent for an image-built repo runs inside the project's
-      # container (plans#61), not on the host.
+      # container, not on the host.
       class NoAgentEngineError < RuntimeError; end
 
       # The data root is not the cooperative space the agent reads
@@ -53,14 +52,14 @@ module Dev
 
       # The one explanation, for the engine refusal and the status line.
       NO_ENGINE_MESSAGE = "an image-built repo's agent has no engine of its own on a Linux host — the only engine " \
-        "here is the runner user's docker, whose socket is root-equivalent across the user line (plans#26). Its " \
-        "agent runs inside the project's container instead (plans#61); until that lands, this host cannot serve " \
+        "here is the runner user's docker, whose socket is root-equivalent across the user line. Its " \
+        "agent belongs inside the project's container, so this host cannot serve " \
         "agent labels for a repo that pins an image."
 
       # Every command run as the agent starts from `/`: sudo keeps the
       # caller's cwd, which is the operator's checkout under a home the
       # agent cannot enter, and brew refuses to run from a directory it
-      # cannot stat (dev#493, the RunnerUser rule). GNU env is a given on
+      # cannot stat (the RunnerUser rule). GNU env is a given on
       # Linux.
       AS_AGENT_PRELUDE = T.let(%w[env -C /].freeze, T::Array[String])
 
@@ -133,7 +132,7 @@ module Dev
       # The systemd drop-in content: a 002 umask (a service's umask is not
       # the login's, so Ubuntu's 002 default does not reach it — without
       # this the runner user's next `dev up` hits a tree the agent wrote
-      # 755, dev#310's tripwire) and #service_env, one `Environment=` each.
+      # 755) and #service_env, one `Environment=` each.
       #
       # @param slot [Integer] 1-based
       # @return [String]
@@ -175,7 +174,7 @@ module Dev
       # Nothing to create: the root is LinuxDataRootProvisioner's, in the
       # group, setgid and group-writable (`<owner>:dev 2775`). Asserted,
       # because the agent reads the store through that group and dev never
-      # re-owns a root (dev#310).
+      # re-owns a root.
       #
       # @raise [DataRootNotSharedError] when the root is not that shape
       sig { override.void }

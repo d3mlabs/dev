@@ -42,7 +42,7 @@ module Dev
     # routes `sync` / `status` / `invariants` / `init` to them, and the
     # leaves own the argv shape (flags, no stray arguments).
     #
-    # The verbs speak through the Ui (plans#52): a frame per verb, a spin
+    # The verbs speak through the Ui: a frame per verb, a spin
     # for the captured pull, a `{{v}}` / `{{x}}` note per fact with its
     # remedy, the one-line result last. `invariants` is the exception — a
     # payload other tools parse, printed bare on its stream.

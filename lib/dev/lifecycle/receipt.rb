@@ -5,18 +5,14 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a publisher says of the upload it made (dev#192, K5, K6): the
-    # one output dev takes from the black box — the destination's own
+    # What a publisher says of the upload it made: the destination's own
     # handle on what landed (a Steam build id, the formula commit, SMR's
-    # version id), or, for a script channel that reports nothing, the
-    # `run:` line that shipped. Dev adds what it knows itself — the
-    # channel, the builds and their ids, the track — and records the whole
-    # as a GitHub Deployment (DeploymentRecord); the receipt is the part
-    # only the publisher could say.
+    # version id), or for a script channel the `run:` line that shipped.
+    # Dev adds the channel, the builds and the track and records the whole
+    # as a GitHub Deployment.
     #
-    # A receipt may add a **hint**: what the operator can do now that it
-    # landed (brew's upgrade line), said by the one party that knows —
-    # `deploy` prints it last and knows nothing of the channel behind it.
+    # A receipt may add a hint: what the operator can do now that it landed.
+    # `deploy` prints it last.
     #
     # Owns the invariant that a receipt says something: an empty summary
     # would record a deploy nobody can read back.

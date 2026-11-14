@@ -29,10 +29,8 @@ require "dev/wsl_runner_host"
 module Dev
   module Cli
     module Builtins
-      # `dev runner register` — layers 3+4 of the machine doctrine (plans#26):
-      # converge, then enroll. Scope and labels compose
-      # orthogonally, with derived defaults so the common enrollments need no
-      # declaration anywhere (the dev.yml `runner:` block is retired):
+      # `dev runner register`: converge the host, then enroll it as a
+      # self-hosted runner. Scope and labels compose, with derived defaults:
       #
       #   dev runner register                    # repo scope; label = the repo name
       #   dev runner register --labels ue-engine # repo scope, custom roles
@@ -40,108 +38,61 @@ module Dev
       #   dev runner register --org --labels ai-build  # org custom pool
       #   dev runner register --org --ai-flow --slots 3  # three jobs at once
       #
-      # A self-hosted runner runs one job at a time, so a host's concurrency
-      # at a scope is how many runners it enrolls there (dev#470): `--slots
-      # N` enrolls N **slots** (Dev::RunnerSlots) — `<name>`, `<name>-2` ..
-      # `<name>-N`, the name being the hostname by default, each its own
-      # dir, `_work` and service, every one carrying the same labels. Slot
-      # 1 is exactly the enrollment register has always made, so a host from
-      # before slots has one; re-running without `--slots` keeps the count
-      # it finds, a smaller `--slots` retires the surplus (asked first), a
-      # larger one adds. Which repos may use an org host's slots is the runner
-      # group it sits in (Dev::RunnerGroups): the labels' contract names it
-      # (any ai-flow label → the `ai-flow` group dev owns and pins, see
-      # LabelContracts::AI_FLOW_GROUP) or `--group` does (a human's), and
-      # the repo this registration is for — the checkout's, the same
-      # derivation as the org and the label — is admitted to it. The act
-      # that makes a repo exclusive is the repo-scoped registration itself:
-      # when one carries labels an org group serves and the repo is among
-      # that group's repos, register asks whether this runner should be its
-      # only one and takes it out of the group on yes. So a repo's
-      # concurrency on a host is the runners it can see, nothing declared
-      # anywhere and nothing to remember; and a public repo only ever sees
-      # a pinned group.
+      # A self-hosted runner runs one job at a time, so `--slots N` enrolls
+      # N slots (`<name>`, `<name>-2` .. `<name>-N`), each its own dir,
+      # `_work` and service, all carrying the same labels. Re-running
+      # without `--slots` keeps the count it finds; a smaller `--slots`
+      # retires the surplus (asked first), a larger one adds. Which repos
+      # may use an org host's slots is the runner group it sits in: the
+      # labels' contract names it or `--group` does, and the repo this
+      # registration is for is admitted to it. A repo-scoped registration
+      # whose labels an org group serves asks whether this runner should be
+      # the repo's only one and takes the repo out of the group on yes.
       #
-      # register is idempotent and self-healing: when the enclosing checkout's
-      # lock pins an image, it first brings the engine up for that
-      # repo's resources hint — the same EngineProvisioner step as `dev up`,
-      # for the invoking user, on every OS (the runner runs as that user, as
-      # GitHub's config.sh/svc.sh do; sizes ratchet across the repos a host
-      # serves). Then it converges every advertised label's contract
-      # (agent-capability labels carry the agent host bootstrap; bare labels
-      # converge nothing), then looks for an existing
-      # enrollment at the target scope (RunnerDiscovery — every local runner
-      # dir, so dir names never matter) and amends its labels in place on
-      # GitHub (RunnerRegistry) instead of re-enrolling; only a scope nothing
-      # serves gets the full enrollment ceremony (RunnerSetup).
+      # register is idempotent. When the checkout's lock pins an image, it
+      # first brings the engine up for the repo's resources hint, for the
+      # invoking user. Then it converges every advertised label's contract,
+      # looks for an existing enrollment at the target scope and amends its
+      # labels in place on GitHub; only a scope nothing serves gets the full
+      # enrollment (RunnerSetup).
       #
       # Before amending, register checks that the enrollment on disk is the
-      # one serving GitHub (#238). Two signs it is not: more than one local
-      # enrollment for the scope (the aftermath of `config.sh --replace` —
-      # the newest dir holds the registration, an older one the service
-      # unit, neither runs), or GitHub listing the runner offline (the
-      # registration is held but nothing runs it). Either way register lists
-      # the enrollments and asks to unregister them all and enroll fresh;
-      # `--yes` answers for it; "no" changes nothing and prints the
-      # `dev runner unregister` commands to do it by hand. One enrollment,
-      # online, is the steady state and stays silent.
+      # one serving GitHub. More than one local enrollment for the scope, or
+      # GitHub listing the runner offline, means it is not; register lists
+      # the enrollments and asks to unregister them all and enroll fresh.
+      # `--yes` answers for it; "no" changes nothing and prints the `dev
+      # runner unregister` commands.
       #
-      # Register never steals a registration (dev#565). Runner names are
-      # unique per scope, and GitHub refuses a duplicate; `config.sh
-      # --replace` turns that refusal into a silent takeover — the other
-      # runner's service keeps running against a record GitHub no longer
-      # holds. So before any slot enrolls, every fresh slot's name is looked
-      # up at the scope: a name nothing holds enrolls without `--replace`;
-      # one held by this host's own registration — an enrollment of this
-      # family's (same scope, same host, same group — the partition below)
-      # whose `.runner` id is the id GitHub holds — is re-enrolled with it;
-      # any other holder refuses, naming its labels and status and pointing
-      # at `--name` (another family) or at the stale dir (another host that
-      # took this name after the registration was lost), having changed
-      # nothing. The naming scheme only decides how often that fires;
-      # uniqueness is this rule's, and identity is the registration's id.
+      # Register never steals a registration. Runner names are unique per
+      # scope, and `config.sh --replace` would silently take over another
+      # runner's record. So before any slot enrolls, every fresh slot's name
+      # is looked up at the scope: a name nothing holds enrolls without
+      # `--replace`; one held by this host's own registration (same scope,
+      # host and group, same `.runner` id) is re-enrolled with it; any other
+      # holder refuses, naming its labels and status.
       #
-      # On Linux the enrollment is the **runner user's**, by rule (dev#310,
-      # RunnerUser): before anything enrolls, register converges the shared
-      # data root and the runner user (`runner`; `--as` renames it) in one
-      # sudo session, and refuses — naming the one `gh auth login` command —
-      # while that user has no gh login, since every job on the host fetches
-      # as it. Enrollments are looked for under both homes; one owned by
-      # anyone but the runner user (the operator's own, from before the
-      # rule) is drift and takes the same retire-and-enroll-fresh path as a
-      # superseded one, torn down as its owner and enrolled as the runner
-      # user. With a checkout, the runner user's reach over its lock — every
-      # `gh` pin's repo, every image's floor package — is checked before
-      # enrolling (HostReach); a grant it lacks is this command's message,
-      # not a red run an hour in. macOS has no runner user and register runs
-      # as it always has.
+      # On Linux the enrollment is the runner user's: register converges the
+      # shared data root and the runner user (`runner`; `--as` renames it) in
+      # one sudo session, and refuses while that user has no gh login. An
+      # enrollment owned by anyone else is drift and takes the
+      # retire-and-enroll-fresh path. With a checkout, the runner user's
+      # reach over its lock is checked before enrolling (HostReach). macOS
+      # has no runner user.
       #
-      # Inside a WSL2 distro the host has one more contract (dev#261,
-      # WslRunnerHost): the distro is dormant until a client session holds
-      # it, and WSL stops it ~20 s after the last one ends — runner services
-      # included — so register converges the Windows side a WSL runner needs
-      # before enrolling: the logon keepalive task that boots the distro and
-      # holds a session, systemd in `/etc/wsl.conf`, and `.wslconfig`'s size
-      # (asserted here for every enrollment, not assumed from a `dev up`).
-      # It needs the session's interop and refuses without it.
+      # Inside a WSL2 distro register also converges the Windows side a
+      # runner needs (WslRunnerHost): the logon keepalive task, systemd in
+      # `/etc/wsl.conf`, and `.wslconfig`'s size. It needs the session's
+      # interop and refuses without it.
       #
       # Enrollment state is inspected, never recorded: the labels live on
-      # GitHub, the scope in the runner dir's own .runner record — nothing in
-      # dev.yml, Settings, or any inventory file.
+      # GitHub, the scope in the runner dir's own `.runner` record.
       #
       # `--org` needs no project; bare register runs inside the checkout it
-      # enrolls (its `engine:` hint sizes the engine) and makes that repo's
-      # **enrolled runner** (Dev::EnrolledRunner): repo scope, the repo's
-      # name as label — the GitHub spelling, lowercased, since a repo-scoped
-      # runner is that repo's object and the workflows targeting it live
-      # there; dev.yml `name:` is the package identity and may differ. That
-      # enrollment is what the lifecycle verbs' remote dispatch targets from
-      # a machine that is not a build's environment, found through the same
-      # derivation over the Actions API (Dev::EnrolledRunnerLookup).
-      # `--dir`/`--name`/`--repo` override the enrollment identity (`--repo`
-      # moves the label with it); `--agent-user` the ai-agent default run-as
-      # user. A leaf of the `runner` group (RunnerStatusCommand and
-      # RunnerUnregisterCommand are the others).
+      # enrolls and makes that repo's enrolled runner (Dev::EnrolledRunner):
+      # repo scope, the repo's GitHub name lowercased as label. That
+      # enrollment is what the lifecycle verbs' remote dispatch targets.
+      # `--dir`/`--name`/`--repo` override the enrollment identity;
+      # `--agent-user` the ai-agent default run-as user.
       class RunnerRegisterCommand < BuiltinCommand
         extend T::Sig
 
@@ -157,7 +108,7 @@ module Dev
         # A slot's name is registered at the scope by another family — not
         # this host's, this scope's and this group's own — so register did
         # not enroll rather than let `config.sh --replace` take it over
-        # (dev#565). A RuntimeError so the CLI boundary prints it and exits 1.
+        # A RuntimeError so the CLI boundary prints it and exits 1.
         class RegistrationHeldError < RuntimeError; end
 
         ORG_FLAG = "--org"
@@ -257,7 +208,7 @@ module Dev
           runner_user_factory: ->(name, ui) { Dev::RunnerUser.for_host(name: name, ui: ui) },
           # The shared data root the runner user joins; nil off Linux.
           data_root_provisioner: Dev::LinuxDataRootProvisioner.for_host,
-          # The Windows side a WSL runner needs (dev#261); nil off WSL.
+          # The Windows side a WSL runner needs; nil off WSL.
           wsl_runner_host: Dev::WslRunnerHost.for_host,
           pins_reader: ->(root) { Dev::Deps::Lockfile.new(dir: root).read },
           reach_factory: ->(identity) { Dev::HostReach.new(identity: identity) },
@@ -268,7 +219,7 @@ module Dev
         )
           super()
           @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
-          # The operator's own preconditions, probed first (dev#493).
+          # The operator's own preconditions, probed first.
           @operator_access = T.let(
             Dev::OperatorAccess.new(registry: registry, refresher: refresher),
             Dev::OperatorAccess,
@@ -306,8 +257,8 @@ module Dev
             retires the surplus (asked first). Which repos may use an org host's slots is
             their runner group, and the repo this registration is for — the checkout's,
             or --repo's — is admitted to it. Agent labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
-            which dev owns: created when missing, pinned to ai-flow's workflows (plans#5
-            H3), healed when the console drifted — nothing to remember; its selection is
+            which dev owns: created when missing, pinned to ai-flow's workflows, healed
+            when the console drifted — nothing to remember; its selection is
             each repo's build concurrency on the host, so admission is deliberate.
             #{LabelContracts::ORCHESTRATOR_LABEL} sits in its own '#{LabelContracts::ORCHESTRATOR_GROUP.name}' group, same pin, open to
             every repo (nothing to gate; nothing admitted); mixing the two in --labels is
@@ -375,7 +326,7 @@ module Dev
             own brew user — register has it trust the deployment's tap the same way.
 
             Inside a WSL2 distro, register also converges what a runner there needs to
-            survive a reboot (dev#261): WSL stops a distro ~20 s after its last client
+            survive a reboot: WSL stops a distro ~20 s after its last client
             session ends, and the runner's systemd service is not a session, so a Task
             Scheduler task at log on (`Start-WSL-<distro>-Runner`) holds one open —
             `#{WslKeepaliveTask::EXECUTE} --headless wsl.exe -d <distro> -u root -- sleep infinity`, no time
@@ -386,7 +337,7 @@ module Dev
             script registered as an administrator takes one UAC prompt. A restart dev asks
             for is yours (`wsl --shutdown`, then `Start-ScheduledTask` or a new logon).
 
-            An agent host is a Mac or a Linux dev host (plans#59). Agent labels converge the
+            An agent host is a Mac or a Linux dev host. Agent labels converge the
             same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
             renames it) in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
             sudoers edge from the runner user to the agent (NOPASSWD, SETENV — the operator on a
@@ -397,8 +348,8 @@ module Dev
             drop-in on Linux. A Mac provisions the shared root (#{DataRoot::SHARED_ROOT}) and
             gives the agent its own colima when the checkout pins an image; a Linux host
             joins the agent to the root `dev up` made and has no agent engine — an
-            image-built repo's agent runs inside the project's container (plans#61), so
-            agent labels for such a repo are refused there until that lands. A Mac
+            image-built repo's agent runs inside the project's container, so
+            agent labels for such a repo are refused there. A Mac
             bootstrapped before the one group name re-groups its root and `_work` trees from
             `#{AgentBootstrap::Darwin::LEGACY_GROUP}` to `#{DataRoot::GROUP}` on its next register.
 
@@ -483,7 +434,7 @@ module Dev
             end
           end
 
-          # The WSL runner host (dev#261): the logon keepalive, systemd and
+          # The WSL runner host: the logon keepalive, systemd and
           # `.wslconfig` a runner in a WSL2 distro needs to survive a reboot.
           # After the runner user (its wsl.conf write rides the same sudo
           # session), before any contract or enrollment: a host that goes
@@ -530,7 +481,7 @@ module Dev
           # Before anything is retired or enrolled: an enrollment of this
           # host's whose record GitHub holds under another registration id
           # is a look-alike, not this host's — refused here, with nothing
-          # changed (dev#565).
+          # changed.
           refuse_look_alikes!(scope, config.dir ? picked : enrollments, known, ui: context.ui)
           naming = resolve_naming(enrollments, others, config, setup, slots)
           by_slot, runners = enrolled_slots(scope, enrollments, naming, config, known)
@@ -551,7 +502,7 @@ module Dev
           # whether config.sh may --replace what GitHub holds under its name
           # — asked of every one before any enrolls or the surplus retires,
           # so a name another family holds stops register with nothing
-          # changed (dev#565).
+          # changed.
           fresh = (1..count).reject do |slot|
             enrollment = by_slot[slot]&.first
             enrollment && runners.key?(enrollment.name)
@@ -601,8 +552,7 @@ module Dev
 
         private
 
-        # Who may use the slots (dev#470: a repo's concurrency on a host is
-        # the runners it can see): the repo this registration is for — the
+        # Who may use the slots: the repo this registration is for — the
         # checkout's, or `--repo`'s, the same derivation as the org and the
         # label — is admitted to their group. Slots naming no group
         # sit in GitHub's Default, so that is the group converged for them.
@@ -619,7 +569,7 @@ module Dev
           @groups.admit!(access, repo, org: scope, ui: ui)
         end
 
-        # The exclusion, derived (dev#470): a repo-scoped runner is that
+        # The exclusion, derived: a repo-scoped runner is that
         # repo's alone, so when its labels are ones an org group serves and
         # the repo may use that group too, the two pool — its jobs land on
         # either. That may be wanted (extra capacity) or not (cellbound-3d's
@@ -704,7 +654,7 @@ module Dev
         end
 
         # The scope's enrollments split into this family's and the other
-        # families' (dev#557). A family is the slots one `register` enrolls
+        # families'. A family is the slots one `register` enrolls
         # — one label set — and two are told apart by the runner group
         # their labels oblige (LabelContracts.group_for): the agent set sits
         # in ai-flow's, the orchestrator label in its own. An enrollment
@@ -739,7 +689,7 @@ module Dev
         # How this host's slots at the scope are named: slot 1 by `--name`,
         # else by the one base the family's enrollments share, else the
         # hostname — or, when another family at the scope already holds the
-        # hostname, `<hostname>-<first label>` (dev#557): runner names are
+        # hostname, `<hostname>-<first label>`: runner names are
         # unique per scope, and the pool's `JPSFF-2…` and the agent family's
         # `JPSFF-2…` would otherwise be the same slots (a collision this
         # naming does not avoid is `replace?`'s refusal). Slot 1's dir is its
@@ -831,7 +781,7 @@ module Dev
 
         # Refuse when a local enrollment's name is held on GitHub by a
         # registration that is not the one the enrollment records
-        # (dev#565). Own is the registration, not the name: names are
+        # Own is the registration, not the name: names are
         # reused (another machine with this hostname, enrolled after this
         # registration was lost), ids are not, so a `.runner` under the
         # name with another id is a look-alike — and `--replace`, or the
@@ -864,7 +814,7 @@ module Dev
         end
 
         # Whether config.sh may `--replace` the registration held under
-        # `name` at the scope (dev#565): no when nothing holds it (nothing
+        # `name` at the scope: no when nothing holds it (nothing
         # to replace); yes only when the holder is this host's own
         # registration — an enrollment of this family's (same scope, host
         # and group by partition_family's construction; the `--dir`'s own

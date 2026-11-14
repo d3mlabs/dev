@@ -9,8 +9,8 @@ require "dev/project_container"
 module Dev
   # Runs the project's dependency install inside its build container:
   # `dev deps install`, as the container's own dev, in the container's
-  # workspace at a snapshot of the checkout (ProjectContainer, dev#421).
-  # The container is a build host with its own data root (ADR-0008), so
+  # workspace at a snapshot of the checkout (ProjectContainer).
+  # The container is a build host with its own data root, so
   # this is the install of the whole linux lock — toolchain, gh trees,
   # gems — into the container's volumes, and the lisps it writes land in
   # the workspace the container's commands run from. The image's run_env

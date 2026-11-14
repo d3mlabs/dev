@@ -6,8 +6,8 @@
 # hand, never at image build. The tap only ever carries the latest formula,
 # so the exact version comes from the tap's history: the commit whose
 # Formula/dev-core.rb points at v<version>.tar.gz is checked out and
-# installed from. Linuxbrew lives in the container's own prefix volume
-# (ADR-0008): a container whose image carries no brew — the base image is OS
+# installed from. Linuxbrew lives in the container's own prefix
+# volume: a container whose image carries no brew — the base image is OS
 # + Wine + user — gets Homebrew installed there first, once per volume; an
 # image that still bakes Linuxbrew in (bin/docker-install-build-deps.sh)
 # finds it and skips the bootstrap. Either way a container whose formulae
@@ -35,7 +35,7 @@ export HOMEBREW_NO_SANDBOX_LINUX=1
 # ~/.homebrew, or a trust.json already in it, is group- or world-writable —
 # and trust is evaluated by `brew trust`, `brew tap` and `brew install`
 # alike, so one such dir fails the whole provision. Older brews created the
-# dir with the caller's umask (a 002 umask left one container at 775, dev#406);
+# dir with the caller's umask (a 002 umask leaves it at 775);
 # nothing else in dev sets the mode. Hardened before the first brew call,
 # owner-only bits removed, so a 700/755 dir is untouched. Entries are
 # iterated with an existence check because an empty dir leaves the glob
@@ -55,7 +55,7 @@ if ! command -v brew >/dev/null 2>&1; then
   # running it (the image's user owns the volume) and refuses root. Pinned
   # to a Homebrew/install commit rather than HEAD, the same pin as the image
   # bootstrap: this pipes third-party code to bash, and HEAD is a mutable
-  # ref an upstream compromise could repoint (dev#99). Bump deliberately;
+  # ref an upstream compromise could repoint. Bump deliberately;
   # a stale pin still installs current Homebrew.
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/24173182915f24bdd52a22fd073e421953b2a252/install.sh)"
 fi

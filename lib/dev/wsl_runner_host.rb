@@ -13,7 +13,7 @@ require "dev/wsl_keepalive_task"
 require "dev/wsl_provisioner"
 
 module Dev
-  # The WSL runner host (dev#261): what a runner enrolled in a WSL2 distro
+  # The WSL runner host: what a runner enrolled in a WSL2 distro
   # needs of the Windows side to survive a reboot, converged by `dev runner
   # register` before it enrolls and re-derived by `dev runner status`. The
   # same seam as the agent host bootstrap — host facts a label-less
@@ -91,7 +91,7 @@ module Dev
     # on first use, not at construction: the CLI builds every builtin at
     # startup, and a job under the runner's systemd service has no
     # WSL_DISTRO_NAME in its env — asking there would stop every `dev`
-    # command on the box before it parsed argv (dev#564). The name is
+    # command on the box before it parsed argv. The name is
     # demanded where the keepalive is converged or inspected.
     #
     # @return [WslKeepaliveTask]

@@ -1139,7 +1139,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     error = raises Dev::RunnerGroups::UnpinnedGroupError
-    error.message.include?("plans#5 H3")
+    error.message.include?("Pin the group to the workflows that may use it")
     registry.group_writes == []
     harness.events == [[:run]]
   end

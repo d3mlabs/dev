@@ -33,7 +33,7 @@ module Dev
   # that platform) and the project — and, on a Linux host, the data root —
   # is bind-mounted into the container. Per keg because a venv runs the
   # interpreter it was built on: a new keg is a new venv, and presence is
-  # proof (ADR-0009). `venv_key` is the one place the store path is decided,
+  # proof. `venv_key` is the one place the store path is decided,
   # `venv_path` the one place the project-side link is.
   module ShadowenvPython
     extend T::Sig

@@ -15,7 +15,7 @@ module Dev
   module Cli
     module Builtins
       # `dev build [BUILD] [--target T] [--platform P] [--config C]`: make one
-      # build's install through its target's builder (dev#192, K1, K4). The
+      # build's install through its target's builder. The
       # verb exists iff the project declares `targets:`, and acts on one
       # build: the positional (a name or a pattern, an omitted axis taking
       # the target's first), its long form in flags, or — bare — the first

@@ -12,9 +12,9 @@ module Dev
       # its images and their containers, and what `dev container up` would do
       # about it: one block per image, blank-line separated. A pure report:
       # the image is probed locally and in the registry, never pulled or
-      # built; containers are listed, never started. A pinned image (dev#277)
+      # built; containers are listed, never started. A pinned image
       # is also described — its floor by digest and its platform — and its
-      # registry is probed from inside a login session (dev#313), so a private
+      # registry is probed from inside a login session, so a private
       # registry answers truthfully; a host without a credential sees the
       # registry half as unknown, not absent.
       class ContainerStatusCommand < ContainerCommand

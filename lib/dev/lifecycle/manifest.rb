@@ -13,22 +13,18 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The manifest of a lifecycle node: one variant per node kind dev keeps
-    # a record of (dev#192, K0) — an **artifact** (`build-id.json`, beside
-    # the archive in the store) and a **release** (`release.json`, an asset
-    # of the GitHub release). A `deploy` produces no node and so has no
-    # variant: its output is a receipt on the forge (K6).
+    # The manifest of a lifecycle node, one variant per kind: an artifact
+    # (`build-id.json`, beside the archive in the store) and a release
+    # (`release.json`, an asset of the GitHub release). A deploy produces no
+    # node; its record is a GitHub Deployment.
     #
     # The variants share a Stamp (when, by which dev, under which schema)
-    # and each owns its `current?` rule, so the rule sits with the data it
-    # reads rather than in one struct of nilable columns. Sealed: a third
-    # kind is unrepresentable, and a reader matching on the variant has a
-    # T.absurd proof.
+    # and each owns its `current?` rule. Sealed, so a reader matching on the
+    # variant has a T.absurd proof.
     #
-    # The files are string-keyed JSON, flat but for the stamp and the
-    # release's archive list; a build is written as its fully-qualified
-    # name and read back through the grammar, which is why reading needs
-    # the project's targets.
+    # The files are string-keyed JSON. A build is written as its
+    # fully-qualified name and read back through the grammar, which is why
+    # reading needs the project's targets.
     module Manifest
       extend T::Sig
       extend T::Helpers
@@ -105,7 +101,7 @@ module Dev
       def file_name; end
 
       # Whether the node this manifest describes is up to date with respect
-      # to a working tree — the per-kind rule of K0's table.
+      # to a working tree.
       #
       # @param state [GitState] the tree as it is now
       # @return [Boolean]
@@ -155,8 +151,8 @@ module Dev
 
       # `build-id.json`: what one artifact in the store was packaged from.
       # Current when the tree it was packaged from was clean and is the
-      # tree as it is now — so `package` rebuilds on any change and `deploy`
-      # refuses a stale one (K4).
+      # tree as it is now, so `package` rebuilds on any change and `deploy`
+      # refuses a stale one.
       class Artifact
         extend T::Sig
         extend T::Helpers
@@ -298,10 +294,9 @@ module Dev
         end
       end
 
-      # `release.json`: what a cut made — the tag, its commit, and the
+      # `release.json`: what a cut made: the tag, its commit, and the
       # archives attached to the GitHub release with the build ids they
-      # were packaged under. Always current: the tag is immutable, and the
-      # release records nothing about deployments (K6).
+      # were packaged under. Always current: the tag is immutable.
       class Release
         extend T::Sig
         extend T::Helpers

@@ -8,14 +8,11 @@ module Dev
     # T::Enum body may hold only its own values.
     class UnknownTrackError < ArgumentError; end
 
-    # The track a deploy ships on (dev#192, K5): a channel's protocol takes
-    # one — Steam's branch, SMR's unreleased/released, a staging rsync has
-    # a single one — and the source decides it, never the operator: an
-    # artifact from the **store** goes to the testing track, an archive of
-    # a **release** (`deploy --release`, dev#425) to the live one. That is
-    # the whole statement of "irreversible channel": a deploy from the
-    # store never touches live. Closed, and spelled one way for the
-    # publishers, the script env (`DEV_TRACK`) and the receipt (dev#423).
+    # The track a deploy ships on. The source decides it, never the
+    # operator: an artifact from the store goes to the testing track, an
+    # archive of a release to the live one, so a deploy from the store never
+    # touches live. Spelled one way for the publishers, the script env
+    # (`DEV_TRACK`) and the deployment record.
     class Track < T::Enum
       extend T::Sig
 

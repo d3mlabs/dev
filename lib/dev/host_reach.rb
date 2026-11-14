@@ -7,7 +7,7 @@ require "dev/runner_user"
 
 module Dev
   # Whether the host identity can read what a repo's jobs fetch — checked,
-  # not remembered (dev#310). A job on a Linux host fetches its private
+  # not remembered. A job on a Linux host fetches its private
   # dependencies with the runner user's gh login (the machine user): the
   # lock's `gh` pins (`gh api repos/<repo>/tarball`, `gh release download`)
   # and the image floor it pulls (`ghcr.io/<owner>/<name>`, through

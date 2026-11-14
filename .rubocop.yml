@@ -7,7 +7,7 @@ inherit_mode:
   merge:
     - Exclude
 
-# dev's own cop: the one layering rule (ADR-0014). Not shipped — the
+# dev's own cop: the one layering rule (docs/DECISIONS.md, ADR-0014). Not shipped — the
 # gate's, not the tool's.
 require:
   - ./rubocop/cop/dev/shell_reference
@@ -43,6 +43,6 @@ Sorbet/StrictSigil:
 
 # Nothing under lib/dev outside the shell (lib/dev/cli/) references a
 # `Dev::Cli::*` constant — features and the vocabulary never depend on the
-# shell (ADR-0014, dev#537).
+# shell.
 Dev/ShellReference:
   Enabled: true

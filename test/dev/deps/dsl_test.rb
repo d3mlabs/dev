@@ -549,7 +549,6 @@ class Dev::Deps::DSLTest < Minitest::Test
     error.message.include?("gh \"UnrealEngine\"")
     error.message.include?("~/.dev/gh/d3mlabs/unreal-engine/")
     error.message.include?("mv ~/.dev/engines/ue5/<version> ~/.dev/gh/d3mlabs/unreal-engine/")
-    error.message.include?("dev#271")
   end
 
   test "egs() declares Epic's BuildPatchTool by its public zip unless a url: names a mirror (dev#426)" do

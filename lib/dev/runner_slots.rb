@@ -2,11 +2,11 @@
 # frozen_string_literal: true
 
 module Dev
-  # How one host's slots at one scope are named (dev#470): N identical
+  # How one host's slots at one scope are named: N identical
   # runners with one label set, each its own dir, `_work` and service,
   # because a self-hosted runner executes one job at a time and N jobs at
   # once means N registrations. Nothing records that the slots belong
-  # together — the names do (plans#26: inspected, never recorded): slot 1
+  # together — the names do (inspected, never recorded): slot 1
   # is `<base>` — the runner's name, the hostname by default, which is
   # what one enrollment was called before slots existed, so an existing
   # enrollment is one slot by construction — and slot n is `<base>-<n>`.

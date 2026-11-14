@@ -8,14 +8,14 @@ require "dev/terminal_owner"
 module Dev
   # The UI vocabulary of dev's own output. A project command gets a
   # colored header before dev execs into it and handles its own UI from
-  # there; a lifecycle verb (`release`, `deploy`, dev#514) speaks this
-  # vocabulary — the one `bin/release.rb` had, and plans#52's: a timed
+  # there; a lifecycle verb (`release`, `deploy`) speaks this
+  # vocabulary: a timed
   # **frame** around a stage; a **spin** for an action under a spinner;
   # a **step** for an action that owns the terminal; a **confirm**
   # before anything irreversible; **note** for a formatted line.
   #
   # The split between spin and step is the stdio contract, learned the
-  # hard way (plans#52): a spinner captures every Ruby-level write and
+  # hard way: a spinner captures every Ruby-level write and
   # masks stdin while it animates, so only in-process work or a
   # captured subprocess (`Open3.capture3`, stdin supplied) may run
   # under one. A child that inherits the terminal — a `build:` script,
@@ -27,7 +27,7 @@ module Dev
   #
   # The StdoutRouter — CLI::UI's Ruby-level `$stdout` writer, which
   # prefixes each line with the open frame's bar — is turned on by the
-  # first frame and stays on: cli-ui cannot turn it on twice (dev#523),
+  # first frame and stays on: cli-ui cannot turn it on twice,
   # and with no frame open it prefixes nothing. It is Ruby-level: a
   # child's own lines are never prefixed, by any tier, and nothing
   # here pretends otherwise.
@@ -36,7 +36,7 @@ module Dev
   # at bin/dev) and NoUi here (pipe/file/tests — the same facts as plain
   # lines, no escape codes, nobody to ask). The vocabulary lives in
   # `lib` so a feature may take `ui:` and a project script may require
-  # it (ADR-0014).
+  # it.
   module Ui
     extend T::Sig
     extend T::Helpers
@@ -51,7 +51,7 @@ module Dev
 
     # The one line about where a command or verb runs, printed only at
     # a crossing — when it leaves this machine for a build host over a
-    # snapshot of the tree (dev#409, dev#420, dev#421): where it went
+    # snapshot of the tree: where it went
     # and from which commit, `→ on ue-engine-hosted, snapshot
     # 3f2a1c9d8e7b`, `→ in snappy-linux (container), snapshot …`. Dim: a
     # note under the header, not a header. Native and host runs print
@@ -112,7 +112,7 @@ module Dev
     # about to do something irreversible refuses rather than assume.
     # The default is the answer offered first — no, unless the caller
     # says otherwise: every question dev asks unprompted is about
-    # something it would not do unasked (dev#533).
+    # something it would not do unasked.
     #
     # @param question [String]
     # @param default [Boolean] the answer Enter gives

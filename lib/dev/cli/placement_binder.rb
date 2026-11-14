@@ -10,11 +10,11 @@ require_relative "target_placement"
 module Dev
   module Cli
     # The composition root's step between parsing dev.yml and assembling the
-    # command tree (dev#409): every `environment:` reference bound against
+    # command tree: every `environment:` reference bound against
     # the lock into its Placement — each ProjectCommand's, the tree's shape
     # untouched (#bind), each target's, one per platform it declares
-    # (#bind_targets, dev#192 K8), and each channel's protocol
-    # (#bind_channels, K5). Binding here, before
+    # (#bind_targets), and each channel's protocol
+    # (#bind_channels). Binding here, before
     # CommandRepository#assemble, is what makes an unknown or ambiguous name
     # fail at load — `dev help` included — instead of when the command runs,
     # and what lets the usage printer say where each command runs without a
@@ -82,9 +82,9 @@ module Dev
       end
 
       # Bind every channel's protocol environment — a script channel's
-      # `run:` is placed as a command's body is (dev#192, K5); an
+      # `run:` is placed as a command's body is; an
       # integration's publisher is dev's own code and runs where dev runs,
-      # so it is placed on the host without a reference to bind (dev#422).
+      # so it is placed on the host without a reference to bind.
       # In declaration order.
       #
       # @param channels [Hash{String => Lifecycle::Channel}] the parsed channels

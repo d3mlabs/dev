@@ -7,14 +7,9 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # The `MANIFEST` of a split archive (dev#192, K1): one line per part,
-    # `<sha256>  <part file name>`, in part order — the shape `sha256sum
-    # -c` reads, so a reader checks a downloaded set with the tool it has.
-    # The one spelling of that file for the three places that touch it:
-    # the Archive writes it beside the parts it split, ReleaseAssets
-    # rewrites it under the parts' release names, and a release's download
-    # (ReleaseArchives, dev#425) reads it to know which parts to fetch and
-    # what each must hash to.
+    # The `MANIFEST` of a split archive: one `<sha256>  <part file name>`
+    # line per part, in part order, the shape `sha256sum -c` reads. Written
+    # by Archive, renamed by ReleaseAssets, read by ReleaseArchives.
     class PartList < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

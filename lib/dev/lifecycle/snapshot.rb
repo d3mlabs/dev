@@ -7,10 +7,8 @@ require_relative "../value_equality"
 module Dev
   module Lifecycle
     # A working-tree snapshot as the remote side can reach it: the commit
-    # and the branch it was pushed to (dev#192, K7). What SnapshotSync
-    # hands the dispatch for the time the branch exists — the `ref` a
-    # `workflow_dispatch` names, the sha the crossing line prints and the
-    # container fetches.
+    # and the branch it was pushed to. The `ref` a `workflow_dispatch`
+    # names, the sha the crossing line prints and the container fetches.
     class Snapshot < T::Struct
       extend T::Sig
       include Dev::ValueEquality::Derived

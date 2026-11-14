@@ -12,7 +12,7 @@ module Dev
     # Pure serialization: locks/reads Dependencies to/from the YAML lockfile.
     # No resolution logic — that's the Resolver's job.
     #
-    # One lockfile, deps.lock, every group in it (ADR-0011). Entries nest by
+    # One lockfile, deps.lock, every group in it. Entries nest by
     # integration, mirroring package identity (integration + name), so the
     # same name under two integrations occupies two keys; a pin's install
     # scoping (host, env) is an attribute beside its version:
@@ -23,16 +23,15 @@ module Dev
     #   cmake:
     #     zlib: { group: app, version: "1.3.1" }
     #
-    # The reader also accepts the legacy flat format (name-keyed, integration
-    # recorded in the value hash) so repos keep installing from lockfiles
-    # written before the nesting; that shim is deleted once every consumer
-    # repo's lockfiles have been rewritten by dev deps update (issue #146).
+    # The reader also accepts the flat format (name-keyed, integration
+    # recorded in the value hash) so a lock written in it still installs
+    # until its next `dev deps update`.
     class Lockfile
       extend T::Sig
 
-      # The checkout still carries build-deps.lock, which dev no longer reads:
-      # its pins would be silently missing from the install. dev deps update
-      # folds them into deps.lock and removes the file.
+      # The checkout still carries build-deps.lock, which dev does not
+      # read: its pins would be silently missing from the install. dev deps
+      # update folds them into deps.lock and removes the file.
       class RetiredBuildLockError < StandardError; end
 
       HEADER = <<~COMMENT
@@ -48,8 +47,9 @@ module Dev
 
       DEPS_LOCK_FILE = "deps.lock"
 
-      # The build group's former lockfile, retired by ADR-0011. Named only to
-      # remove it on re-lock and to refuse an install that would skip it.
+      # The build group's separate lockfile, which dev no longer writes.
+      # Named only to remove it on re-lock and to refuse an install that
+      # would skip it.
       RETIRED_BUILD_LOCK_FILE = "build-deps.lock"
 
       # @param dir [Pathname] directory containing the lockfile
@@ -59,8 +59,8 @@ module Dev
         @manifest_digest = T.let(nil, T.nilable(String))
       end
 
-      # Lock all dependencies into deps.lock. A retired build-deps.lock beside
-      # it is removed: this write is the re-lock that folds it in.
+      # Lock all dependencies into deps.lock. A build-deps.lock beside it is
+      # removed: this write is the re-lock that folds it in.
       #
       # @param deps [Array<Dependency>]
       # @param manifest_digest [String, nil] SHA-256 hex of the dependencies.rb
@@ -75,8 +75,7 @@ module Dev
       end
 
       # The manifest digest recorded when the lockfile was generated, or nil
-      # for a lockfile predating the staleness check (treated as unknown, not
-      # stale — legacy locks shouldn't nag until their next dev deps update).
+      # for a lockfile with no digest header (treated as unknown, not stale).
       #
       # @return [String, nil] SHA-256 hex
       sig { returns(T.nilable(String)) }
@@ -99,7 +98,7 @@ module Dev
       def read
         if (@dir / RETIRED_BUILD_LOCK_FILE).exist?
           raise RetiredBuildLockError,
-            "#{@dir / RETIRED_BUILD_LOCK_FILE} is retired (ADR-0011): dev reads one lockfile, #{DEPS_LOCK_FILE}. " \
+            "#{@dir / RETIRED_BUILD_LOCK_FILE} is retired: dev reads one lockfile, #{DEPS_LOCK_FILE}. " \
               "Run dev deps update to fold it in and remove it."
         end
 
@@ -107,10 +106,9 @@ module Dev
       end
 
       # The pins a re-lock starts from (PinCarryover's previous list):
-      # deps.lock as it is, with no refusal of a retired build-deps.lock —
-      # this read precedes the write that removes it, and the command the
-      # refusal points at has to be able to run. The retired file's own pins
-      # are not read; a formula that only it named resolves afresh once.
+      # deps.lock as it is, with no refusal of a build-deps.lock, since this
+      # read precedes the write that removes it. That file's own pins are
+      # not read; a formula that only it named resolves afresh once.
       #
       # @return [Array<Dependency>]
       sig { returns(T::Array[Dependency]) }

@@ -5,7 +5,7 @@ require "dev/environment_image"
 require_relative "value_equality"
 
 module Dev
-  # What a dev.yml `environment:` key names, as the parser emits it (dev#409):
+  # What a dev.yml `environment:` key names, as the parser emits it:
   # the host, or an `image` block of dependencies.rb by name. A reference,
   # not a resolution — the parser is the dev.yml boundary and knows nothing
   # of the lock; the composition root binds every reference against the
@@ -14,7 +14,7 @@ module Dev
   #
   # A standalone value rather than a field private to ProjectCommand: a
   # lifecycle target names its environment with the same key and the same
-  # two shapes (dev#192, Lifecycle::TargetEnvironment), and binds through
+  # two shapes (Lifecycle::TargetEnvironment), and binds through
   # the same seam — which is why it lives in lib beside EnvironmentImage,
   # where the lifecycle vocabulary can reach it, and not in the CLI core.
   #

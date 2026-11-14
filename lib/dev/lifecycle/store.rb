@@ -13,33 +13,22 @@ require_relative "target"
 module Dev
   module Lifecycle
     # The artifact store of one project: `<data root>/artifacts/<project>/
-    # <build>/{<archive>, build-id.json, install/}` (dev#192, K9) — one
-    # directory per build, overwritten in place, the manifest authoritative
-    # (lifted from cellbound-3d's `Staging::Slots`), the builder's install
-    # beside the archive it was packaged into. Under the data root, not the
-    # checkout: a checkout clean wipes `dist/`, and one host serves several
-    # checkouts of a project. Keyed by the project's dev.yml `name`, as every
-    # per-project state in the store is.
+    # <build>/{<archive>, build-id.json, install/}`, one directory per
+    # build, overwritten in place, the manifest authoritative. Under the
+    # data root rather than the checkout, so one host serves several
+    # checkouts of a project. Keyed by the project's dev.yml `name`.
     #
-    # The store reads only the builds the project declares: a directory
-    # without a manifest is not an artifact (a packaging that never
-    # finished), and a directory for a build no target declares any more is
-    # an orphan this store does not see (`dev cache gc` reclaims it). A
-    # directory whose manifest names another build is corrupt and an error,
-    # because the name is only an index and the manifest is the truth.
+    # The store reads only the builds the project declares. A directory
+    # without a manifest is not an artifact; a directory for a build no
+    # target declares is an orphan `dev cache gc` reclaims; a directory
+    # whose manifest names another build is corrupt and an error.
     #
-    # Beside the builds, one dot-directory per channel — `.<channel>/` —
-    # is a publisher's **scratch** (dev#192, K5): where a channel unpacks
-    # or wraps the read-only archives into the destination's form (a Steam
-    # depot tree, a tap clone). Dot-prefixed so it can never collide with
-    # a build's name (the target grammar admits no leading dot), and the
-    # publisher's own: the store hands out the path and reads nothing in it.
-    # One more dot-directory, `.releases/<tag>/`, is dev's own: where
-    # `deploy --release` keeps a release's `release.json` and the archives
-    # it downloaded and verified (dev#425), so a second channel shipping
-    # the same release reads them from here instead of the forge. No
-    # channel may be named `releases` (ChannelParser), which is what keeps
-    # the two apart.
+    # Beside the builds, `.<channel>/` is a publisher's scratch, where a
+    # channel unpacks or wraps the read-only archives; the store hands out
+    # the path and reads nothing in it. `.releases/<tag>/` is where `deploy
+    # --release` keeps a release's `release.json` and verified archives, so
+    # a second channel shipping the same release reads them from here. No
+    # channel may be named `releases`.
     class Store
       extend T::Sig
 
@@ -75,11 +64,8 @@ module Dev
       end
 
       # Where a build's install goes: the directory the builder writes
-      # (`DEV_INSTALL`) and the packager reads, beside the archive it
-      # becomes. Inside the artifact directory so one build's state is one
-      # directory, reclaimed as one; the manifest alone says whether the
-      # directory is an artifact, so the install's presence changes nothing
-      # the store reads.
+      # (`DEV_INSTALL`) and the packager reads, inside the artifact
+      # directory so one build's state is reclaimed as one.
       #
       # @param build [Build]
       # @return [Pathname]

@@ -182,6 +182,6 @@ class Dev::LabelContractsTest < Minitest::Test
     Then
     error = raises Dev::AgentBootstrap::UnsupportedPlatformError
     error.message.include?("windows")
-    error.message.include?("plans#59")
+    error.message.include?("a Mac or a Linux dev host")
   end
 end

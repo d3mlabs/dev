@@ -8,7 +8,7 @@ require_relative "../value_equality"
 
 module Dev
   module Cli
-    # Where a lifecycle verb's seam executes (dev#192, K8): a sealed
+    # Where a lifecycle verb's seam executes: a sealed
     # two-level type — `Native`, the seam runs here; `Remote(transport)`,
     # the verb is re-invoked on a host that has the build's environment
     # and the artifact stays with that host. The one decision site is
@@ -21,9 +21,9 @@ module Dev
     # is resolved only for a seam that runs here: what it reads — the
     # tree's state, the store's artifacts — is this machine's, and a verb
     # that leaves reads the host's instead (`deploy` selects from the
-    # host's store, K10).
+    # host's store).
     #
-    # Neither ADR-0008's *build host* (the (machine, platform) pair owning a
+    # Neither a *build host* (the (machine, platform) pair owning a
     # data root — the result of dispatching) nor Placement (image or host on
     # this machine — the host rule's input, what the resolver reads).
     #
@@ -147,7 +147,7 @@ module Dev
       end
 
       # The verb runs on a host that has the build's environment, reached
-      # through a Transport (dev#420, K7, K10): the working tree crosses as
+      # through a Transport: the working tree crosses as
       # a snapshot branch for the dispatch's duration (Lifecycle::SnapshotSync
       # — refused first if a project workflow would run on the push), one
       # dim line says where the verb went and from which commit, the

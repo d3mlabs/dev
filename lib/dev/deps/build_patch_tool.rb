@@ -7,12 +7,11 @@ require "pathname"
 module Dev
   module Deps
     # Epic's BuildPatchTool, the one command line to the Epic Games Store's
-    # binaries (dev#192 K5, dev#426): what the `egs` integration installs
-    # (EgsIntegration — the zip Epic serves, unpacked into a store tree)
-    # and what the `egs` publisher runs (EgsPublisher — `UploadBinary`,
-    # then `LabelBinary`). This module is the facts the two share: where
-    # the tool comes from, where its binary sits in the tree for each host
-    # OS, and how it is invoked.
+    # binaries: what the `egs` integration installs (the zip Epic serves,
+    # unpacked into a store tree) and what the `egs` publisher runs
+    # (`UploadBinary`, then `LabelBinary`). This module is the facts the
+    # two share: where the tool comes from, where its binary sits in the
+    # tree for each host OS, and how it is invoked.
     #
     # The client secret never rides the command line: BuildPatchTool reads
     # it from the environment variable `ClientSecretEnvVar` names, which is
