@@ -849,6 +849,73 @@ class ProjectManifestLoaderTest < Minitest::Test
     Dev::Cli::ProjectManifestLoader.new(command_parser: Dev::Cli::CommandParser.new, target_parser: Dev::Cli::TargetParser.new)
   end
 
+  test "#load extracts runner_roles: a user role per key, identity and labels only" do
+    Given "a dev.yml declaring a farm role"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      runner_roles:
+        ue-farm:
+          labels: [ue, gpu]
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.runner_roles == { "ue-farm" => Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu]) }
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load leaves runner_roles empty when the block is absent" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    Expect
+    build_loader.load(Pathname.new(tmp.path)).runner_roles == {}
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load refuses a runner role that is #{fault}: #{body.strip}" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      runner_roles:
+      #{body}
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    error = raises Dev::Cli::ProjectManifestLoader::RunnerRoleError
+    error.message.include?(name)
+
+    Cleanup
+    tmp.close!
+
+    Where
+    fault                       | name      | body
+    "a builtin's name"          | "agent"   | "  agent:\n    labels: [x]"
+    "claiming an ai-flow label" | "farm"    | "  farm:\n    labels: [ai-build]"
+    "without labels"            | "farm"    | "  farm: {}"
+    "not a mapping"             | "farm"    | "  farm: ue"
+  end
+
   def write_dev_yml(content)
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(content)

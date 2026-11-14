@@ -1,16 +1,15 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/runner_slots"
 require "etc"
 require "json"
 
 module Dev
-  # This machine's runner enrollments, inspected — never
-  # recorded: the actions-runner install dirs under $HOME (suffixless or
-  # `-<label>`-suffixed, see DIR_GLOBS) are the only local state, and each
+  # This machine's runner enrollments, inspected — never recorded: the
+  # actions-runner install dirs under $HOME (suffixless or
+  # `-<suffix>`-suffixed, see DIR_GLOBS) are the only local state, and each
   # configured dir's .runner file (written by config.sh) names the
-  # enrollment's scope and runner name. Labels are
+  # enrollment's scope, runner name, registration id and runner group. Labels are
   # deliberately NOT here — GitHub is their single home; Dev::RunnerRegistry
   # reads them. Offline by construction, so register and status can find
   # this host's enrollments without the network.
@@ -59,28 +58,24 @@ module Dev
       # The user whose dir this is — the one its service runs as.
       const :owner, String
 
-      # The label register named the dir from — `actions-runner-<label>`,
-      # a further slot's `-<n>` stripped (RunnerSlots); nil for the
-      # suffixless dir. History, not identity: the one hint to which
-      # family an enrollment belongs once GitHub has lost the runner and
-      # its labels with it.
-      #
-      # @return [String, nil]
-      sig { returns(T.nilable(String)) }
-      def dir_label
-        stem = RunnerSlots.base_of(File.basename(dir))
-        return nil if stem == DIR_STEM
-
-        stem.delete_prefix("#{DIR_STEM}-")
-      end
+      # The runner group the registration joined (.runner `poolName`;
+      # GitHub's Default when the record names none, as every repo-scoped
+      # registration does). With the id, the record's own account of what
+      # this enrollment is: what tells its family (RunnerRole) once GitHub
+      # has lost the runner and its labels with it. Never read from the
+      # dir's name or the runner's.
+      const :pool, String
     end
+
+    # GitHub's default runner group, what a record naming no pool is in.
+    DEFAULT_POOL = T.let("Default", String)
 
     # The name every runner install dir starts with.
     DIR_STEM = T.let("actions-runner", String)
 
     # The dir names a runner install may have under home: the suffixless
     # name a hand-run `config.sh` leaves (GitHub's own instructions) and
-    # the `-<label>` suffix register derives. Both are enrollments when
+    # the `-<suffix>` register derives (RunnerRole#dir_suffix). Both are enrollments when
     # configured.
     DIR_GLOBS = T.let([DIR_STEM, "#{DIR_STEM}-*"].freeze, T::Array[String])
 
@@ -188,6 +183,7 @@ module Dev
           service_installed: File.exist?(File.join(dir, ".service")),
           display_dir: display_dir(dir, home),
           owner: owner(dir),
+          pool: record["poolName"].to_s.empty? ? DEFAULT_POOL : record["poolName"].to_s,
         )
       rescue JSON::ParserError, Errno::ENOENT
         nil

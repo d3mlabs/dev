@@ -984,6 +984,22 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "the project context carries the dev.yml runner roles, so register can resolve --role" do
+    Given "a Runner over a dev.yml declaring a farm role"
+    contexts = []
+    command_service = typed_mock(Dev::Cli::CommandService)
+    command_service.stubs(:execute).with { |argv, context:|
+      contexts << [argv, context]
+      true }
+    runner = build_runner(runner_roles: { "ue-farm" => { "labels" => %w[ue gpu] } }, command_service: command_service)
+
+    When
+    runner.run(["test"])
+
+    Then
+    contexts.fetch(0).last.project!.runner_roles == { "ue-farm" => Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu]) }
+  end
+
   test "run without a dev.yml assembles a projectless context" do
     Given "a Runner constructed with no dev.yml anywhere"
     contexts = []
@@ -1165,7 +1181,7 @@ class RunnerTest < Minitest::Test
 
   # Every run builds an ExecutionContext, so the helper always pins the
   # project root to a temp dir; tests needing their own pass a root.
-  def build_runner(name: "testproject", commands: {}, targets: nil, runner: nil, command_service: nil,
+  def build_runner(name: "testproject", commands: {}, targets: nil, runner: nil, runner_roles: nil, command_service: nil,
     ui: fake_ui, out: StringIO.new, root: nil, gh: FakeGh.new)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
     Dev.stubs(:target_project_root).returns(root)
@@ -1173,6 +1189,7 @@ class RunnerTest < Minitest::Test
     yaml = { "name" => name, "commands" => commands }
     yaml["targets"] = targets if targets
     yaml["runner"] = runner if runner
+    yaml["runner_roles"] = runner_roles if runner_roles
     # Held in @tmp_files until teardown: a Tempfile that falls out of scope is
     # unlinked by its finalizer at the next GC, under a Runner still reading it.
     tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)

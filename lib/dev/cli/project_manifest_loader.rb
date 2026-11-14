@@ -4,6 +4,7 @@
 require "pathname"
 require "yaml"
 require "dev/engine_resources"
+require "dev/runner_role"
 require "dev/environment_ref"
 require "dev/lifecycle"
 require_relative "channel_parser"
@@ -74,6 +75,10 @@ module Dev
       # declaration) in a project that declares no `targets:` at the top
       # level: there is no build for a release to contain.
       class ReleaseWithoutTargetsError < RuntimeError; end
+
+      # `runner_roles:` declares a role that cannot be (RunnerRole.user's
+      # rules), or not as a `labels:` mapping.
+      class RunnerRoleError < RuntimeError; end
 
       # The verbs `targets:` derives; a project may not declare them.
       DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
@@ -161,6 +166,7 @@ module Dev
           channels:,
           release:,
           engine: parse_resources(yaml["engine"]),
+          runner_roles: parse_runner_roles(yaml["runner_roles"]),
         )
       end
 
@@ -361,6 +367,31 @@ module Dev
 
         $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
                      "from the repo name (`dev runner register`); delete the block."
+      end
+
+      # The user runner roles, the top-level `runner_roles:` block:
+      # `<name>: { labels: [..] }` each, built through RunnerRole.user so a
+      # builtin's name or an ai-flow label is refused at the parse boundary.
+      #
+      # @param raw [Object, nil] the block as YAML gave it
+      # @return [Hash{String => Dev::RunnerRole}]
+      # @raise [RunnerRoleError]
+      sig { params(raw: T.untyped).returns(T::Hash[String, Dev::RunnerRole]) }
+      def parse_runner_roles(raw)
+        return {} unless raw.is_a?(Hash)
+
+        raw.to_h do |name, body|
+          labels = body.is_a?(Hash) ? body["labels"] : nil
+          unless labels.is_a?(Array) && labels.all?(String)
+            raise RunnerRoleError, "dev.yml runner_roles: `#{name}` needs a `labels:` list — `#{name}: { labels: [ue, gpu] }`"
+          end
+
+          begin
+            [name.to_s, Dev::RunnerRole.user(name: name.to_s, labels: labels)]
+          rescue Dev::RunnerRole::DeclarationError => e
+            raise RunnerRoleError, "dev.yml runner_roles: #{e.message}"
+          end
+        end
       end
 
       # The engine floor, the top-level `engine:` block, coerced to integers

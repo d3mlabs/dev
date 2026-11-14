@@ -181,6 +181,7 @@ module Dev
             name: manifest.name,
             root: Dev.target_project_root,
             engine: manifest.engine,
+            runner_roles: manifest.runner_roles,
           ),
         )
       end

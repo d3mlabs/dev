@@ -82,29 +82,27 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).owner == Etc.getpwuid(Process.uid).name
   end
 
-  test "dir_label is the label register named the dir from — #{dir_name} → #{label.inspect} — the one hint left when GitHub has lost the runner (dev#557)" do
+  test "an enrollment knows the runner group its registration joined (.runner poolName): the one fact that tells a lost enrollment's family, never its dir or name" do
     Given
     home = Dir.mktmpdir
-    write_runner(home, dir_name, scope: "d3mlabs", name: "JPSFF-7")
+    write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "JPSFF-ai-ask-2", pool: "ai-flow")
 
     Expect
-    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).dir_label == label
-
-    Where
-    dir_name                           | label
-    "actions-runner-ai-orchestrator"   | "ai-orchestrator"
-    "actions-runner-ai-orchestrator-7" | "ai-orchestrator"
-    "actions-runner-ai-ask-2"          | "ai-ask"
-    "actions-runner-cellbound3d"       | "cellbound3d"
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).pool == "ai-flow"
   end
 
-  test "the suffixless dir was named from no label: dir_label is nil" do
+  test "a record naming no pool is in GitHub's Default — every repo-scoped registration, and an org one placed nowhere" do
     Given
     home = Dir.mktmpdir
-    write_runner(home, "actions-runner", scope: "d3mlabs", name: "JPSFF")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", pool: nil)
 
     Expect
-    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).dir_label.nil?
+    Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).pool == "Default"
+  end
+
+  test "an enrollment carries no label guessed from its dir name: the dir is a path, the record is the identity" do
+    Expect
+    !Dev::RunnerDiscovery::Enrollment.method_defined?(:dir_label)
   end
 
   test "an enrollment knows its registration's id (.runner agentId): what tells this host's own registration from a look-alike under the same name (dev#565)" do
@@ -205,11 +203,12 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
   private
 
   # A .runner record the way config.sh writes it: UTF-8 BOM + JSON with
-  # agentId/agentName/gitHubUrl (scope "owner" or "owner/repo").
-  def write_runner(home, dir_name, scope:, name:, agent_id: 1)
+  # agentId/agentName/poolName/gitHubUrl (scope "owner" or "owner/repo").
+  def write_runner(home, dir_name, scope:, name:, agent_id: 1, pool: "Default")
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
     record = { "agentId" => agent_id, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}", "workFolder" => "_work" }
+    record["poolName"] = pool if pool
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.pretty_generate(record)}")
     dir
   end

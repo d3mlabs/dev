@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/runner_role"
 require "dev/runner_setup_config"
 require "dev/runner_setup"
 require "tmpdir"
@@ -98,7 +99,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "config_argv builds the config.sh registration contract — without --replace: a name nothing holds enrolls plainly, and a held one is never taken over unless the config says it is this family's own (dev#565)" do
     Given "a runner config with labels"
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine,x64")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine", "x64"]))
     setup = Dev::RunnerSetup.new(config: config)
 
     When "building the config argv"
@@ -121,7 +122,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     config_sh = File.join(dir, "config.sh")
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box", replace: true)
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: dir, name: "box", replace: true)
     exec = RecordingExecutor.new(&authed_responder)
     ui = RecordingUi.new
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: ui, host_platform: "linux-x64")
@@ -140,7 +141,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "config_argv names the runner group when the enrollment joins one (dev#470); unnamed, config.sh lands it in Default" do
     Given "a config for an org host in a named group"
-    config = Dev::RunnerSetupConfig.new(labels: "ai-ask,ai-build", group: "agents")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ai-ask", "ai-build"], group: Dev::RunnerGroupContract.new(name: "agents")))
     setup = Dev::RunnerSetup.new(config: config, org: true)
 
     When "building the config argv"
@@ -158,18 +159,19 @@ class Dev::RunnerSetupTest < Minitest::Test
     ]
   end
 
-  test "resolve_dir defaults to a label-suffixed path under HOME" do
+  test "resolve_dir defaults to the role's suffix under HOME (a build host: its first label)" do
     Given "a config without an explicit dir"
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine,x64")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine", "x64"]))
     setup = Dev::RunnerSetup.new(config: config)
 
-    Expect "the dir derives from the first label"
+    Expect "the dir derives from the role"
     setup.resolve_dir == File.expand_path("~/actions-runner-ue-engine")
+    Dev::RunnerSetup.new(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT)).resolve_dir == File.expand_path("~/actions-runner-agent")
   end
 
   test "resolve_dir expands an explicit dir" do
     Given "a config with an explicit dir"
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: "~/actions-runner")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: "~/actions-runner")
     setup = Dev::RunnerSetup.new(config: config)
 
     Expect
@@ -178,7 +180,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "resolve_name and resolve_version fall back to host defaults" do
     Given "a config without name or version"
-    config = Dev::RunnerSetupConfig.new(labels: "snappy")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]))
     setup = Dev::RunnerSetup.new(config: config)
 
     Expect
@@ -188,7 +190,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "run rejects a Windows-mounted dir before touching the network" do
     Given "a config pointing at a /mnt path"
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: "/mnt/c/actions-runner")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: "/mnt/c/actions-runner")
     exec = RecordingExecutor.new
     setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
@@ -201,7 +203,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "run fails fast when gh is not authenticated" do
     Given "an executor where gh auth status fails"
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: Dir.mktmpdir)
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: Dir.mktmpdir)
     exec = RecordingExecutor.new { |argv| argv[0, 3] == ["gh", "auth", "status"] ? ["", "no", false] : ["", "", true] }
     setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
@@ -221,7 +223,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     config_sh = File.join(dir, "config.sh")
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, executor: exec, ui: quiet)
 
@@ -255,7 +257,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
   test "as another user, the dir defaults under that user's home" do
     Given
-    config = Dev::RunnerSetupConfig.new(labels: "snappy")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]))
     setup = Dev::RunnerSetup.new(config: config, as_user: "runner", home: "/home/runner")
 
     Expect
@@ -266,7 +268,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     Given "a fresh dir under the runner user's home (nothing there yet) and an admin gh on the operator's side"
     home = Dir.mktmpdir
     dir = File.join(home, "actions-runner-snappy")
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet,
       host_platform: "linux-x64", as_user: "runner", home: home, path: "/opt/brew/bin:/usr/bin")
@@ -306,7 +308,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.chmod(0o755, config_sh)
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
     File.write(File.join(dir, ".service"), "unit")
-    config = Dev::RunnerSetupConfig.new(labels: "snappy", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: dir, name: "box")
     ui = RecordingUi.new
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: RecordingExecutor.new(&authed_responder),
       ui: ui, host_platform: "linux-x64", as_user: "runner", home: File.dirname(dir))
@@ -359,7 +361,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     config_sh = File.join(dir, "config.sh")
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
-    config = Dev::RunnerSetupConfig.new(labels: "ai-light,ai-build", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ai-light", "ai-build"]), dir: dir, name: "box")
     captured = []
     exec = capturing_executor(captured)
 
@@ -388,7 +390,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     # parse is exercised against the real file shape.
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
     File.write(File.join(dir, ".service"), "actions.runner.plist\n")
-    config = Dev::RunnerSetupConfig.new(labels: "ai-light", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ai-light"]), dir: dir, name: "box")
     captured = []
     exec = capturing_executor(captured)
 
@@ -418,7 +420,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
     File.write(File.join(dir, ".runner"), "{}")
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: dir, name: "box")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet)
 
@@ -445,7 +447,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.chmod(0o755, config_sh)
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
     File.write(File.join(dir, ".credentials"), "stale")
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: dir, name: "box")
     authed = authed_responder
     responder = lambda do |argv|
       next ["", "Failed: Removing runner from the server\n404 (Not Found)", false] if argv[0, 2] == ["./config.sh", "remove"]
@@ -474,7 +476,7 @@ class Dev::RunnerSetupTest < Minitest::Test
     File.write(config_sh, "#!/bin/bash\n")
     File.chmod(0o755, config_sh)
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate("gitHubUrl" => "https://github.com/owner/repo")}")
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, name: "box")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: dir, name: "box")
     authed = authed_responder
     responder = lambda do |argv|
       next ["", "connect: network is unreachable", false] if argv[0, 2] == ["./config.sh", "remove"]
@@ -498,7 +500,7 @@ class Dev::RunnerSetupTest < Minitest::Test
   test "run downloads the runner when config.sh is absent" do
     Given "an empty runner dir"
     dir = Dir.mktmpdir
-    config = Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: dir, version: "9.9.9")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
     ui = RecordingUi.new
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: ui,
@@ -521,7 +523,7 @@ class Dev::RunnerSetupTest < Minitest::Test
   test "run on macOS fetches the osx tarball and installs the service without sudo" do
     Given "an empty runner dir on an Apple Silicon host"
     dir = Dir.mktmpdir
-    config = Dev::RunnerSetupConfig.new(labels: "macos,ue-editor", dir: dir, version: "9.9.9")
+    config = Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["macos", "ue-editor"]), dir: dir, version: "9.9.9")
     exec = RecordingExecutor.new(&authed_responder)
     setup = Dev::RunnerSetup.new(config: config, repo: "owner/repo", executor: exec, ui: quiet,
       host_platform: "osx-arm64")

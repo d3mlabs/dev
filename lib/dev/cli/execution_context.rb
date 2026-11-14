@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/ui"
 require "dev/engine_resources"
+require "dev/runner_role"
 require_relative "project_images"
 
 module Dev
@@ -22,6 +23,8 @@ module Dev
       const :root, Pathname
       # The engine floor the project declares (ProjectManifest#engine).
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
+      # The runner roles the project declares (ProjectManifest#runner_roles).
+      const :runner_roles, T::Hash[String, Dev::RunnerRole], default: {}
 
       # The project's environment images and where each command runs
       # (ProjectImages). One instance per context: the lock is read once.

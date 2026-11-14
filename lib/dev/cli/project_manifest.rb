@@ -3,6 +3,7 @@
 
 require "dev/engine_resources"
 require "dev/lifecycle"
+require "dev/runner_role"
 require_relative "command"
 
 module Dev
@@ -39,6 +40,10 @@ module Dev
       # The engine floor this project's build was tuned for (`engine:`); nil
       # means the provisioner's defaults and no check.
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
+      # The runner roles this repo declares (`runner_roles:`), which `dev
+      # runner register --role <name>` may enroll: identity and labels
+      # only. Empty when the project declares none.
+      const :runner_roles, T::Hash[String, Dev::RunnerRole], default: {}
     end
   end
 end

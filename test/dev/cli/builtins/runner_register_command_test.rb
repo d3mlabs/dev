@@ -12,6 +12,7 @@ require "dev/host_reach"
 require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_registry"
+require "dev/runner_role"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
@@ -145,7 +146,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
     command.flags.map(&:name) == [
-      "--org", "--labels", "--ai-flow", "--slots", "--group",
+      "--org", "--role", "--labels", "--ai-flow", "--slots", "--group",
       "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"
     ]
   end
@@ -162,7 +163,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "the label is the repo's name as GitHub spells it, repo-scoped, dir/name defaulted; the setup speaks on the context's Ui"
     config, repo_override, org, _as_user, ui = harness.wirings.fetch(0)
-    config == Dev::RunnerSetupConfig.new(labels: label)
+    config == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: [label]))
     repo_override.nil?
     org == false
     ui.equal?(harness.ui)
@@ -255,7 +256,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     refreshed == ["admin:org"]
-    harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator"]
+    harness.wirings.last.first.labels == "ai-orchestrator"
   end
 
   test "--org --ai-flow enrolls the agent host's full label set — never the orchestrator label" do
@@ -285,9 +286,10 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When
     harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "2"]), context: harness.projectless_context)
 
-    Then "two slots carrying the label, in the ai-orchestrator group, which was created open to every repo and pinned; no selection written; the label set carried no agent host contract"
-    harness.wirings.map { |config, _repo, _org| config.labels } == ["ai-orchestrator", "ai-orchestrator"]
-    harness.wirings.map { |config, _repo, _org| config.group } == ["ai-orchestrator", "ai-orchestrator"]
+    Then "two slots named <host>-orchestrator[-n] carrying the label, in the ai-orchestrator group, which was created open to every repo and pinned; no selection written; the label set carried no agent host contract"
+    harness.wirings.drop(1).map { |config, _repo, _org| config.labels } == ["ai-orchestrator", "ai-orchestrator"]
+    harness.wirings.drop(1).map { |config, _repo, _org| config.group } == ["ai-orchestrator", "ai-orchestrator"]
+    harness.wirings.drop(1).map { |config, _repo, _org| config.name } == ["mac1-orchestrator", "mac1-orchestrator-2"]
     registry.group_writes == [[:create, "d3mlabs", "ai-orchestrator", "all", true, Dev::LabelContracts::AI_FLOW_WORKFLOWS]]
     harness.out.string.include?("may use group 'ai-orchestrator' (open to every repo at d3mlabs)")
     seen == [["ai-orchestrator", nil]]
@@ -364,7 +366,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     config, repo, org = harness.wirings.fetch(0)
-    config == Dev::RunnerSetupConfig.new(labels: "ue-engine", dir: "~/actions-runner-ue", name: "gaming-box")
+    config == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"]), dir: "~/actions-runner-ue", name: "gaming-box")
     repo == "d3mlabs/unreal-engine"
     org == true
   end
@@ -425,8 +427,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.ui.rows == [[:note, "{{v}} Runner 'box' already serves d3mlabs/cellbound-3d with labels cellbound-3d — nothing to amend", 0]]
   end
 
-  test "a local enrollment GitHub has lost re-enrolls into the same dir" do
-    Given "a .runner record whose runner is gone server-side"
+  test "a local enrollment GitHub has lost re-enrolls into the same dir — its record names no pool, so whichever role registers takes it over" do
+    Given "a .runner record in Default whose runner is gone server-side"
     home = Dir.mktmpdir
     dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
     harness = build_harness(home: home, registry: FakeRegistry.new, scope: "d3mlabs")
@@ -459,7 +461,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "both are torn down, then the fresh ceremony runs into the default (label-derived) dir"
     harness.torn_down.map(&:dir) == [legacy, newer]
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
-    harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(labels: "snappy")
+    harness.wirings.last.fetch(0) == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]))
     registry.amends == []
     harness.ui.rows.reject { |row| row.fetch(0) == :frame }.first(3) == [
       [:note, "{{x}} JPDuchesne/snappy has 2 local enrollments named 'JPSFF' — the enrollment on disk is not what should be serving GitHub:", 0],
@@ -562,25 +564,24 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- slots: a host's concurrency at a scope (dev#470) ------------------
 
-  test "--slots 3 on a fresh scope enrolls three slots: slot 1 as always, then <host>-2 and <host>-3 beside it" do
+  test "--slots 3 on a fresh scope enrolls three slots named from the role: <host>-agent, then -2 and -3 beside it" do
     Given "no enrollment at the org, a host named mac1"
     harness = build_harness(contracts: 1, scope: "d3mlabs", hostname: "mac1")
 
     When "registering the agent host with three slots"
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: harness.projectless_context)
 
-    Then "one converge, then three enrollments, each followed by its after_enroll; slot 1 is the plain config (today's enrollment), the others name and place themselves from it"
+    Then "one converge, then three enrollments, each followed by its after_enroll; every slot is named from <host>-agent and placed from slot 1's dir"
     harness.events == [
       [:converge, false, nil, nil, nil],
       [:run], [:after_enroll, "/tmp/runner-dir", 1],
       [:run], [:after_enroll, "/tmp/runner-dir-2", 2],
       [:run], [:after_enroll, "/tmp/runner-dir-3", 3],
     ]
-    labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
-    harness.wirings.map(&:first) == [
-      Dev::RunnerSetupConfig.new(labels: labels, group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "mac1-2", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-3", name: "mac1-3", group: "ai-flow"),
+    harness.wirings.drop(1).map(&:first) == [
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir", name: "mac1-agent"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir-2", name: "mac1-agent-2"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir-3", name: "mac1-agent-3"),
     ]
   end
 
@@ -606,8 +607,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       [:run], [:after_enroll, "#{dir}-3", 3],
     ]
     harness.wirings.drop(1).map(&:first) == [
-      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{dir}-2", name: "mac-box-2", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{dir}-3", name: "mac-box-3", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "#{dir}-2", name: "mac-box-2"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "#{dir}-3", name: "mac-box-3"),
     ]
     harness.torn_down == []
   end
@@ -703,14 +704,14 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.events == [[:run]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "#{one}-2", name: "mac1-2", group: "ai-flow")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "#{one}-2", name: "mac1-2")
   end
 
-  test "a slot GitHub has lost re-enrolls into its own dir under its own name; the rest are amended" do
-    Given "two slots whose second runner is gone server-side"
+  test "a slot GitHub has lost re-enrolls into its own dir under its own name — its record's pool says whose it is; the rest are amended" do
+    Given "two slots whose second runner is gone server-side, its .runner naming the ai-flow pool"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
-    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2")
+    two = write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "mac1-2", pool: "ai-flow")
     registry = FakeRegistry.new(
       runners: { ["d3mlabs", "mac1"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online") },
     )
@@ -722,13 +723,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.events == [[:run]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: two, name: "mac1-2", group: "ai-flow")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: two, name: "mac1-2")
     harness.torn_down == []
   end
 
   # --- families: two org-scoped label sets on one host (dev#557) ----------
 
-  test "the agent family enrolls beside the orchestrator pool at the same org scope: the pool is neither counted, amended nor retired, and the family takes its own base since the pool holds the hostname" do
+  test "the agent family enrolls beside the orchestrator pool at the same org scope: the pool is neither counted, amended nor retired, and the family is named from its role" do
     Given "the box: ten pool slots under the bare hostname, GitHub knowing them all as online orchestrators"
     home = Dir.mktmpdir
     registry = FakeRegistry.new(runners: pool_runners(home, count: 10, hostname: "JPSFF"))
@@ -738,12 +739,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When "registering the agent host with three slots"
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow", "--slots", "3"]), context: harness.projectless_context)
 
-    Then "three fresh slots named <hostname>-<first label>[-n], the pool untouched"
-    labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
+    Then "three fresh slots named <hostname>-agent[-n], the pool untouched"
     harness.wirings.drop(1).map(&:first) == [
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir", name: "JPSFF-ai-ask", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "JPSFF-ai-ask-2", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-3", name: "JPSFF-ai-ask-3", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir", name: "JPSFF-agent"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir-2", name: "JPSFF-agent-2"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir-3", name: "JPSFF-agent-3"),
     ]
     harness.events == [
       [:converge, false, nil, nil, nil],
@@ -756,12 +756,12 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     !harness.out.string.include?("more slots than asked for")
   end
 
-  test "re-running the agent family beside the pool is a no-op on both: its own slots are amended, the pool's never named" do
-    Given "the pool and a three-slot agent family under its own base, all online and current"
+  test "re-running the agent family beside the pool is a no-op on both: its own slots are amended under the names they have, the pool's never named" do
+    Given "the pool and a three-slot agent family under the box's pre-role base, all online and current"
     home = Dir.mktmpdir
     runners = pool_runners(home, count: 10, hostname: "JPSFF")
     %w[JPSFF-ai-ask JPSFF-ai-ask-2 JPSFF-ai-ask-3].each_with_index do |name, i|
-      write_runner(home, "actions-runner-ai-ask#{"-#{i + 1}" if i.positive?}", scope: "d3mlabs", name: name, agent_id: 100 + i)
+      write_runner(home, "actions-runner-ai-ask#{"-#{i + 1}" if i.positive?}", scope: "d3mlabs", name: name, agent_id: 100 + i, pool: "ai-flow")
       runners[["d3mlabs", name]] = Dev::RunnerRegistry::Runner.new(id: 100 + i, custom_labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS, status: "online")
     end
     registry = FakeRegistry.new(runners: runners)
@@ -778,7 +778,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     !harness.out.string.include?("more slots than asked for")
   end
 
-  test "the reverse order: the pool enrolls beside an agent family holding the hostname, under its own base, and a smaller --slots never counts the family's slots as surplus" do
+  test "the reverse order: the pool enrolls beside an agent family holding the hostname, named from its role, and a smaller --slots never counts the family's slots as surplus" do
     Given "a two-slot agent family under the bare hostname"
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs", name: "mac1", agent_id: 1)
@@ -797,13 +797,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator", "--slots", "1"]), context: harness.projectless_context)
 
     Then
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: "ai-orchestrator", dir: "/tmp/runner-dir", name: "mac1-ai-orchestrator", group: "ai-orchestrator")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::ORCHESTRATOR, dir: "/tmp/runner-dir", name: "mac1-orchestrator")
     harness.events == [[:run]]
     harness.torn_down == []
     registry.amends == []
   end
 
-  test "a pool slot GitHub has lost is still the pool's — its dir says so — not a stranger for the agent family to retire" do
+  test "a pool slot GitHub has lost is still the pool's — its .runner record names the pool — not a stranger for the agent family to retire" do
     Given "the pool with one slot gone server-side, and no agent family yet"
     home = Dir.mktmpdir
     runners = pool_runners(home, count: 3, hostname: "JPSFF")
@@ -815,8 +815,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When
     harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.projectless_context)
 
-    Then "one fresh agent slot under its own base; nothing retired"
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(","), dir: "/tmp/runner-dir", name: "JPSFF-ai-ask", group: "ai-flow")
+    Then "one fresh agent slot under its role's name; nothing retired"
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir", name: "JPSFF-agent")
     harness.torn_down == []
     !harness.out.string.include?("none of this host's slots")
   end
@@ -846,9 +846,9 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- never steal a registration (dev#565) --------------------------------
 
-  test "a fresh family at a scope where GitHub holds the hostname for another family — no dir of this host's — refuses, naming the holder, and changes nothing: --replace would have taken the registration over" do
-    Given "GitHub listing an online orchestrator under this host's name at the org, and no local enrollment at all"
-    registry = FakeRegistry.new(runners: { ["d3mlabs", "JPSFF"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") })
+  test "a fresh family at a scope where GitHub holds its role's name for another registration — no dir of this host's — refuses, naming the holder, and changes nothing: --replace would have taken the registration over" do
+    Given "GitHub listing an online runner under this host's agent name at the org (another box with this hostname), and no local enrollment at all"
+    registry = FakeRegistry.new(runners: { ["d3mlabs", "JPSFF-agent"] => Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") })
     harness = build_harness(home: Dir.mktmpdir, registry: registry, scope: "d3mlabs", hostname: "JPSFF")
     harness.ui.expects(:confirm).never
 
@@ -857,7 +857,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "refused with the holder's labels and status and the way beside it; nothing enrolled, amended or torn down"
     raises Dev::Cli::Builtins::RunnerRegisterCommand::RegistrationHeldError
-    harness.ui.rows.include?([:note, "{{x}} 'JPSFF' at d3mlabs is registered by another family (labels: ai-orchestrator, online) — pass --name to enroll beside it", 0])
+    harness.ui.rows.include?([:note, "{{x}} 'JPSFF-agent' at d3mlabs is registered by another family (labels: ai-orchestrator, online) — pass --name to enroll beside it", 0])
     harness.events == []
     harness.torn_down == []
     registry.amends == []
@@ -897,7 +897,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "torn down, then enrolled with --replace under its own name"
     harness.torn_down.map(&:dir) == [dir]
     harness.events == [[:run]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: "snappy", dir: "/tmp/runner-dir", name: "JPSFF", replace: true)
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["snappy"]), dir: "/tmp/runner-dir", name: "JPSFF", replace: true)
   end
 
   test "own is the registration, not the name: a local enrollment whose .runner id is not the id GitHub holds under that name is another machine's look-alike — refused, the stale dir named, nothing replaced" do
@@ -966,7 +966,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then
     harness.events == [[:run], [:run]]
-    harness.wirings.map { |config, _repo, _org| config.replace } == [false, false]
+    harness.wirings.drop(1).map { |config, _repo, _org| config.replace } == [false, false]
   end
 
   test "--name with --slots names every slot from it — <name>, <name>-2 — never two slots under one name" do
@@ -979,8 +979,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then "slot 1 is the plain config under the name; slot 2 is named and placed from it"
     labels = Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
     harness.wirings.map(&:first) == [
-      Dev::RunnerSetupConfig.new(labels: labels, name: "agents", group: "ai-flow"),
-      Dev::RunnerSetupConfig.new(labels: labels, dir: "/tmp/runner-dir-2", name: "agents-2", group: "ai-flow"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, name: "agents"),
+      Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "/tmp/runner-dir-2", name: "agents-2"),
     ]
   end
 
@@ -1034,7 +1034,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       [:create, "d3mlabs", "ai-flow", "selected", false, Dev::LabelContracts::AI_FLOW_WORKFLOWS],
       [:select, "d3mlabs", 99, ["d3mlabs/cellbound".sum]],
     ]
-    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET, group: "ai-flow")
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT)
     harness.out.string.include?("Creating runner group 'ai-flow' at d3mlabs")
     harness.out.string.include?("Admitting d3mlabs/cellbound to group 'ai-flow'")
   end
@@ -1089,7 +1089,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Then "slot 1 moved; slot 2's config carries the group for config.sh --runnergroup"
     registry.group_writes == [[:place, "d3mlabs", 7, 1]]
-    harness.wirings.last.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET, dir: "#{dir}-2", name: "mac1-2", group: "ai-flow")
+    harness.wirings.last.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT, dir: "#{dir}-2", name: "mac1-2")
     harness.out.string.include?("Moving runner 1 into group 'ai-flow' from 'Default'")
   end
 
@@ -1126,7 +1126,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry.group_writes == [[:update, "d3mlabs", 7, nil, true, FakeRegistry::PINS], [:select, "d3mlabs", 7, [100]]]
   end
 
-  test "the invariant holds for a human's group too: a public repo may not be admitted to an unpinned --group, and the slot was enrolled before the refusal" do
+  test "the invariant holds for a human's group too: a build host for a public repo reaches it through any workflow, so the role's reach refuses before anything enrolls" do
     Given "ue-hosted, unpinned and selected, registered for from the public dev checkout"
     registry = FakeRegistry.new(
       groups: { ["d3mlabs", "ue-hosted"] => FakeRegistry.group(id: 3, name: "ue-hosted", pinned: false) },
@@ -1138,10 +1138,24 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: harness.projectless_context)
 
     Then
-    error = raises Dev::RunnerGroups::UnpinnedGroupError
-    error.message.include?("Pin the group to the workflows that may use it")
+    error = raises Dev::Reach::ExposedError
+    error.message.include?("YAML could land on this host")
     registry.group_writes == []
-    harness.events == [[:run]]
+    harness.events == []
+  end
+
+  test "a public repo's own build host is refused the same way: bare register in a public checkout enrolls nothing" do
+    Given
+    registry = FakeRegistry.new(repositories: { "d3mlabs/dev" => Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public") })
+    harness = build_harness(registry: registry, scope: "d3mlabs/dev", repo: "d3mlabs/dev")
+
+    When
+    harness.command.call(args: no_args, context: harness.build_context(name: "dev"))
+
+    Then
+    error = raises Dev::Reach::ExposedError
+    error.message.include?("d3mlabs/dev is public")
+    harness.events == []
   end
 
   test "--group names a human's group for a custom pool: it must exist, and the checkout's repo is admitted to it" do
@@ -1153,7 +1167,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ue-engine", "--group", "ue-hosted"]), context: harness.projectless_context)
 
     Then
-    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: "ue-engine", group: "ue-hosted")
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"], group: Dev::RunnerGroupContract.new(name: "ue-hosted")))
     registry.group_writes == [[:select, "d3mlabs", 3, ["d3mlabs/unreal-engine".sum]]]
   end
 
@@ -1227,88 +1241,94 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.first.first.group.nil?
   end
 
-  # --- the exclusion, derived: a repo-scoped runner for labels an org group serves ---
+  # --- roles: declare the role, derive the labels and the scope ---
 
-  test "a repo-scoped ai-flow runner whose repo may also use the org's ai-flow group: register says so, asks, and takes the repo out of the group on yes" do
-    Given "cellbound-3d among the ai-flow group's repos, registering its own runner, an operator who says yes"
+  test "--ai-flow without --org is still the agent role, and the agent is org-scoped because of its pin: enrolled at the org, no exclusivity question" do
+    Given "a checkout whose repo is among the ai-flow group's repos"
     registry = FakeRegistry.new(
       groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
-      selections: { ["d3mlabs", 7] => [
-        Dev::RunnerRegistry::GroupRepository.new(id: 100, full_name: "d3mlabs/dev"),
-        Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/Cellbound-3D"),
-      ] },
+      selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/Cellbound-3D")] },
     )
-    harness = build_harness(registry: registry)
-    harness.ui.expects(:confirm).once.with("Make this host's runner its only one?").returns(true)
+    harness = build_harness(registry: registry, scope: "d3mlabs")
+    harness.ui.expects(:confirm).never
 
     When
     harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
 
-    Then "the slot was enrolled at repo scope with no group, then the repo left the org group — the list written whole"
-    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
-    registry.group_writes == [[:select, "d3mlabs", 7, [100]]]
-    harness.out.string.include?("d3mlabs/cellbound-3d may also use the org's 'ai-flow' runners for these labels — its jobs would land on either")
-    harness.out.string.include?("Excluding d3mlabs/cellbound-3d from group 'ai-flow'")
-  end
-
-  test "declining keeps the repo in the org's group — pooling is a legitimate answer — and says so; --yes answers yes" do
-    Given
-    make = lambda do
-      FakeRegistry.new(
-        groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
-        selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/cellbound-3d")] },
-      )
-    end
-    declined = make.call
-    declining = build_harness(registry: declined)
-    declining.ui.expects(:confirm).once.returns(false)
-    headless = make.call
-    yes = build_harness(registry: headless)
-    yes.ui.expects(:confirm).never
-
-    When
-    declining.command.call(args: parsed_args(declining.command, ["--ai-flow"]), context: declining.build_context(name: "Cellbound3D"))
-    yes.command.call(args: parsed_args(yes.command, ["--ai-flow", "--yes"]), context: yes.build_context(name: "Cellbound3D"))
-
-    Then
-    declined.group_writes == []
-    declining.out.string.include?("Left as is: d3mlabs/cellbound-3d keeps using the org's 'ai-flow' runners too")
-    headless.group_writes == [[:select, "d3mlabs", 7, []]]
-  end
-
-  test "nothing to ask when #{why}" do
-    Given
-    harness = build_harness(registry: registry)
-    harness.ui.expects(:confirm).never
-
-    When
-    harness.command.call(args: parsed_args(harness.command, words), context: harness.build_context(name: "Cellbound3D"))
-
-    Then
+    Then "the setup was wired at the org; the repo stays in the group"
+    harness.wirings.first[2] == true
+    harness.wirings.first.first.role == Dev::RunnerRole::AGENT
     registry.group_writes == []
     !harness.out.string.include?("may also use")
-
-    Where
-    words         | registry                                                                                                                                                                                                   | why
-    ["--ai-flow"] | FakeRegistry.new                                                                                                                                                                                           | "the org has no ai-flow group"
-    ["--ai-flow"] | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) })                                                                                           | "the repo is not among the group's repos"
-    ["--ai-flow"] | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true, visibility: "all") })                                                                        | "the group is open to every repo (not dev's list to edit)"
-    []            | FakeRegistry.new(groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) }, selections: { ["d3mlabs", 7] => [Dev::RunnerRegistry::GroupRepository.new(id: 200, full_name: "d3mlabs/cellbound-3d")] }) | "the labels oblige no group"
   end
 
-  test "an org this login cannot read leaves the question unasked and unanswered, out loud — a repo admin need not be an org admin" do
+  test "--role #{name} is the builtin role, org-scoped, named <host>-#{name}" do
     Given
-    registry = FakeRegistry.new
-    registry.define_singleton_method(:group) { |org:, name:| raise Dev::RunnerRegistry::QueryError, "could not list the runner groups at #{org}: HTTP 403" }
-    harness = build_harness(registry: registry)
-    harness.ui.expects(:confirm).never
+    harness = build_harness(scope: "d3mlabs", hostname: "mac1")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--role", name]), context: harness.projectless_context)
 
     Then
-    harness.wirings.first.first == Dev::RunnerSetupConfig.new(labels: AI_FLOW_SET)
-    harness.out.string.include?("Could not read d3mlabs's runner groups (could not list the runner groups at d3mlabs: HTTP 403) — whether d3mlabs/cellbound-3d also uses the org's runners is unchecked")
+    harness.wirings.first.first.role == role
+    harness.wirings.first[2] == true
+    harness.wirings.last.first.name == "mac1-#{name}"
+
+    Where
+    name           | role
+    "agent"        | Dev::RunnerRole::AGENT
+    "orchestrator" | Dev::RunnerRole::ORCHESTRATOR
+  end
+
+  test "--role names a dev.yml role: repo-scoped, its declared labels, named <host>-<role> and placed in actions-runner-<role>" do
+    Given "a checkout declaring ue-farm"
+    farm = Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu])
+    harness = build_harness(hostname: "mac1")
+    context = Dev::Cli::ExecutionContext.new(ui: harness.ui, project: Dev::Cli::ProjectContext.new(name: "Cellbound3D", root: Pathname.new("/tmp/runner-test"), runner_roles: { "ue-farm" => farm }))
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "ue-farm"]), context: context)
+
+    Then
+    harness.wirings.first.first == Dev::RunnerSetupConfig.new(role: farm)
+    harness.wirings.first[2] == false
+    harness.wirings.last.first.name == "mac1-ue-farm"
+    harness.wirings.last.first.labels == "ue,gpu"
+  end
+
+  test "#{words.join(" ")} is refused before anything converges: #{why}" do
+    Given
+    harness = build_harness(contracts: 1)
+    farm = Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu])
+    context = Dev::Cli::ExecutionContext.new(ui: harness.ui, project: Dev::Cli::ProjectContext.new(name: "Cellbound3D", root: Pathname.new("/tmp/runner-test"), runner_roles: { "ue-farm" => farm }))
+
+    When
+    harness.command.call(args: parsed_args(harness.command, words), context: context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?(hint)
+    harness.events == []
+    harness.wirings == []
+
+    Where
+    words                                  | why                                                        | hint
+    ["--role", "gpu-farm"]                 | "an undeclared role is the drift path, pointed at dev.yml" | "runner_roles: { gpu-farm: { labels: [...] } }"
+    ["--role", "ue-farm", "--labels", "x"] | "a role's labels are its declaration"                      | "--role ue-farm declares the labels"
+    ["--role", "agent", "--ai-flow"]       | "the sugar and the role say the same thing twice"          | "--role agent declares the labels"
+    ["--role", "ue-farm", "--org"]         | "org scope is builtin-only"                                | "org scope is builtin-only"
+  end
+
+  test "--role outside a project names only the builtins" do
+    Given
+    harness = build_harness
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "ue-farm"]), context: harness.projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("neither builtin (agent, orchestrator) nor declared in a dev.yml")
   end
 
   # --- contracts --------------------------------------------------------
@@ -1618,7 +1638,9 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc = usage_command.desc
 
     Expect "a one-line summary first, then the detail"
-    desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner, converging label contracts (--org, --labels, --ai-flow)"
+    desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner in a role (--role; --ai-flow, --labels), converging its contracts"
+    desc.include?("Runner names are <hostname>-<role>[-n]")
+    desc.include?("runner_roles:")
     desc.include?("mints the registration token")
     desc.include?("owns the enrollment")
     desc.include?("installs the service unit")
@@ -1630,7 +1652,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc.include?("trust the deployment's tap")
     desc.include?("sudo -iu runner brew")
     desc.include?("/etc/profile.d/linuxbrew.sh")
-    desc.include?("dev runner register --org --ai-flow")
+    desc.include?("dev runner register --role agent")
     desc.include?("GITHUB_TOKEN")
   end
 
@@ -1657,6 +1679,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # the checkout's repo, and the operator pre-flight's probe of its runners.
     Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
     registry = typed_mock(Dev::RunnerRegistry)
+    registry.stubs(:repository).returns(Dev::RunnerRegistry::Repository.new(id: 1, full_name: "owner/repo", visibility: "private"))
     registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
     # The rule's lookup (dev#565): the fresh slot's name, held by nobody.
     registry.expects(:find).once.with(scope: "owner/repo", name: "box").returns(nil)
@@ -1667,7 +1690,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_name).returns("box")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"])), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     # The WSL runner host is answered at its platform seam too, so the run never converges Windows-side on a WSL host.
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
 
@@ -1694,6 +1717,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::HostReach.expects(:new).once.with(identity: runner_user).returns(reach)
     Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
     registry = typed_mock(Dev::RunnerRegistry)
+    registry.stubs(:repository).returns(Dev::RunnerRegistry::Repository.new(id: 1, full_name: "owner/repo", visibility: "private"))
     registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
     registry.expects(:find).once.with(scope: "owner/repo", name: "box").returns(nil)
     Dev::RunnerRegistry.expects(:new).returns(registry)
@@ -1703,7 +1727,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_name).returns("box")
     setup.stubs(:resolve_scope).returns("owner/repo")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "ue-engine"), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin", ui: context.ui).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"])), repo: nil, org: false, as_user: "svc-runner", home: runner_user.home, path: "/opt/brew/bin:/usr/bin", ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
 
     When "registering in that checkout with default wiring"
@@ -1719,6 +1743,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
     Dev::RunnerSetup.expects(:current_repo).once.returns("d3mlabs/Cellbound-3D")
     registry = typed_mock(Dev::RunnerRegistry)
+    registry.stubs(:repository).returns(Dev::RunnerRegistry::Repository.new(id: 1, full_name: "d3mlabs/Cellbound-3D", visibility: "private"))
     registry.expects(:find).once.with(scope: "d3mlabs/Cellbound-3D", name: "").returns(nil)
     registry.expects(:find).once.with(scope: "d3mlabs/Cellbound-3D", name: "box").returns(nil)
     Dev::RunnerRegistry.expects(:new).returns(registry)
@@ -1729,7 +1754,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     setup.stubs(:resolve_scope).returns("d3mlabs/Cellbound-3D")
     context = build_context(name: "Cellbound3D")
     Dev::RunnerSetup.expects(:new)
-      .with(config: Dev::RunnerSetupConfig.new(labels: "cellbound-3d"), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
+      .with(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["cellbound-3d"])), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil)
 
     When "running bare register inside a checkout whose dev.yml name differs"
@@ -1841,22 +1866,25 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # `agent_id` is the registration's id (.runner agentId) — what GitHub's
   # `Runner#id` is compared with to tell this family's own registration
   # from a look-alike (dev#565); 0 by default, an id no registry double
-  # here hands out, so a test that means "own" says the id.
-  def write_runner(home, dir_name, scope:, name:, agent_id: 0)
+  # here hands out, so a test that means "own" says the id. `pool` is the
+  # runner group the registration joined (.runner poolName) — what tells a
+  # lost enrollment's family; Default unless a test says so.
+  def write_runner(home, dir_name, scope:, name:, agent_id: 0, pool: "Default")
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
-    record = { "agentId" => agent_id, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
+    record = { "agentId" => agent_id, "agentName" => name, "poolName" => pool, "gitHubUrl" => "https://github.com/#{scope}" }
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     dir
   end
 
   # The orchestrator pool as plans#55 enrolled it on the box: `count` slots
-  # in `actions-runner-ai-orchestrator[-n]` named `<hostname>[-n]`, each
-  # known to GitHub as an online orchestrator. Returns the registry's map.
+  # in `actions-runner-ai-orchestrator[-n]` named `<hostname>[-n]`, their
+  # records in the ai-orchestrator pool, each known to GitHub as an online
+  # orchestrator. Returns the registry's map.
   def pool_runners(home, count:, hostname:)
     (1..count).to_h do |slot|
       suffix = slot == 1 ? "" : "-#{slot}"
-      write_runner(home, "actions-runner-ai-orchestrator#{suffix}", scope: "d3mlabs", name: "#{hostname}#{suffix}", agent_id: slot)
+      write_runner(home, "actions-runner-ai-orchestrator#{suffix}", scope: "d3mlabs", name: "#{hostname}#{suffix}", agent_id: slot, pool: "ai-orchestrator")
       [["d3mlabs", "#{hostname}#{suffix}"], Dev::RunnerRegistry::Runner.new(id: slot, custom_labels: ["ai-orchestrator"], status: "online")]
     end
   end

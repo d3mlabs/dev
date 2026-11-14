@@ -1,24 +1,25 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/runner_role"
 require_relative "value_equality"
 
 module Dev
   # Value object for one enrollment's identity, resolved by `dev runner
   # register` from its flags and derivations (never a file — the dev.yml
-  # `runner:` block is retired): the comma-separated labels config.sh
-  # expects, plus optional dir/name/version overrides (see Dev::RunnerSetup
-  # for their defaults: ~/actions-runner-<first label>, the hostname, and
-  # the pinned runner version), at an org scope the runner group the
-  # registration joins (config.sh's `--runnergroup`; unnamed = Default),
-  # and whether config.sh may `--replace` a registration GitHub already
-  # holds under the name (register's rule: only this family's own).
+  # `runner:` block is retired): the **role** the slot plays (RunnerRole —
+  # the labels config.sh advertises and the runner group the registration
+  # joins both derive from it), optional dir/name/version overrides (see
+  # Dev::RunnerSetup for their defaults: ~/actions-runner-<role suffix>,
+  # the hostname, and the pinned runner version), and whether config.sh
+  # may `--replace` a registration GitHub already holds under the name
+  # (only this family's own).
   class RunnerSetupConfig
     extend T::Sig
     include Dev::ValueEquality::Derived
 
-    sig { returns(String) }
-    attr_reader :labels
+    sig { returns(RunnerRole) }
+    attr_reader :role
 
     sig { returns(T.nilable(String)) }
     attr_reader :dir
@@ -28,9 +29,6 @@ module Dev
 
     sig { returns(T.nilable(String)) }
     attr_reader :version
-
-    sig { returns(T.nilable(String)) }
-    attr_reader :group
 
     # Whether config.sh takes over a registration already held under this
     # name (`--replace`). GitHub refuses a duplicate runner name at a scope;
@@ -44,41 +42,40 @@ module Dev
 
     sig do
       params(
-        labels: String,
+        role: RunnerRole,
         dir: T.nilable(String),
         name: T.nilable(String),
         version: T.nilable(String),
-        group: T.nilable(String),
         replace: T::Boolean,
       ).void
     end
-    def initialize(labels:, dir: nil, name: nil, version: nil, group: nil, replace: false)
-      @labels = labels
+    def initialize(role:, dir: nil, name: nil, version: nil, replace: false)
+      @role = role
       @dir = dir
       @name = name
       @version = version
-      @group = group
       @replace = replace
     end
 
-    # The first label, sanitized for a dir name: what the default install
-    # dir (`~/actions-runner-<suffix>`) and, when a scope already has a
-    # family under the bare hostname, the runner name (`<hostname>-<suffix>`)
-    # are derived from — one derivation, so a family's dirs and
-    # names say the same thing.
+    # The labels config.sh advertises: the role's, comma-separated.
     #
     # @return [String]
     sig { returns(String) }
-    def dir_suffix
-      first = @labels.split(",").first.to_s
-      sanitized = first.gsub(/[^A-Za-z0-9_.-]/, "-")
-      sanitized.empty? ? "default" : sanitized
+    def labels
+      @role.labels.join(",")
+    end
+
+    # The runner group config.sh names (`--runnergroup`): the role's; nil
+    # lands the registration in GitHub's Default.
+    sig { returns(T.nilable(String)) }
+    def group
+      @role.group&.name
     end
 
     # @return [Array] the members that constitute identity
     sig { override.returns(T::Array[T.anything]) }
     def equality_members
-      [@labels, @dir, @name, @version, @group, @replace]
+      [@role, @dir, @name, @version, @replace]
     end
   end
 end
