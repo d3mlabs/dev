@@ -200,7 +200,7 @@ and stops: `sudo -iu runner gh auth login --with-token`.
 With a checkout, register checks the runner user can reach every `gh` pin's
 repo and every image's floor package, and refuses to enroll while one is
 unreachable, printing the grant to make. `dev runner status` reports the
-same under **Host reach**.
+same as host facts.
 
 After the handover, package work on that host is `sudo -iu runner brew …`
 and `sudo -iu runner dev up`; your own `dev up` there skips the brew layer.
@@ -228,7 +228,7 @@ where to run. Enabling systemd or growing the VM needs `wsl --shutdown`
 from Windows, then `dev runner register` again, then
 `Start-ScheduledTask -TaskName 'Start-WSL-<distro>-Runner'` (or a log off
 and on) to bring the distro back under the keepalive. `dev runner status`
-reports all of this under **WSL runner host**.
+reports all of this in the host frame.
 
 ### Agent hosts
 
@@ -260,14 +260,46 @@ the brew prefix. It arrives through the org Brewfile on the prefix owner's
 
 ### dev runner status
 
-The machine's view, framed at a terminal and plain through a pipe: every
-enrollment with its scope, name, directory, who it runs as, and its labels
-as GitHub holds them; on Linux a **Host identity** section (runner user,
-brew prefix owner, the runner user's gh login and token expiry); each
-agent enrollment's contract re-derived (agent user, groups, sudoers edges,
-`_work` grant, data root, engine); **WSL runner host** facts; host tooling
-against the org Brewfile; and, in a checkout, whether that repo may use
-the slots and whether the host can reach its dependencies.
+The machine's view, framed by subject at a terminal and plain through a
+pipe: one frame for the **host**, then one per **role family** — this
+host's slots sharing a scope and a role (`agent · 3 slots`,
+`orchestrator · 10 slots`, `build-host · 1 slot`). Every line is a fact
+with a verdict (`✓`, `✗`, or `?` when GitHub could not be asked), and the
+box and a Mac render the same shape.
+
+The host frame carries what is true of the machine regardless of its
+slots: the runner user and its gh login with the token's expiry, who owns
+the toolchain, whether that identity can read this checkout's lock
+(every `gh` pin's repo, every image's floor package), the agent host's
+contract when an agent family is enrolled (agent user, group memberships,
+sudoers edges, data root, brew locks, engine), the WSL keepalive and
+systemd facts inside a distro, and host tooling against the org Brewfile.
+
+Each family frame opens with its **reach** — what GitHub lets this
+family's slots run, compared with what the role expects — as one fact in
+three clauses:
+
+```text
+orchestrator · 2 slots
+✓ reach: jobs from every d3mlabs repo
+         via d3mlabs/ai-flow/ai-commands.yml@main | d3mlabs/ai-flow/origin-firing.yml@main
+         runs-on ai-orchestrator
+✓ box-orchestrator, -2 — online · service installed · runs as runner
+```
+
+The mechanism behind the reach — the group's name, its visibility, its
+workflow pins, a repo registration — is not a fact of its own: it is
+printed only under a ✗, as the `cause:` of the drift, with the remedy
+(`re-run dev runner register --role agent from a checkout at d3mlabs`). A
+build host sitting in the unpinned `Default` group and an agent family
+whose group lost the ai-flow pin each render that way. Slot facts (online,
+service installed, who it runs as, the `_work` grant for agents) fold into
+one line while uniform, and a deviating slot breaks out on its own ✗ line
+with its directory and the findings.
+
+After the frames, in a checkout, `this checkout (owner/repo) reaches: …`
+names the families whose reach admits that repo, and
+`posture: N slots · M facts · K drifted` sums the run.
 
 A job nobody picks up sits at *Waiting for a runner to pick up this job…*
 under a `Requested labels:` line, the same whether the runners are busy,

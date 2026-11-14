@@ -126,6 +126,18 @@ module Dev
         new(name: name, labels: labels)
       end
 
+      # The role an enrollment GitHub has lost belongs to, told by the
+      # runner group its own `.runner` record names: a builtin role's pool
+      # is that role's; Default, or a human's group, is a build host's —
+      # with no labels left to read, since GitHub was their home.
+      #
+      # @param pool [String] the record's `poolName`
+      # @return [Dev::RunnerRole]
+      sig { params(pool: String).returns(RunnerRole) }
+      def for_pool(pool)
+        BUILTINS.values.find { |role| role.pool_name == pool } || build_host(labels: [])
+      end
+
       # The role a label set means — the sugar behind `--ai-flow` and
       # `--labels`: any agent label is the agent role (with the labels
       # given, a partitioned topology's subset), the orchestrator label its

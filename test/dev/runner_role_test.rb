@@ -116,6 +116,25 @@ class Dev::RunnerRoleTest < Minitest::Test
     assert_raises(ArgumentError) { Dev::RunnerRole.for_labels(["ai-build", "ai-orchestrator"]) }.message.include?("one enrollment, one group")
   end
 
+  # --- pool → role (an enrollment GitHub has lost) --------------------------
+
+  test "from a .runner pool: #{pool.inspect} → #{expected}, a builtin's pool being that role's and any other a build host's" do
+    Expect
+    Dev::RunnerRole.for_pool(pool).name == expected
+
+    Where
+    pool              | expected
+    "ai-flow"         | "agent"
+    "ai-orchestrator" | "orchestrator"
+    "Default"         | "build-host"
+    "ue-hosted"       | "build-host"
+  end
+
+  test "a build host told by its pool has no labels left: GitHub was their home" do
+    Expect
+    Dev::RunnerRole.for_pool("Default").labels == []
+  end
+
   # --- naming --------------------------------------------------------------
 
   test "slot base: a grouped or user role is <host>-<role>; a build host is the host alone — #{role.name}" do

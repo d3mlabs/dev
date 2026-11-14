@@ -56,6 +56,26 @@ module Dev
       @workflows != ANY
     end
 
+    # Whether every repo in the org may send jobs.
+    sig { returns(T::Boolean) }
+    def open?
+      @repos == ALL
+    end
+
+    # Whether a repo's jobs may target the runner: every repo's when
+    # open, else one of the selection — compared the way GitHub names
+    # repos, case-insensitively.
+    #
+    # @param repo [String] "owner/repo"
+    # @return [Boolean]
+    sig { params(repo: String).returns(T::Boolean) }
+    def admits?(repo)
+      repos = @repos
+      return true if repos == ALL
+
+      T.cast(repos, T::Set[String]).any? { |name| name.casecmp?(repo) }
+    end
+
     # @return [Array] the members that constitute identity
     sig { override.returns(T::Array[T.anything]) }
     def equality_members

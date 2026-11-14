@@ -3,6 +3,8 @@
 
 require "date"
 require "etc"
+require "set"
+require "socket"
 require "stringio"
 
 require "dev/agent_bootstrap"
@@ -10,49 +12,58 @@ require "dev/data_root"
 require "dev/deps/dependency"
 require "dev/host_reach"
 require "dev/label_contracts"
+require "dev/platform"
+require "dev/reach"
+require "dev/reach_fact"
 require "dev/runner_discovery"
-require "dev/runner_slots"
+require "dev/runner_family"
 require "dev/runner_registry"
+require "dev/runner_role"
+require "dev/runner_slots"
 require "dev/runner_user"
 require "dev/settings"
 require "dev/ui"
+require "dev/version"
 require "dev/wsl_conf"
 require "dev/wsl_runner_host"
 
 module Dev
-  # `dev runner status` — register's inspect-only counterpart: this
-  # machine's discovered enrollments (every ~/actions-runner*/.runner),
-  # grouped into the host's slots at each scope (the enrollments
-  # sharing a base name — how many jobs the host runs at once there —
-  # with, at an org scope, the runner group and the repos it is visible
-  # to), each one's labels read
-  # from GitHub (their single home — unknown when offline), and the
-  # inspected reality of every agent-labeled enrollment's
-  # contract. Nothing here mutates and nothing is recorded — every fact is
-  # re-derived from the host or GitHub every time (inspected,
-  # never recorded). No dev.yml involved: status is the machine's view,
-  # not any repo's.
+  # `dev runner status` — register's inspect-only counterpart. Nothing
+  # here mutates and nothing is recorded: every fact is re-derived from
+  # the host or GitHub each time. No dev.yml involved: status is the
+  # machine's view, not any repo's.
   #
-  # Under the Linux host rule (RunnerUser) the enrollments live
-  # under the runner user's home and run as it: status looks there too,
-  # says who each enrollment runs as (one owned by anyone else is drift),
-  # and reports the host identity — the user, its gh login, and when that
-  # login's token expires (a classic PAT's `github-authentication-token-
-  # expiration` header; a renewal nobody is warned of is a red run a
-  # year from now).
+  # The report is framed by **subject**: the host first, then one frame
+  # per **family** — this host's slots of one role at one scope
+  # (RunnerFamily) — in builtin role order. Every line is a fact: a
+  # subject, a property, what is expected of it and by whom (GitHub, the
+  # slot's role, the host rule), what was observed, and the remedy when
+  # they differ. `{{v}}` when they agree, `{{x}}` when they do not,
+  # `{{?}}` when this account cannot tell.
   #
-  # The agent host facts are the bootstrap's own (AgentBootstrap: the
-  # host's adapter, the one register converges with), read through its
-  # inspection methods — so a Mac and a Linux box report the same facts
-  # in the same words, each probed with its own CLIs.
+  # A family's **reach** is one fact in three clauses, read from the
+  # job's side — from which repos, via which workflows, selected by
+  # which labels (Reach) — computed from GitHub and held against what the
+  # role obliges (ReachFact). Whether the family is registered at a repo
+  # or at an org is not a frame of its own: scope only decides who fixes
+  # the first clause, and the mechanism — the runner group, its
+  # visibility, its pin, the repo registration — is named only as
+  # evidence under a ✗.
   #
-  # Inside a WSL2 distro a **WSL runner host** section reports what
-  # register converged there (WslRunnerHost): systemd running, and
-  # the logon keepalive task — present, holding a session, running — that
-  # is the difference between a distro that autostarts and stays up and
-  # one WSL stops ~20 s after the operator's last shell closes. The task
-  # is read through interop, which only a login session has; without it
-  # the keepalive is `{{?}}`, never a false finding.
+  # **Slot facts fold**: online on GitHub, service installed, who runs
+  # it, and for an agent slot its `_work` tree — identical across a
+  # family's slots → one line naming the slots; a slot that deviates
+  # breaks out as its own ✗ line with its dir.
+  #
+  # The host frame holds host-level subjects only: the Linux host rule's
+  # runner user (its existence, toolchain, gh login and token expiry, and
+  # what that login can read of a checkout's lock), the agent host
+  # (AgentBootstrap's inspection, when an agent family is enrolled), the
+  # WSL runner host (WslRunnerHost, inside a WSL2 distro), and the host
+  # tooling against the org Brewfile.
+  #
+  # After the frames, bare: in a checkout, which families that repo's
+  # jobs reach; then the posture — slots, facts, drifted.
   class RunnerStatus
     extend T::Sig
 
@@ -62,23 +73,35 @@ module Dev
     # The response header a classic PAT with an expiry carries.
     EXPIRATION_HEADER = T.let(/^github-authentication-token-expiration:\s*(\d{4}-\d{2}-\d{2})/i, Regexp)
 
+    # What runs the runner service on each OS, named in the host frame.
+    SERVICE_MANAGERS = T.let({ "darwin" => "launchd", "linux" => "systemd" }.freeze, T::Hash[String, String])
+
+    # The hanging indent of a reach fact's second and third clauses: the
+    # width of the glyph, its space, and `reach: `.
+    CLAUSE_INDENT = T.let(" " * "✓ reach: ".length, String)
+
+    # Slot suffixes `-2 … -N` collapse from this many consecutive ones.
+    SUFFIX_RUN_COLLAPSE = 3
+
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
-    # @param registry [#find, #group_of, #group_repositories] the GitHub-side reader (never mutates here)
-    # @param ui [Dev::Ui] where the report is rendered: a frame per section, a note per fact
+    # @param registry [#find, #group_of, #group_repositories, #repository] the GitHub-side reader (never mutates here)
+    # @param ui [Dev::Ui] where the report is rendered: a frame per subject, a note per fact
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param operator [String] who is running status — the account the
     #   runner-user probes are made from
+    # @param host [String] this machine's name, the host frame's title
+    # @param host_os [String] "darwin" / "linux" / "windows"
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
     # @param bootstrap [Dev::AgentBootstrap] the host's agent bootstrap, whose
     #   inspection methods answer the agent host facts (the runner user it
     #   names is the sudoers grantor: the host identity on Linux, the
-    #   operator on a Mac)
+    #   operator on a Mac — and the user every slot is expected to run as)
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo's lock pins an image
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
     # @param repo [String, nil] the enclosing checkout's "owner/repo", when run in one — the
-    #   repo whose access to each org scope's slots is reported
-    # @param reach_factory [Proc] builds the reach check for an identity; injected for tests
+    #   repo whose jobs the invocation line says which families reach
+    # @param reach_factory [Proc] builds the host reach check for an identity; injected for tests
     # @param wsl_runner_host [Dev::WslRunnerHost, nil] the WSL runner host's
     #   facts; nil off WSL
     sig do
@@ -88,6 +111,8 @@ module Dev
         ui: Dev::Ui,
         executor: T.untyped,
         operator: String,
+        host: String,
+        host_os: String,
         host_identity: T.nilable(Dev::RunnerUser),
         bootstrap: AgentBootstrap,
         brewfile_path: T.nilable(String),
@@ -101,6 +126,8 @@ module Dev
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
                    ui: Dev::NoUi.new, executor: AgentBootstrap::Executor.new,
                    operator: T.must(Etc.getpwuid(Process.uid)).name,
+                   host: Socket.gethostname,
+                   host_os: Platform.os,
                    host_identity: Dev::RunnerUser.for_host,
                    bootstrap: LabelContracts.agent_bootstrap(executor: executor, runner_user: host_identity&.name),
                    brewfile_path: self.class.default_brewfile_path,
@@ -111,6 +138,8 @@ module Dev
                    wsl_runner_host: WslRunnerHost.for_host)
       @wsl_runner_host = wsl_runner_host
       @host_identity = host_identity
+      @host = host
+      @host_os = host_os
       @pins = pins
       @repo = repo
       @reach_factory = reach_factory
@@ -122,6 +151,9 @@ module Dev
       @bootstrap = bootstrap
       @brewfile_path = brewfile_path
       @container_required = container_required
+      @facts = T.let(0, Integer)
+      @drifted = T.let(0, Integer)
+      @reaches = T.let({}, T::Hash[RunnerFamily, Reach])
     end
 
     class << self
@@ -137,28 +169,32 @@ module Dev
       end
     end
 
-    # Render the report: a frame per section — each scope's slots with its
-    # runners nested, the host identity, its reach, the agent host, the
-    # host tooling — and a note per fact, carrying its glyph: `{{v}}` ok,
-    # `{{x}}` a finding, `{{?}}` unknown. The terminal frames and colours
+    # Render the report: the host's frame, a frame per family, then the
+    # invocation and posture lines bare. The terminal frames and colours
     # them; a pipe reads the same facts plain.
     #
     # @return [void]
     sig { void }
     def report
-      agent_dirs = report_enrollments
-      report_host_reach if report_host_identity
-      report_wsl_runner_host
-      report_agent_host(agent_dirs) unless agent_dirs.empty?
-      report_host_tooling
+      families = RunnerFamily.of(@discovery.enrollments.map { |enrollment| slot_of(enrollment) })
+      report_host(families)
+      families.each { |family| report_family(family) }
+      @ui.note("No runners enrolled on this host (run `dev runner register`).") if families.empty?
+      report_invocation(families)
+      slots = families.sum { |family| family.slots.length }
+      @ui.note("posture: #{plural(slots, "slot")} · #{plural(@facts, "fact")} · #{@drifted} drifted")
     end
 
     private
 
+    # One fact: counted, and a drift when not ok.
+    #
     # @param ok [Boolean]
     # @param description [String]
     sig { params(ok: T::Boolean, description: String).void }
     def line(ok, description)
+      @facts += 1
+      @drifted += 1 unless ok
       @ui.note("#{ok ? "{{v}}" : "{{x}}"} #{description}")
     end
 
@@ -169,190 +205,370 @@ module Dev
     # @param description [String]
     sig { params(description: String).void }
     def unknown(description)
+      @facts += 1
       @ui.note("{{?}} #{description}")
     end
 
-    # Each discovered enrollment: scope from its own .runner record (works
-    # offline), labels from GitHub. Returns the dirs of enrollments whose
-    # labels carry the agent contract, so the agent host section can check
-    # each one's work tree.
+    # A continuation of the fact above it, under the hanging indent.
     #
-    # @return [Array<String>] agent-labeled enrollment dirs
-    sig { returns(T::Array[String]) }
-    def report_enrollments
-      enrollments = @discovery.enrollments
-      if enrollments.empty?
-        @ui.note("No runners enrolled on this host (run `dev runner register`).")
-        return []
-      end
-
-      by_scope = enrollments.group_by { |enrollment| [enrollment.scope, RunnerSlots.base_of(enrollment.name)] }
-      by_scope.flat_map do |(scope, base), slots|
-        if slots.length > 1 || !scope.include?("/")
-          report_slots(scope, base, slots) { slots.filter_map { |enrollment| report_enrollment(enrollment) } }
-        else
-          slots.filter_map { |enrollment| report_enrollment(enrollment) }
-        end
-      end
+    # @param text [String]
+    sig { params(text: String).void }
+    def clause(text)
+      @ui.note("#{CLAUSE_INDENT}#{text}")
     end
 
-    # One enrollment's frame: where it is registered, who runs it, its
-    # labels. Its dir when the labels carry the agent contract.
+    # @param count [Integer]
+    # @param noun [String]
+    # @return [String] "1 slot", "3 slots"
+    sig { params(count: Integer, noun: String).returns(String) }
+    def plural(count, noun)
+      "#{count} #{noun}#{"s" unless count == 1}"
+    end
+
+    # --- slots and families ------------------------------------------------
+
+    # An enrollment with GitHub's record of it: the runner, nil when
+    # GitHub has lost it, and the error when GitHub could not be asked.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
-    # @return [String, nil]
-    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(T.nilable(String)) }
-    def report_enrollment(enrollment)
-      @ui.frame("Runner '#{enrollment.name}' (#{enrollment.display_dir})") do
-        line(true, "registered: #{enrollment.scope}")
-        report_owner(enrollment)
-        labels = report_labels(enrollment)
-        enrollment.dir if labels && LabelContracts.agent_host?(labels.join(","))
+    # @return [Dev::RunnerFamily::Slot]
+    sig { params(enrollment: RunnerDiscovery::Enrollment).returns(RunnerFamily::Slot) }
+    def slot_of(enrollment)
+      runner = @registry.find(scope: enrollment.scope, name: enrollment.name)
+      RunnerFamily::Slot.new(enrollment: enrollment, runner: runner, query_error: nil)
+    rescue RunnerRegistry::QueryError => e
+      RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: e.message)
+    end
+
+    # One family's frame: its reach, then its slots.
+    #
+    # @param family [Dev::RunnerFamily]
+    sig { params(family: RunnerFamily).void }
+    def report_family(family)
+      @ui.frame("#{family.role.name} · #{plural(family.slots.length, "slot")}") do
+        report_reach(family)
+        report_slots(family)
       end
     end
 
-    # The frame for this host's slots at a scope, the runners'
-    # frames nested in it by the block: the scope
-    # first, then how many jobs the host runs at once there and the
-    # runners' names (the hostname, `-<n>` beyond the first), and, at an
-    # org scope, who may use them: the runner group slot 1 sits in, held
-    # against the group the labels oblige (ai-flow slots belong in the
-    # ai-flow group, pinned to ai-flow's workflows; a group
-    # the console drifted from that is a finding, register the remedy),
-    # the repos the group is visible to, and — in a checkout — whether
-    # that repo is among them. All read from GitHub. A lone repo-scoped
-    # enrollment needs none of it (one job at a time, that repo's alone).
-    #
-    # @param scope [String]
-    # @param base [String] slot 1's runner name
-    # @param slots [Array<Dev::RunnerDiscovery::Enrollment>]
-    # @param runners [Proc] reports the slots' runners inside the frame; its value is the frame's
-    # @return [Array<String>] what `runners` answered
-    sig do
-      params(
-        scope: String, base: String, slots: T::Array[Dev::RunnerDiscovery::Enrollment],
-        runners: T.proc.returns(T::Array[String]),
-      ).returns(T::Array[String])
-    end
-    def report_slots(scope, base, slots, &runners)
-      naming = RunnerSlots.new(base: base, dir: T.must(slots.first).dir)
-      ordered = slots.sort_by { |slot| naming.slot_of(slot.name) || 0 }
-      plural = slots.length > 1
-      title = "#{scope} — #{slots.length} slot#{"s" if plural} (#{slots.length} job#{"s" if plural} at once), " \
-        "runner#{"s" if plural} #{ordered.map(&:name).join(", ")}"
-      @ui.frame(title) do
-        report_group(scope, T.must(ordered.first)) unless scope.include?("/")
-        runners.call
-      end
-    end
+    # --- reach ---------------------------------------------------------------
 
-    # The org scope's group facts for slot 1: which group lists it, held
-    # against the contract, and who may use it.
+    # The family's reach fact, or why there is none: GitHub unreachable,
+    # every slot lost, an org slot no group lists.
     #
-    # @param scope [String] the org
-    # @param first [Dev::RunnerDiscovery::Enrollment] slot 1
-    sig { params(scope: String, first: Dev::RunnerDiscovery::Enrollment).void }
-    def report_group(scope, first)
-      runner = @registry.find(scope: scope, name: first.name)
-      return if runner.nil?
-
-      group = @registry.group_of(org: scope, runner_id: runner.id)
-      if group.nil?
-        line(false, "group: none lists '#{first.name}' — re-run `dev runner register --org`")
+    # @param family [Dev::RunnerFamily]
+    sig { params(family: RunnerFamily).void }
+    def report_reach(family)
+      first = family.first_listed
+      if first.nil?
+        error = family.query_error
+        if error
+          unknown("reach: cannot tell — #{error}")
+        else
+          line(false, "reach: none — GitHub lists no slot of this family (stale enrollments; re-run `dev runner register`)")
+        end
         return
       end
 
-      report_group_contract(group, runner)
-      report_group_access(scope, group)
+      fact = reach_fact(family, T.must(first.runner))
+      if fact.nil?
+        line(false, "reach: none — no org group at #{family.org} lists #{first.enrollment.name} (#{remedy(family)})")
+        return
+      end
+
+      @reaches[family] = fact.observed
+      render_reach(fact, family)
     rescue RunnerRegistry::QueryError => e
-      line(false, "group unknown (#{e.message})")
+      unknown("reach: cannot tell — #{e.message}")
     end
 
-    # The group the slots sit in against the one their labels oblige.
+    # GitHub's reach for the family held against the role's. nil when an
+    # org slot sits in no group (nothing fixes its reach).
     #
-    # @param group [Dev::RunnerRegistry::Group]
-    # @param runner [Dev::RunnerRegistry::Runner] slot 1
-    sig { params(group: RunnerRegistry::Group, runner: RunnerRegistry::Runner).void }
-    def report_group_contract(group, runner)
-      contract = LabelContracts.group_for(runner.custom_labels.join(","))
-      if contract.nil?
-        line(true, "group: #{group.name}")
-      elsif group.name != contract.name
-        line(false, "group: #{group.name} — these labels belong in '#{contract.name}' (re-run `dev runner register --org`)")
+    # @param family [Dev::RunnerFamily]
+    # @param runner [Dev::RunnerRegistry::Runner] the first listed slot's record
+    # @return [Dev::ReachFact, nil]
+    # @raise [RunnerRegistry::QueryError]
+    sig { params(family: RunnerFamily, runner: RunnerRegistry::Runner).returns(T.nilable(ReachFact)) }
+    def reach_fact(family, runner)
+      labels = Set.new(runner.custom_labels)
+      unless family.org_scoped?
+        observed = Reach.new(repos: Set[family.scope], workflows: Reach::ANY, labels: labels)
+        target = Reach::Target.new(repo: family.scope, public: @registry.repository(family.scope).public?)
+        return compare_reach(family.role, target, observed, ReachFact::RepoRegistration.new(repo: family.scope))
+      end
+
+      group = @registry.group_of(org: family.scope, runner_id: runner.id)
+      return nil if group.nil?
+
+      repos = group.selected? ? Set.new(@registry.group_repositories(org: family.scope, group_id: group.id).map(&:full_name)) : Reach::ALL
+      workflows = group.restricted_to_workflows ? Set.new(group.selected_workflows) : Reach::ANY
+      observed = Reach.new(repos: repos, workflows: workflows, labels: labels)
+      target = Reach::Target.new(repo: org_target_repo(family, observed), public: false)
+      compare_reach(family.role, target, observed, ReachFact::GroupPlacement.new(group: group))
+    end
+
+    # The role's expectation for the target against GitHub's reach — or
+    # the role's refusal of the target, as a fact of its own.
+    #
+    # @param role [Dev::RunnerRole]
+    # @param target [Dev::Reach::Target]
+    # @param observed [Dev::Reach]
+    # @param fixed_by [ReachFact::RepoRegistration, ReachFact::GroupPlacement]
+    # @return [Dev::ReachFact]
+    sig { params(role: RunnerRole, target: Reach::Target, observed: Reach, fixed_by: ReachFact::Provenance).returns(ReachFact) }
+    def compare_reach(role, target, observed, fixed_by)
+      ReachFact.compare(expected: role.expected_reach(target), observed: observed, fixed_by: fixed_by)
+    rescue Reach::ExposedError => e
+      ReachFact.exposed(exposure: e.message, observed: observed, fixed_by: fixed_by)
+    end
+
+    # The repo an org family's expectation is phrased for. An org
+    # registration ran from one or more checkouts nothing recorded, and a
+    # role's expectation names the target only to say *a selection* —
+    # ReachFact compares that clause by shape — so any admitted repo
+    # stands in: this checkout's when it is one, else the first selected,
+    # else the org (an open group names no repo at all).
+    #
+    # @param family [Dev::RunnerFamily]
+    # @param observed [Dev::Reach]
+    # @return [String]
+    sig { params(family: RunnerFamily, observed: Reach).returns(String) }
+    def org_target_repo(family, observed)
+      repo = @repo
+      return repo if repo && observed.admits?(repo)
+
+      selected = observed.open? ? [] : T.cast(observed.repos, T::Set[String]).to_a
+      selected.first || family.org
+    end
+
+    # The fact's three clauses — the first on the glyph line, the rest
+    # under the hanging indent — each naming what the role expects where
+    # it drifts, then the mechanism and remedy as evidence under a ✗.
+    #
+    # @param fact [Dev::ReachFact]
+    # @param family [Dev::RunnerFamily]
+    sig { params(fact: ReachFact, family: RunnerFamily).void }
+    def render_reach(fact, family)
+      drift = fact.drift
+      expected = fact.expected
+      role = family.role.name
+      from = "jobs from #{repos_clause(fact.observed, family)}"
+      from += " — the #{role} role expects #{expected.open? ? "every repo" : "a selection"}" if expected && drift.include?(:repos)
+      line(fact.ok?, "reach: #{from}")
+
+      via = "via #{workflows_clause(fact.observed.workflows)}"
+      via += " — the #{role} role expects #{workflows_clause(expected.workflows)}" if expected && drift.include?(:workflows)
+      clause(via)
+
+      runs_on = "runs-on #{labels_clause(fact.observed.labels)}"
+      runs_on += " — the #{role} role expects #{labels_clause(expected.labels)}" if expected && drift.include?(:labels)
+      clause(runs_on)
+
+      exposure = fact.exposure
+      clause("exposed: #{exposure}") if exposure
+      clause("cause: #{fact.fixed_by.evidence} — #{remedy(family)}") unless drift.empty?
+    end
+
+    # @param observed [Dev::Reach]
+    # @param family [Dev::RunnerFamily]
+    # @return [String] "every d3mlabs repo", "no repo", or the selection, this checkout's repo bold
+    sig { params(observed: Reach, family: RunnerFamily).returns(String) }
+    def repos_clause(observed, family)
+      return "every #{family.org} repo" if observed.open?
+
+      repos = T.cast(observed.repos, T::Set[String]).sort
+      return "no repo" if repos.empty?
+
+      repos.map { |name| name.casecmp?(@repo.to_s) ? "{{bold:#{name}}}" : name }.join(", ")
+    end
+
+    # @param workflows [Symbol, Set<String>]
+    # @return [String] "any workflow", "no workflow", or the pins, `only`
+    sig { params(workflows: T.any(Symbol, T::Set[String])).returns(String) }
+    def workflows_clause(workflows)
+      return "any workflow" if workflows == Reach::ANY
+
+      pins = T.cast(workflows, T::Set[String])
+      return "no workflow (restricted to none)" if pins.empty?
+
+      "#{pins.map { |workflow| short_workflow(workflow) }.join(", ")} only"
+    end
+
+    # `owner/repo/.github/workflows/<file>@refs/heads/<branch>` as
+    # `owner/repo/<file>@<branch>`: the parts GitHub's spelling fixes
+    # dropped, the rest kept.
+    #
+    # @param workflow [String]
+    # @return [String]
+    sig { params(workflow: String).returns(String) }
+    def short_workflow(workflow)
+      path, ref = workflow.split("@", 2)
+      short = path.to_s.sub("/.github/workflows/", "/")
+      ref ? "#{short}@#{ref.delete_prefix("refs/heads/")}" : short
+    end
+
+    # @param labels [Set<String>]
+    # @return [String]
+    sig { params(labels: T::Set[String]).returns(String) }
+    def labels_clause(labels)
+      labels.empty? ? "no label" : labels.to_a.join(" | ")
+    end
+
+    # The register run that converges the family's reach.
+    #
+    # @param family [Dev::RunnerFamily]
+    # @return [String]
+    sig { params(family: RunnerFamily).returns(String) }
+    def remedy(family)
+      role = family.role
+      if role.build_host?
+        "re-run `dev runner register` from the repo's checkout"
       else
-        drift = contract.drift(group)
-        if drift.empty?
-          line(true, "group: #{group.name} — pinned to #{contract.workflows.join(", ")}")
-        else
-          line(false, "group: #{group.name} drifted (#{drift.join("; ")}) — re-run `dev runner register --org`")
+        "re-run `dev runner register --role #{role.name}` from a checkout at #{family.org}"
+      end
+    end
+
+    # --- slots ---------------------------------------------------------------
+
+    # Each slot's facts folded: slots whose facts read the same share one
+    # line naming them; a slot that deviates is its own ✗ line, its dir
+    # beside its name.
+    #
+    # @param family [Dev::RunnerFamily]
+    sig { params(family: RunnerFamily).void }
+    def report_slots(family)
+      family.slots.group_by { |slot| slot_verdict(slot, family) }.each do |(ok, text), slots|
+        case ok
+        when true then line(true, "#{slot_names(slots)} — #{text}")
+        when false then line(false, "#{slot_names(slots, dirs: true)} — #{text}")
+        else unknown("#{slot_names(slots)} — #{text}")
         end
       end
     end
 
-    # Who may use the group, and whether this checkout's repo is among them.
+    # One slot's facts as a verdict: `[true, …]` when every fact holds,
+    # `[false, …]` naming each finding with the remedy, `[nil, …]` when
+    # GitHub's half could not be read.
     #
-    # @param scope [String] the org
-    # @param group [Dev::RunnerRegistry::Group]
-    sig { params(scope: String, group: RunnerRegistry::Group).void }
-    def report_group_access(scope, group)
-      repo = @repo
-      if !group.selected?
-        line(true, "visible to every repo at #{scope}")
-        line(true, "#{repo} may use these slots") if repo
+    # @param slot [Dev::RunnerFamily::Slot]
+    # @param family [Dev::RunnerFamily]
+    # @return [Array] the verdict and its text
+    sig { params(slot: RunnerFamily::Slot, family: RunnerFamily).returns([T.nilable(T::Boolean), String]) }
+    def slot_verdict(slot, family)
+      held = []
+      findings = []
+      unknowns = []
+      github_facts(slot, family, held, findings, unknowns)
+      enrollment = slot.enrollment
+      enrollment.service_installed ? held << "service installed" : findings << "no service installed"
+      runner_user = @host_identity&.name || @bootstrap.runner_user
+      enrollment.owner == runner_user ? held << "runs as #{runner_user}" : findings << "runs as #{enrollment.owner}, not #{runner_user}"
+      if family.role.name == RunnerRole::AGENT_NAME
+        group = DataRoot::GROUP
+        if @bootstrap.work_tree_cooperative?(enrollment.dir)
+          held << "_work shared with group #{group}"
+        else
+          findings << "_work tree not cooperative (group #{group}, setgid)"
+        end
+      end
+
+      return [false, "#{findings.join("; ")} (re-run `dev runner register`)"] unless findings.empty?
+      return [nil, (held + unknowns).join(" · ")] unless unknowns.empty?
+
+      [true, held.join(" · ")]
+    end
+
+    # What GitHub says of the slot: online, and labels as the role's. A
+    # runner GitHub lists offline while this dir holds its enrollment
+    # means nothing is running the registration (a stopped service, or a
+    # dir `--replace` superseded); one GitHub has lost is a stale dir.
+    #
+    # @param slot [Dev::RunnerFamily::Slot]
+    # @param family [Dev::RunnerFamily]
+    # @param held [Array<String>] facts that hold, appended to
+    # @param findings [Array<String>] facts that do not, appended to
+    # @param unknowns [Array<String>] facts GitHub could not answer, appended to
+    sig do
+      params(slot: RunnerFamily::Slot, family: RunnerFamily, held: T::Array[String], findings: T::Array[String], unknowns: T::Array[String]).void
+    end
+    def github_facts(slot, family, held, findings, unknowns)
+      runner = slot.runner
+      if runner.nil?
+        error = slot.query_error
+        error ? unknowns << "GitHub unreachable (#{error})" : findings << "gone on GitHub — stale enrollment"
         return
       end
 
-      selected = @registry.group_repositories(org: scope, group_id: group.id).map(&:full_name)
-      line(true, "visible to #{selected.empty? ? "no repo" : selected.join(", ")}")
+      runner.online? ? held << "online" : findings << "offline on GitHub — the registration is not being run"
+      expected = Set.new(family.role.labels)
+      return if Set.new(runner.custom_labels) == expected
+
+      findings << "labels #{labels_clause(Set.new(runner.custom_labels))}, not the role's #{labels_clause(expected)}"
+    end
+
+    # The slots' names, the first in full and the rest as their `-<n>`
+    # suffix where they share its base; a run of consecutive suffixes
+    # collapses to its ends (`-2 … -10`). With `dirs:`, each name carries
+    # its dir — the evidence a ✗ line needs.
+    #
+    # @param slots [Array<Dev::RunnerFamily::Slot>]
+    # @param dirs [Boolean]
+    # @return [String]
+    sig { params(slots: T::Array[RunnerFamily::Slot], dirs: T::Boolean).returns(String) }
+    def slot_names(slots, dirs: false)
+      return slots.map { |slot| "#{slot.enrollment.name} (#{slot.enrollment.display_dir})" }.join(", ") if dirs
+
+      names = slots.map { |slot| slot.enrollment.name }
+      first = T.must(names.first)
+      base = RunnerSlots.base_of(first)
+      rest = names.drop(1)
+      return names.join(", ") unless rest.all? { |name| name.start_with?("#{base}-") }
+
+      suffixes = rest.map { |name| name.delete_prefix(base) }
+      numbers = slots.drop(1).map(&:number)
+      consecutive = numbers.length >= SUFFIX_RUN_COLLAPSE && numbers.each_cons(2).all? { |pair| pair.fetch(1) == pair.fetch(0) + 1 }
+      return "#{first}, #{suffixes.first} … #{suffixes.last}" if consecutive
+
+      [first, *suffixes].join(", ")
+    end
+
+    # --- the invocation ------------------------------------------------------
+
+    # In a checkout: which families that repo's jobs reach, by the reach
+    # GitHub fixes — or none, with register as the remedy. Nothing outside
+    # a checkout.
+    #
+    # @param families [Array<Dev::RunnerFamily>]
+    sig { params(families: T::Array[RunnerFamily]).void }
+    def report_invocation(families)
+      repo = @repo
       return unless repo
 
-      if selected.any? { |name| name.casecmp?(repo) }
-        line(true, "#{repo} may use these slots")
+      reached = families.select { |family| @reaches[family]&.admits?(repo) }.map { |family| family.role.name }.uniq
+      if reached.empty?
+        line(false, "this checkout (#{repo}) reaches no family — run `dev runner register` from this checkout")
       else
-        line(false, "#{repo} may not use these slots — run `dev runner register --org ...` from this checkout to admit it")
+        @ui.note("this checkout (#{repo}) reaches: #{reached.join(", ")}")
       end
     end
 
-    # The enrollment's custom labels and health, read from their single
-    # home — GitHub. Labels nil when they can't be known (offline) or the
-    # runner is gone server-side (a stale local dir). A runner GitHub
-    # lists offline while this dir holds its enrollment means nothing is
-    # running the registration (a stopped service, or a dir `--replace`
-    # superseded) — flagged, with register as the remedy.
+    # --- the host ------------------------------------------------------------
+
+    # The host's frame: the Linux host rule's identity and what it can
+    # read, the agent host when an agent family is enrolled, the WSL
+    # runner host inside a distro, the tooling.
     #
-    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
-    # @return [Array<String>, nil]
-    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).returns(T.nilable(T::Array[String])) }
-    def report_labels(enrollment)
-      runner = @registry.find(scope: enrollment.scope, name: enrollment.name)
-      if runner.nil?
-        line(false, "gone on GitHub — stale enrollment (re-run `dev runner register`)")
-        return nil
-      end
-
-      line(true, "labels: #{runner.custom_labels.join(", ")}")
-      unless runner.online?
-        line(false, "offline on GitHub — the registration is not being run (re-run `dev runner register`)")
-      end
-      runner.custom_labels
-    rescue RunnerRegistry::QueryError => e
-      line(false, "labels unknown (#{e.message})")
-      nil
-    end
-
-    # Who the enrollment runs as — its dir's owner — against the host
-    # rule. Nothing to say without a rule (a Mac).
-    #
-    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
-    sig { params(enrollment: Dev::RunnerDiscovery::Enrollment).void }
-    def report_owner(enrollment)
-      identity = @host_identity
-      return unless identity
-
-      if enrollment.owner == identity.name
-        line(true, "runs as #{identity.name}")
-      else
-        line(false, "runs as #{enrollment.owner}, not #{identity.name} — drift (re-run `dev runner register`)")
+    # @param families [Array<Dev::RunnerFamily>]
+    sig { params(families: T::Array[RunnerFamily]).void }
+    def report_host(families)
+      manager = SERVICE_MANAGERS.fetch(@host_os, "no service manager")
+      @ui.frame("#{@host} · #{@host_os} · #{manager}") do
+        report_host_reach if report_host_identity
+        agent_host_facts if families.any? { |family| family.role.name == RunnerRole::AGENT_NAME }
+        wsl = @wsl_runner_host
+        wsl_runner_host_facts(wsl) if wsl
+        host_tooling_fact
       end
     end
 
@@ -365,7 +581,7 @@ module Dev
     # sudoers-edge probes): when sudo refuses the operator the login is
     # unknown, not absent — a `{{?}}` with the command that can tell, never
     # the login remedy, which would overwrite a working login if
-    # followed.
+    # followed. Nothing without a host rule (a Mac).
     #
     # @return [Boolean] whether the identity has a gh login to probe with
     sig { returns(T::Boolean) }
@@ -373,21 +589,11 @@ module Dev
       identity = @host_identity
       return false unless identity
 
-      @ui.frame("Host identity (#{identity.name})") { host_identity_facts(identity) }
-    end
-
-    # The identity's facts, in order, stopping at the first that makes the
-    # rest unanswerable; true when the login is usable.
-    #
-    # @param identity [Dev::RunnerUser]
-    # @return [Boolean]
-    sig { params(identity: Dev::RunnerUser).returns(T::Boolean) }
-    def host_identity_facts(identity)
       unless @executor.quiet?("id", "-u", identity.name)
-        line(false, "user #{identity.name} exists (run `dev runner register`)")
+        line(false, "runner user #{identity.name} missing (run `dev runner register`)")
         return false
       end
-      line(true, "user #{identity.name} exists")
+      line(true, "runner user #{identity.name} exists")
       report_toolchain(identity)
       unless @executor.quiet?(*identity.probe_argv("true"))
         unknown("gh login: cannot tell as #{@operator} (sudo as #{identity.name} needs a password here) — " \
@@ -442,15 +648,13 @@ module Dev
       reach = @reach_factory.call(identity)
       return unless reach
 
-      @ui.frame("Host reach (#{identity.name}, this checkout's lock)") do
-        misses = reach.check(@pins).to_h { |verdict| [verdict.target.to_s, verdict.grant] }
-        HostReach.targets(@pins).each do |target|
-          grant = misses[target.to_s]
-          if grant
-            line(false, "cannot read #{target} — #{grant}")
-          else
-            line(true, "can read #{target}")
-          end
+      misses = reach.check(@pins).to_h { |verdict| [verdict.target.to_s, verdict.grant] }
+      HostReach.targets(@pins).each do |target|
+        grant = misses[target.to_s]
+        if grant
+          line(false, "#{identity.name} cannot read #{target} (this checkout's lock) — #{grant}")
+        else
+          line(true, "#{identity.name} can read #{target} (this checkout's lock)")
         end
       end
     end
@@ -467,20 +671,11 @@ module Dev
       match && Date.parse(T.must(match[1]))
     end
 
-    # The WSL runner host's facts, re-derived: nothing off WSL.
-    sig { void }
-    def report_wsl_runner_host
-      wsl = @wsl_runner_host
-      return unless wsl
-
-      @ui.frame("WSL runner host (#{wsl.task.distro})") { wsl_runner_host_facts(wsl) }
-    end
-
-    # systemd first (the runner service is a unit of it), then the
-    # keepalive: present, holding a session, running, and the verdict —
-    # does the distro autostart at logon and stay up. Each line's remedy is
-    # register; the keepalive lines are `{{?}}` when this session cannot
-    # ask Windows.
+    # The WSL runner host's facts, re-derived: systemd first (the runner
+    # service is a unit of it), then the keepalive: present, holding a
+    # session, running, and the verdict — does the distro autostart at
+    # logon and stay up. Each line's remedy is register; the keepalive
+    # lines are `{{?}}` when this session cannot ask Windows.
     #
     # @param wsl [Dev::WslRunnerHost]
     sig { params(wsl: WslRunnerHost).void }
@@ -537,22 +732,12 @@ module Dev
       end
     end
 
-    # Every fact the agent contract obliges, re-derived from the host.
-    #
-    # @param runner_dirs [Array<String>] the agent-labeled enrollment dirs
-    sig { params(runner_dirs: T::Array[String]).void }
-    def report_agent_host(runner_dirs)
-      @ui.frame("Agent host (#{@bootstrap.agent_user})") { agent_host_facts(runner_dirs) }
-    end
-
-    # The agent contract's facts, the bootstrap's inspection asked one by
-    # one: the user, the group memberships, the sudoers edges, each work
-    # tree, the data root's cooperative shape, and the engine where
-    # required.
-    #
-    # @param runner_dirs [Array<String>] agent-labeled enrollment dirs
-    sig { params(runner_dirs: T::Array[String]).void }
-    def agent_host_facts(runner_dirs)
+    # The agent host's facts, the bootstrap's inspection asked one by one:
+    # the user, the group memberships, the sudoers edges, the data root's
+    # cooperative shape, brew's lock dir, and the engine where required.
+    # The `_work` trees are the agent slots' own facts, in their family.
+    sig { void }
+    def agent_host_facts
       agent = @bootstrap.agent_user
       group = DataRoot::GROUP
       line(@executor.quiet?("id", "-u", agent), "agent user #{agent} exists")
@@ -560,9 +745,6 @@ module Dev
         line(@bootstrap.group_member?(member), "#{member} in the #{group} group")
       end
       report_sudoers_edges
-      runner_dirs.each do |dir|
-        line(@bootstrap.work_tree_cooperative?(dir), "_work tree cooperative in #{dir} (group #{group}, setgid)")
-      end
       root = @bootstrap.data_root
       line(@bootstrap.cooperative_dir?(root), "data root #{root} shared with group #{group} (setgid)")
       locks = @bootstrap.brew_locks_dir
@@ -638,12 +820,6 @@ module Dev
     # `brew bundle check` against the org Brewfile — the same list `dev up`
     # converges; a deploymentless host has nothing to check.
     sig { void }
-    def report_host_tooling
-      @ui.frame("Host tooling") { host_tooling_fact }
-    end
-
-    # Converged against the org Brewfile, or nothing to check.
-    sig { void }
     def host_tooling_fact
       brewfile = @brewfile_path
       if brewfile.nil? || !File.exist?(brewfile)
@@ -651,10 +827,12 @@ module Dev
         return
       end
 
-      line(
-        @executor.quiet?("brew", "bundle", "check", "--file=#{brewfile}"),
-        "host tooling converged (brew bundle check)",
-      )
+      version = Dev::Version.current
+      if @executor.quiet?("brew", "bundle", "check", "--file=#{brewfile}")
+        line(true, "host tooling matches #{brewfile} (dev #{version})")
+      else
+        line(false, "host tooling drifted from #{brewfile} (dev #{version}) — run `dev up`")
+      end
     end
   end
 end

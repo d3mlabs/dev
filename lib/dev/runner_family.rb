@@ -1,0 +1,153 @@
+# typed: strict
+# frozen_string_literal: true
+
+require "dev/runner_discovery"
+require "dev/runner_registry"
+require "dev/runner_role"
+require "dev/runner_slots"
+
+module Dev
+  # This host's slots of one role at one scope — the family one `register`
+  # enrolls — with what GitHub says of each slot. The subject `dev runner
+  # status` frames: a repo-scoped family and an org-scoped one are the
+  # same kind of thing, their scope only deciding who fixes their reach.
+  #
+  # A slot's role is read from its GitHub labels (RunnerRole.for_labels),
+  # or, once GitHub has lost it, from the runner group its own `.runner`
+  # record names (RunnerRole.for_pool). Names and dirs are never parsed
+  # for it; they only order the slots within the family.
+  class RunnerFamily
+    extend T::Sig
+
+    # One slot: the local enrollment and GitHub's record of it — nil when
+    # GitHub has lost it, or when GitHub could not be asked (`query_error`
+    # says why).
+    class Slot < T::Struct
+      extend T::Sig
+
+      const :enrollment, RunnerDiscovery::Enrollment
+      const :runner, T.nilable(RunnerRegistry::Runner)
+      const :query_error, T.nilable(String)
+
+      # Whether GitHub lists the slot.
+      sig { returns(T::Boolean) }
+      def listed?
+        !runner.nil?
+      end
+
+      # Whether GitHub was asked and has no such runner: a stale
+      # enrollment.
+      sig { returns(T::Boolean) }
+      def lost?
+        runner.nil? && query_error.nil?
+      end
+
+      # The role the slot plays: by its labels when GitHub lists it, by
+      # its record's pool otherwise. A label set claiming two roles
+      # (RunnerRole.for_labels refuses it) is read as a build host with
+      # those labels — a contradiction to show, not to hide a slot over.
+      #
+      # @return [Dev::RunnerRole]
+      sig { returns(RunnerRole) }
+      def role
+        listed = runner
+        return RunnerRole.for_pool(enrollment.pool) if listed.nil?
+
+        RunnerRole.for_labels(listed.custom_labels)
+      rescue ArgumentError
+        RunnerRole.build_host(labels: T.must(listed).custom_labels)
+      end
+
+      # The slot's number among its family's names: 1 for `<base>`, n for
+      # `<base>-<n>` (RunnerSlots' shape).
+      sig { returns(Integer) }
+      def number
+        match = RunnerSlots::SLOT_NAME.match(enrollment.name)
+        match ? Integer(T.must(match[:slot])) : 1
+      end
+
+      # The slot's place among its family's names: by base, slot 1 first.
+      #
+      # @return [Array] the base, then the number
+      sig { returns([String, Integer]) }
+      def order_key
+        [RunnerSlots.base_of(enrollment.name), number]
+      end
+    end
+
+    # The builtin order families print in, so the eye learns positions.
+    ROLE_ORDER = T.let([RunnerRole::AGENT_NAME, RunnerRole::ORCHESTRATOR_NAME, RunnerRole::BUILD_HOST_NAME].freeze, T::Array[String])
+
+    # "owner/repo" (repo scope) or "owner" (org scope).
+    sig { returns(String) }
+    attr_reader :scope
+
+    sig { returns(RunnerRole) }
+    attr_reader :role
+
+    # Slot 1 first, then by number.
+    sig { returns(T::Array[Slot]) }
+    attr_reader :slots
+
+    class << self
+      extend T::Sig
+
+      # The families the slots form: one per (scope, role), in builtin role
+      # order then by scope. A family's role is the first listed slot's —
+      # whose labels say which agent subset or which build-host capabilities
+      # the family advertises — or, with none listed, the first slot's by
+      # pool.
+      #
+      # @param slots [Array<Slot>] this host's enrollments, each with GitHub's record
+      # @return [Array<Dev::RunnerFamily>]
+      sig { params(slots: T::Array[Slot]).returns(T::Array[RunnerFamily]) }
+      def of(slots)
+        grouped = slots.group_by { |slot| [slot.enrollment.scope, slot.role.name] }
+        families = grouped.map do |(scope, _role_name), members|
+          ordered = members.sort_by(&:order_key)
+          role = (ordered.find(&:listed?) || T.must(ordered.first)).role
+          new(scope: scope, role: role, slots: ordered)
+        end
+        families.sort_by { |family| [ROLE_ORDER.index(family.role.name) || ROLE_ORDER.length, family.scope] }
+      end
+    end
+
+    # @param scope [String]
+    # @param role [Dev::RunnerRole]
+    # @param slots [Array<Slot>] ordered
+    sig { params(scope: String, role: RunnerRole, slots: T::Array[Slot]).void }
+    def initialize(scope:, role:, slots:)
+      @scope = scope
+      @role = role
+      @slots = slots
+    end
+
+    # Whether the family is registered at an org (its reach fixed by a
+    # runner group) rather than at a repo.
+    sig { returns(T::Boolean) }
+    def org_scoped?
+      !@scope.include?("/")
+    end
+
+    # The org the scope belongs to: the scope itself, or the repo's owner.
+    sig { returns(String) }
+    def org
+      T.must(@scope.split("/").first)
+    end
+
+    # The first slot GitHub lists — whose record speaks for the family's
+    # labels and group — or nil when it lists none.
+    sig { returns(T.nilable(Slot)) }
+    def first_listed
+      @slots.find(&:listed?)
+    end
+
+    # Whether the slots were asked of GitHub and it could not answer.
+    #
+    # @return [String, nil] the query error, when there was one
+    sig { returns(T.nilable(String)) }
+    def query_error
+      @slots.filter_map(&:query_error).first
+    end
+  end
+end
