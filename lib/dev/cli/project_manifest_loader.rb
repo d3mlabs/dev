@@ -369,7 +369,7 @@ module Dev
                      "from the repo name (`dev runner register`); delete the block."
       end
 
-      # The user runner roles, the top-level `runner_roles:` block (dev#566):
+      # The user runner roles, the top-level `runner_roles:` block:
       # `<name>: { labels: [..] }` each, built through RunnerRole.user so a
       # builtin's name or an ai-flow label is refused at the parse boundary.
       #

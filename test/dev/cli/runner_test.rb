@@ -984,7 +984,7 @@ class RunnerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "the project context carries the dev.yml runner roles, so register can resolve --role (dev#566)" do
+  test "the project context carries the dev.yml runner roles, so register can resolve --role" do
     Given "a Runner over a dev.yml declaring a farm role"
     contexts = []
     command_service = typed_mock(Dev::Cli::CommandService)

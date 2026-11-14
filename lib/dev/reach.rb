@@ -5,14 +5,11 @@ require "set"
 require_relative "value_equality"
 
 module Dev
-  # Who may land a job on a runner, as one fact (plans#52, *Decision:
-  # `runner status` groups by subject, reach is one fact*): **from** which
-  # repos, **via** which workflows, on which **labels**. A repo-scoped and
-  # an org-scoped runner are the same GitHub object behind two URL
-  # prefixes; the scope only decides who fixes `from` — the repo itself,
-  # or a runner group's selection — and a group is the only thing that can
-  # carry a workflow pin. So reach is a property of the **role**
-  # (RunnerRole#expected_reach), and scope is derived from it.
+  # Who may land a job on a runner: from which repos, through which
+  # workflows, on which labels. The scope decides who fixes the repos —
+  # the repo itself, or a runner group's selection — and only a group can
+  # pin the workflows, so reach is a property of the role
+  # (RunnerRole#expected_reach).
   class Reach
     extend T::Sig
     include Dev::ValueEquality::Derived
@@ -23,16 +20,15 @@ module Dev
     # unrestricted group).
     ANY = :any
 
-    # The repo a registration is for, and the one fact about it that
-    # reach turns on: whether it is public (plans#5 H3).
+    # The repo a registration is for, and whether it is public.
     class Target < T::Struct
       const :repo, String
       const :public, T::Boolean
     end
 
-    # Any workflow against a public repo: an approved fork PR's YAML could
-    # land on the runner (plans#5 Gap 1). Reported by the role, never
-    # accepted as a reach.
+    # A runner that any workflow of a public repo could use: an approved
+    # fork PR's YAML could land on it. Raised by the role instead of a
+    # reach.
     class ExposedError < RuntimeError; end
 
     sig { returns(T.any(Symbol, T::Set[String])) }

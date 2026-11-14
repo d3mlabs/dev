@@ -564,7 +564,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- slots: a host's concurrency at a scope (dev#470) ------------------
 
-  test "--slots 3 on a fresh scope enrolls three slots named from the role: <host>-agent, then -2 and -3 beside it (dev#566)" do
+  test "--slots 3 on a fresh scope enrolls three slots named from the role: <host>-agent, then -2 and -3 beside it" do
     Given "no enrollment at the org, a host named mac1"
     harness = build_harness(contracts: 1, scope: "d3mlabs", hostname: "mac1")
 
@@ -1126,7 +1126,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     registry.group_writes == [[:update, "d3mlabs", 7, nil, true, FakeRegistry::PINS], [:select, "d3mlabs", 7, [100]]]
   end
 
-  test "the invariant holds for a human's group too: a build host for a public repo reaches it through any workflow, so the role's reach refuses before anything enrolls (plans#5 Gap 1)" do
+  test "the invariant holds for a human's group too: a build host for a public repo reaches it through any workflow, so the role's reach refuses before anything enrolls" do
     Given "ue-hosted, unpinned and selected, registered for from the public dev checkout"
     registry = FakeRegistry.new(
       groups: { ["d3mlabs", "ue-hosted"] => FakeRegistry.group(id: 3, name: "ue-hosted", pinned: false) },
@@ -1241,7 +1241,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings.first.first.group.nil?
   end
 
-  # --- roles (dev#566): declare the role, derive the labels and the scope ---
+  # --- roles: declare the role, derive the labels and the scope ---
 
   test "--ai-flow without --org is still the agent role, and the agent is org-scoped because of its pin: enrolled at the org, no exclusivity question" do
     Given "a checkout whose repo is among the ai-flow group's repos"
@@ -1639,7 +1639,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
     Expect "a one-line summary first, then the detail"
     desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner in a role (--role; --ai-flow, --labels), converging its contracts"
-    desc.include?("Names: <hostname>-<role>[-n] for agent, orchestrator and")
+    desc.include?("Runner names are <hostname>-<role>[-n]")
     desc.include?("runner_roles:")
     desc.include?("mints the registration token")
     desc.include?("owns the enrollment")
@@ -1868,7 +1868,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # from a look-alike (dev#565); 0 by default, an id no registry double
   # here hands out, so a test that means "own" says the id. `pool` is the
   # runner group the registration joined (.runner poolName) — what tells a
-  # lost enrollment's family (dev#566); Default unless a test says so.
+  # lost enrollment's family; Default unless a test says so.
   def write_runner(home, dir_name, scope:, name:, agent_id: 0, pool: "Default")
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)

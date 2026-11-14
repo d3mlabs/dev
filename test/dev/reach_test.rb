@@ -6,7 +6,7 @@ require "dev/reach"
 
 transform!(RSpock::AST::Transformation)
 class Dev::ReachTest < Minitest::Test
-  # Reach is one fact (plans#52): two reaches built from the same repos,
+  # Reach is a value: two reaches built from the same repos,
   # workflows and labels are the same fact, however they were built.
   test "two reaches with the same repos, workflows and labels are equal and hash alike" do
     Given

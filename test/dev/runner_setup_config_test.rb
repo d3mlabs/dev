@@ -21,7 +21,7 @@ class Dev::RunnerSetupConfigTest < Minitest::Test
     config.replace == false
   end
 
-  test "labels and group derive from the role — the config declares the role, config.sh gets the labels (dev#566)" do
+  test "labels and group derive from the role — the config declares the role, config.sh gets the labels" do
     Expect
     Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT).labels == Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
     Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT).group == "ai-flow"

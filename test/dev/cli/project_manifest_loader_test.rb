@@ -849,7 +849,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     Dev::Cli::ProjectManifestLoader.new(command_parser: Dev::Cli::CommandParser.new, target_parser: Dev::Cli::TargetParser.new)
   end
 
-  test "#load extracts runner_roles: a user role per key, identity and labels only (dev#566)" do
+  test "#load extracts runner_roles: a user role per key, identity and labels only" do
     Given "a dev.yml declaring a farm role"
     tmp = write_dev_yml(<<~YAML)
       name: snappy

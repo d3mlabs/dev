@@ -8,31 +8,25 @@ require "dev/runner_group_contract"
 require_relative "value_equality"
 
 module Dev
-  # What a runner is *for* (dev#566): the one noun a registration declares,
-  # from which everything else derives — the labels it advertises, the
-  # runner group its slots join, the host obligations its labels carry
-  # (LabelContracts), its name and directory, and its reach (Reach). The
-  # inverse of deriving a family from an open label list, which could be
-  # neither unique nor meaningful (the first label is an accident of flag
-  # order).
+  # What a runner is for: the one thing a registration declares. The
+  # labels it advertises, the runner group its slots join, the host
+  # obligations those labels carry (LabelContracts), its name and
+  # directory, and its reach (Reach) all derive from the role.
   #
-  # Three **builtin** roles are code's: `agent` (the five agent labels; the
-  # pinned `ai-flow` group), `orchestrator` (`ai-orchestrator`; its open
-  # pinned group) and `build-host` (a repo's own label, or `--labels`; no
-  # group — the `runs-on` target of the repo's own workflows). A **user**
-  # role is declared once in a repo's dev.yml (`runner_roles: { ue-farm:
-  # { labels: [ue, gpu] } }`): identity and capabilities only — obligations
-  # are code and stay builtin — so every host registering it advertises the
-  # same set. Org scope is builtin-only until a need appears.
+  # Three roles are builtin: `agent` (the agent labels, the pinned
+  # `ai-flow` group), `orchestrator` (`ai-orchestrator`, its own pinned
+  # group) and `build-host` (a repo's own label or `--labels`, no group).
+  # A user role is declared in a repo's dev.yml (`runner_roles: { ue-farm:
+  # { labels: [ue, gpu] } }`) and carries identity and labels only;
+  # obligations stay builtin. User roles are repo-scoped.
   #
-  # A role is org-scoped *because* its group carries a workflow pin (plans#5
-  # H3, the structural control against hostile workflow YAML), never as an
-  # input: `agent` and `orchestrator` are, a build host is its repo's.
+  # A role whose group carries a workflow pin is org-scoped, since only a
+  # group can carry the pin; a build host is its repo's.
   #
-  # **Family identity is `(scope, host, role)`**: a host plays each role at
-  # most once per scope. Which role an enrollment GitHub still lists plays
-  # is read from its labels (`claims?`); one GitHub has lost is told by the
-  # pool its `.runner` record names — never by parsing its name or dir.
+  # Family identity is `(scope, host, role)`: a host plays each role at
+  # most once per scope. An enrollment GitHub lists is matched to a role
+  # by its labels (`claims?`); one GitHub has lost, by the pool its
+  # `.runner` record names. Names and dirs are never parsed for this.
   class RunnerRole
     extend T::Sig
     include Dev::ValueEquality::Derived
@@ -45,9 +39,8 @@ module Dev
     ORCHESTRATOR_NAME = "orchestrator"
     BUILD_HOST_NAME = "build-host"
 
-    # Where config.sh puts a registration naming no group: GitHub's own
-    # default runner group, present in every org — and the pool every
-    # repo-scoped registration records.
+    # GitHub's default runner group, where a registration naming no group
+    # lands; every repo-scoped registration records it.
     DEFAULT_POOL = "Default"
 
     sig { returns(String) }
@@ -183,10 +176,9 @@ module Dev
     end
 
     # Slot 1's runner name on a host: `<host>-<role>` for a grouped or user
-    # role (several may share a host at one scope, and runner names are
-    # unique per scope), the bare host for a build host (at repo scope the
-    # repo is the namespace and the host alone is the identity — which is
-    # what the hostname label means).
+    # role, the bare host for a build host. Several roles may share a host
+    # at one org scope and runner names are unique per scope, so the role
+    # is part of the name.
     #
     # @param host [String] the hostname
     # @return [String]
@@ -207,10 +199,8 @@ module Dev
     end
 
     # Whether a runner advertising these labels is one of this role's: its
-    # labels oblige this role's group — or none, a bare set, which any role
-    # amends into itself (the pre-group org enrollment `--ai-flow` has
-    # always taken over). `LabelContracts.group_for` is the one validator
-    # of what a label set obliges; it is never the source of a role.
+    # labels oblige this role's group, or no group at all (a bare set,
+    # which any role amends into itself).
     #
     # @param labels [Array<String>] GitHub's labels for the runner
     # @return [Boolean]
@@ -223,12 +213,11 @@ module Dev
     end
 
     # Who may land a job on a slot of this role, for a registration made
-    # for `target`: a pinned role reaches through its workflows — the
-    # agent's selected repos (the target among them), the orchestrator's
-    # every repo; a build host reaches its repo through any workflow, the
-    # one configuration whose first gate cannot drift since there is no
-    # group to edit. Any workflow against a *public* repo is plans#5 Gap 1
-    # reopened and is refused, not accepted.
+    # for `target`. A pinned role reaches through its group's workflows:
+    # the agent from the group's selected repos, the orchestrator from
+    # every repo. A build host reaches its repo through any workflow, and
+    # is refused for a public repo: an approved fork PR's workflow could
+    # then run on the host.
     #
     # @param target [Dev::Reach::Target]
     # @return [Dev::Reach]
@@ -245,7 +234,7 @@ module Dev
       if target.public
         raise Reach::ExposedError,
           "#{target.repo} is public and a #{@name} runner would take jobs from any of its workflows — an approved fork PR's " \
-            "YAML could land on this host (plans#5 Gap 1). Enroll for a private repo, or put the runners in a group " \
+            "YAML could land on this host. Enroll for a private repo, or put the runners in a group " \
             "pinned to the workflows that may use them."
       end
 

@@ -197,7 +197,7 @@ class Dev::RunnerRoleTest < Minitest::Test
     !reach.pinned?
   end
 
-  test "any workflow against a public repo is plans#5 Gap 1 reopened: the reach is refused, naming the hole" do
+  test "a build host for a public repo is refused: any workflow could land on it, and the message says so" do
     Given
     role = Dev::RunnerRole.build_host(labels: ["snappy"])
 
@@ -206,6 +206,6 @@ class Dev::RunnerRoleTest < Minitest::Test
 
     Then
     error.message.include?("d3mlabs/dev is public")
-    error.message.include?("plans#5")
+    error.message.include?("YAML could land on this host")
   end
 end

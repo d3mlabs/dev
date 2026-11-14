@@ -8,11 +8,12 @@ gets warm.
 ## dev runner
 
 ```bash
-dev runner register                       # repo scope; label = the repo name
-dev runner register --labels ue-engine    # repo scope, custom label
-dev runner register --org --ai-flow       # org agent host: ai-flow's label set and runner group
-dev runner register --org --ai-flow --slots 3           # three jobs at once
-dev runner register --org --labels ai-orchestrator --slots 8   # the orchestrator pool
+dev runner register                       # this repo's build host: repo scope, label = the repo name
+dev runner register --labels ue-engine    # a build host with custom labels
+dev runner register --role agent          # the org agent host (--ai-flow is the same)
+dev runner register --role agent --slots 3              # three jobs at once
+dev runner register --role orchestrator --slots 8       # the orchestrator pool
+dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
 dev runner unregister d3mlabs             # by scope …
@@ -20,20 +21,49 @@ dev runner unregister ~/actions-runner    # … or by directory (Tab completes b
 ```
 
 Enrollment is a machine fact, not a repo one: nothing is recorded in
-`dev.yml` or any inventory file. Labels live on GitHub; the scope lives in
-the runner directory's own `.runner` record. `dev runner status` reads
-both back.
+`dev.yml` or any inventory file. Labels live on GitHub; the scope and the
+runner group live in the runner directory's own `.runner` record. `dev
+runner status` reads both back.
+
+### Roles
+
+A registration declares the **role** its runners play. The labels, the
+runner group, the scope, the runner name and the directory all derive from
+it.
+
+| Role | Labels | Group | Scope |
+|---|---|---|---|
+| `agent` (`--role agent`, or `--ai-flow`) | `ai-ask ai-edit ai-split ai-build ai-learn` | `ai-flow`, pinned to ai-flow's workflows | org |
+| `orchestrator` (`--role orchestrator`, or `--labels ai-orchestrator`) | `ai-orchestrator` | `ai-orchestrator`, pinned, open to every repo | org |
+| build host (bare `register`, or `--labels`) | the repo's name, or the `--labels` set | none, or `--group` | repo; `--org` with `--labels` makes an org pool |
+| a dev.yml role (`--role <name>`) | as declared | none | repo |
+
+A repo declares its own roles in `dev.yml`:
+
+```yaml
+runner_roles:
+  ue-farm:
+    labels: [ue, gpu]
+```
+
+A dev.yml role carries a name and labels only. It may not take a builtin's
+name or an ai-flow label. `--role x` that nothing declares is refused, as
+is `--role x --labels y` (the role's labels are its declaration) and
+`--org` with a dev.yml role.
 
 ### Scope
 
-**Repo scope** (the default) makes a runner only that repo's jobs land on.
-Use it when a repo needs its own hardware or its own concurrency cap: a
-repo whose jobs hold the one Unreal editor enrolls one repo-scoped runner
-and has concurrency 1 by construction.
+A role whose group is pinned to workflows is **org-scoped**: every repo the
+group admits may send jobs, and `--org` is implied. A **build host** is
+its repo's: only that repo's jobs land on it. Use one when a repo needs its
+own hardware or its own concurrency cap — a repo whose jobs hold the one
+Unreal editor enrolls one build host and has concurrency 1 by
+construction. `--org --labels <set>` makes a custom set an org pool
+instead.
 
-**Org scope** (`--org`) pools: every repo the runner group admits may send
-jobs. The ai-flow work of every adopting repo is the same profile, so one
-org host serves them all.
+A build host for a **public** repo is refused: any of the repo's
+workflows, an approved fork PR's included, could otherwise run on the
+host. Enroll for a private repo, or put the runners in a pinned group.
 
 GitHub routes a job to any online runner visible to the repo whose labels
 cover the job's `runs-on`. There is no repo-beats-org priority, so an org
@@ -59,7 +89,7 @@ A capability label is an obligation: `register` converges what each label
 requires. A plain target-host label converges nothing; the agent labels
 run the [agent host bootstrap](#agent-hosts).
 
-### Slots
+### Slots and names
 
 A runner runs one job at a time. `--slots N` enrolls N runners —
 `<name>`, `<name>-2`, … — each with its own directory and service and the
@@ -67,9 +97,19 @@ same labels. Re-running without `--slots` keeps the size it finds; a
 smaller number lists the surplus and asks before retiring it. `dev runner
 status` reports a family as one header per scope (`d3mlabs — 3 slots`).
 
-One host may hold two families at one org scope (the agent set and the
-orchestrator pool). The second takes the name `<hostname>-<first label>`;
+A **family** is the runners one host enrolls in one role at one scope. A
+host plays each role at most once per scope; registering the same role
+again amends the family it finds. One host may hold several families at
+one org scope (the agent set beside the orchestrator pool), and
 `register` sizes and retires only the family it was asked for.
+
+Runner names are `<hostname>-<role>` for grouped and dev.yml roles
+(`mac1-agent`, `mac1-agent-2`, `mac1-orchestrator`) and the bare hostname
+for a build host; directories are `~/actions-runner-<role>[-n]`. A family
+that is already enrolled keeps the names it has; `--name` and `--dir`
+override slot 1's. Which role an enrollment plays is read from its labels
+on GitHub, or, for an enrollment GitHub has lost, from the runner group
+its `.runner` record names — never from its name or directory.
 
 ### Runner groups
 
@@ -77,11 +117,13 @@ A runner group says which repos may use an org host's slots. Labels say
 what a host can do, slots how many jobs it runs at once, the group who may
 send them.
 
-- `--ai-flow` implies the `ai-flow` group. `register` creates it when the
-  org lacks it — visibility *selected*, restricted to ai-flow's two
+- The `agent` role sits in the `ai-flow` group. `register` creates it when
+  the org lacks it — visibility *selected*, restricted to ai-flow's two
   reusable workflows — and re-converges it when the console drifted.
-- `ai-orchestrator` implies the `ai-orchestrator` group, visibility *all*.
-- `--group <name>` is for human-made pools; the group must already exist.
+- The `orchestrator` role sits in the `ai-orchestrator` group, visibility
+  *all*.
+- `--group <name>` is for human-made pools of build hosts; the group must
+  already exist.
 
 Admission is derived from the checkout: `dev runner register --org …` run
 in a repo (or with `--repo a/b`) admits that repo to the slots' group. Run
@@ -91,10 +133,8 @@ it once per adopting repo.
 fork's pull request could otherwise run arbitrary code on the host.
 Admitting a public repo to an unpinned group is refused.
 
-When `dev runner register --ai-flow` in a checkout finds that repo already
-admitted to the org `ai-flow` group, it says the two would pool and asks
-whether to make this host's runner the repo's only one (`--yes` answers
-yes; headless the answer is no). Keeping both is legitimate.
+A repo's build host carries the repo's own label, which no org runner
+advertises, so its jobs never pool with the org's.
 
 ### The enrolled runner
 
@@ -123,7 +163,7 @@ online. Busy counts; offline does not. See
    deregisters at its old scope first.
 
 Register never takes over another runner's registration. Runner names are
-unique per scope; a name held by a registration that is not this host's
+unique per scope; a name held by a registration that is not this family's
 own is refused, naming the holder — pass `--name` to enroll beside it.
 
 Two states make register stop and ask before enrolling fresh (`--yes`
@@ -131,9 +171,9 @@ answers; headless the answer is no, and the by-hand `dev runner
 unregister <dir>` lines are printed): more than one local enrollment for
 the scope, or GitHub listing the runner offline.
 
-Flags: `--org`, `--repo`, `--ai-flow`, `--slots`, `--group`, `--yes`,
-`--labels`, `--dir`, `--name`, `--agent-user`, `--as` (the Linux runner
-user's name). `--org` needs no checkout; bare register does.
+Flags: `--role`, `--org`, `--repo`, `--ai-flow`, `--slots`, `--group`,
+`--yes`, `--labels`, `--dir`, `--name`, `--agent-user`, `--as` (the Linux
+runner user's name). `--org` needs no checkout; bare register does.
 
 ### Linux: the runner user
 

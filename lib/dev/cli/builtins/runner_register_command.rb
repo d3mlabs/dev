@@ -33,81 +33,40 @@ module Dev
     module Builtins
       # `dev runner register`: converge the host, then enroll it as a
       # self-hosted runner. A registration declares the role its slots play
-      # (RunnerRole); labels, group, scope, name and dir derive from it.
-      # `runner_roles:` in dev.yml declares a repo's own roles:
+      # (RunnerRole); labels, group, scope, name and dir derive from it:
       #
       #   dev runner register                    # the repo's build host; label = the repo name
       #   dev runner register --labels ue-engine # a build host with custom capabilities
       #   dev runner register --role agent       # org agent host, the full ai-flow set (--ai-flow)
       #   dev runner register --role orchestrator --slots 4   # the thin pool
-      #   dev runner register --role ue-farm     # a dev.yml role
-      #   dev runner register --role agent --slots 3  # three jobs at once
+      #   dev runner register --role ue-farm     # a role dev.yml declares under runner_roles:
       #
-      # Three roles are builtin: `agent` (the ai-flow agent labels, the
-      # pinned `ai-flow` group), `orchestrator` (`ai-orchestrator`, its own
-      # pinned group) and `build-host` (the repo's label or `--labels`, no
-      # group). A role with a pinned group is org-scoped, since only a group
-      # carries the pin; a build host is its repo's unless `--org` makes a
-      # `--labels` set an org pool. `--role x` undeclared, `--role x
-      # --labels y`, and `--org` with a dev.yml role are refused. A build
-      # host for a public repo is refused: any workflow could then run on
-      # the host (Reach::ExposedError).
+      # The role decides the scope: a role with a pinned group is org-scoped,
+      # a build host is its repo's unless `--org` makes a `--labels` set an
+      # org pool. A build host for a public repo is refused
+      # (Reach::ExposedError). `--slots N` enrolls N runners with the same
+      # labels; re-running keeps the count it finds, a smaller N retires the
+      # surplus after asking. A family is `(scope, host, role)`, and
+      # register sizes, amends and retires only the family it was asked for.
       #
-      # A self-hosted runner runs one job at a time, so `--slots N` enrolls
-      # N slots (`<name>`, `<name>-2` .. `<name>-N`), each its own dir,
-      # `_work` and service, all carrying the same labels. Re-running
-      # without `--slots` keeps the count it finds; a smaller `--slots`
-      # retires the surplus (asked first), a larger one adds. A family is
-      # `(scope, host, role)`; a host plays each role at most once per
-      # scope, and register sizes, amends and retires only the family it
-      # was asked for. Which repos may use an org host's slots is the
-      # runner group the role names (or `--group`, a human's); the repo
-      # this registration is for is admitted to it.
+      # The order of work: the operator's gh login is probed; the engine is
+      # brought up when the checkout pins an image; on Linux the runner user
+      # is converged (RunnerUser) and inside WSL2 the Windows side
+      # (WslRunnerHost); each advertised label's contract is converged
+      # (LabelContracts); then the enrollment. An existing enrollment at the
+      # scope has its labels amended in place on GitHub; only a scope
+      # nothing serves gets the full enrollment (RunnerSetup).
       #
-      # register is idempotent. When the checkout's lock pins an image, it
-      # first brings the engine up for the repo's resources hint, for the
-      # invoking user. Then it converges every advertised label's contract,
-      # looks for an existing enrollment at the target scope and amends its
-      # labels in place on GitHub; only a scope nothing serves gets the full
-      # enrollment (RunnerSetup).
-      #
-      # Before amending, register checks that the enrollment on disk is the
-      # one serving GitHub. More than one local enrollment for the scope, or
-      # GitHub listing the runner offline, means it is not; register lists
-      # the enrollments and asks to unregister them all and enroll fresh.
-      # `--yes` answers for it; "no" changes nothing and prints the `dev
-      # runner unregister` commands.
-      #
-      # Register never steals a registration. Runner names are unique per
-      # scope, and `config.sh --replace` would silently take over another
-      # runner's record. So before any slot enrolls, every fresh slot's name
-      # is looked up at the scope: a name nothing holds enrolls without
-      # `--replace`; one held by this host's own registration (same family,
-      # same `.runner` id) is re-enrolled with it; any other
-      # holder refuses, naming its labels and status.
-      #
-      # On Linux the enrollment is the runner user's: register converges the
-      # shared data root and the runner user (`runner`; `--as` renames it) in
-      # one sudo session, and refuses while that user has no gh login. An
-      # enrollment owned by anyone else is drift and takes the
-      # retire-and-enroll-fresh path. With a checkout, the runner user's
-      # reach over its lock is checked before enrolling (HostReach). macOS
-      # has no runner user.
-      #
-      # Inside a WSL2 distro register also converges the Windows side a
-      # runner needs (WslRunnerHost): the logon keepalive task, systemd in
-      # `/etc/wsl.conf`, and `.wslconfig`'s size. It needs the session's
-      # interop and refuses without it.
+      # Two states stop register before it enrolls fresh, and ask (`--yes`
+      # answers; "no" prints the by-hand `dev runner unregister` lines):
+      # more than one local enrollment for the scope, or GitHub listing the
+      # runner offline. A name at the scope held by a registration that is
+      # not this family's own (same `.runner` id) is refused, never taken
+      # over with `config.sh --replace`.
       #
       # Enrollment state is inspected, never recorded: the labels live on
-      # GitHub, the scope in the runner dir's own `.runner` record.
-      #
-      # `--org` needs no project; bare register runs inside the checkout it
-      # enrolls and makes that repo's enrolled runner (Dev::EnrolledRunner):
-      # repo scope, the repo's GitHub name lowercased as label. That
-      # enrollment is what the lifecycle verbs' remote dispatch targets.
-      # `--dir`/`--name`/`--repo` override the enrollment identity;
-      # `--agent-user` the ai-agent default run-as user.
+      # GitHub, the scope and pool in the runner dir's own `.runner` record.
+      # The operator's view is docs/runners.md.
       class RunnerRegisterCommand < BuiltinCommand
         extend T::Sig
 
@@ -267,24 +226,28 @@ module Dev
             drift repair.
 
             A registration declares the ROLE its slots play; labels, group, scope, name
-            and directory derive from it. Builtin: #{RunnerRole::AGENT_NAME} (the ai-flow agent set
-            #{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}, the pinned '#{LabelContracts::AI_FLOW_GROUP.name}' group,
-            the agent host bootstrap), #{RunnerRole::ORCHESTRATOR_NAME} (#{LabelContracts::ORCHESTRATOR_LABEL}, its open pinned group), and
-            the build host (bare register: the repo's own label; --labels: custom
-            capabilities; no group). --ai-flow is --role agent; --labels #{LabelContracts::ORCHESTRATOR_LABEL} is
-            --role orchestrator. A role this repo's dev.yml declares under runner_roles:
-            (`ue-farm: { labels: [ue, gpu] }`) enrolls with --role ue-farm — identity and
-            labels only; --role x with no declaration, or with --labels, is refused.
-            Scope follows the role: agent and orchestrator live at the org because only a
-            group carries the workflow pin (plans#5 H3) — --org is implied; a build host is
-            its repo's unless --org makes a custom --labels set an org pool; a dev.yml role
-            is always its repo's. Names: <hostname>-<role>[-n] for agent, orchestrator and
-            dev.yml roles (JPSFF-agent, JPSFF-agent-2, beside JPSFF-orchestrator…), the
-            bare hostname for a build host; dirs actions-runner-<role>[-n]. A family
-            already enrolled keeps the names it has. Which role an enrollment plays is
-            read from GitHub's labels, or for one GitHub has lost from the pool its .runner
-            record names — never from its name or dir. A build host for a PUBLIC repo is
-            refused: any workflow against a public repo is plans#5 Gap 1 reopened.
+            and directory derive from it.
+
+              #{RunnerRole::AGENT_NAME.ljust(13)} the ai-flow agent set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}),
+                            the pinned '#{LabelContracts::AI_FLOW_GROUP.name}' group, the agent host bootstrap. --ai-flow is its sugar.
+              #{RunnerRole::ORCHESTRATOR_NAME.ljust(13)} #{LabelContracts::ORCHESTRATOR_LABEL}, its own pinned group. --labels #{LabelContracts::ORCHESTRATOR_LABEL} is its sugar.
+              build host    the default: bare register advertises the repo's own label,
+                            --labels a custom set; no group.
+              <dev.yml>     a role this repo declares under runner_roles:
+                            (`ue-farm: { labels: [ue, gpu] }`), enrolled with --role ue-farm.
+
+            agent and orchestrator are org-scoped (only a group carries the workflow
+            pin); --org is implied. A build host is its repo's unless --org makes a
+            --labels set an org pool. A dev.yml role is always its repo's. --role x
+            with no declaration, or together with --labels, is refused; so is a build
+            host for a PUBLIC repo, since any of its workflows — a fork PR's included —
+            could then run on this host.
+
+            Runner names are <hostname>-<role>[-n] (JPSFF-agent, JPSFF-agent-2, beside
+            JPSFF-orchestrator…), the bare hostname for a build host; dirs are
+            actions-runner-<role>[-n]. A family already enrolled keeps its names. Which
+            role an enrollment plays is read from GitHub's labels, or for one GitHub
+            has lost from the pool its .runner record names — never from its name or dir.
 
             Concurrency is the runner layer's: a self-hosted runner runs one job at a
             time, so a host that should run N jobs at once at a scope enrolls N slots
@@ -308,7 +271,7 @@ module Dev
             `config.sh --replace` would turn GitHub's refusal of a duplicate into a silent
             takeover of a runner that keeps running; so --replace is passed only for a name
             whose registration is this host's own — an enrollment of this family's (same
-            scope, host and group) whose .runner id is the id GitHub holds — a name nothing
+            scope, host and role) whose .runner id is the id GitHub holds — a name nothing
             holds enrolls without it, and any other collision refuses, naming the holder's
             labels and status: pass --name to enroll beside another family; unregister the
             stale dir when another host took this name after the registration was lost.
@@ -434,10 +397,10 @@ module Dev
           # resolve.
           resolve_repo = memoized { @repo_resolver.call(args.value(REPO_FLAG)) }
           role = resolve_role(args, context, resolve_repo)
-          # Scope is derived from the role (dev#566): a pinned role lives at
-          # the org because only a group carries the pin; a build host is
-          # its repo's — unless --labels names a custom set and --org makes
-          # it an org pool, the one place the flag is an input.
+          # Scope is derived from the role: a pinned role lives at the org,
+          # a build host is its repo's — unless --labels names a custom set
+          # and --org makes it an org pool, the one place the flag is an
+          # input.
           org = role.org_scoped? || args.flag?(ORG_FLAG)
           repo = resolve_repo.call
           slots = resolve_slots(args)
@@ -455,10 +418,9 @@ module Dev
           @operator_access.check!(scope: org ? T.must(repo.split("/").first) : repo, org: org, ui: context.ui)
 
           # Who may land a job on these slots, as the role expects it
-          # (Reach): said here so a build host for a public repo — any
-          # workflow, a fork PR's YAML included (plans#5 Gap 1) — is refused
-          # before anything converges. The comparison against what GitHub
-          # holds is `dev runner status`'s.
+          # (Reach): computed here so a build host for a public repo is
+          # refused before anything converges. The comparison against what
+          # GitHub holds is `dev runner status`'s.
           role.expected_reach(Dev::Reach::Target.new(repo: repo, public: @registry.repository(repo).public?))
 
           container = context.project&.project_images&.containerized? || false
@@ -1005,20 +967,17 @@ module Dev
           end
         end
 
-        # The role this registration declares (dev#566), by precedence:
-        # `--role` (a builtin by name, else one the checkout's dev.yml
-        # declares under `runner_roles:`; anything else is refused pointing
-        # at dev.yml — the drift path), `--ai-flow` (the agent), `--labels`
-        # (an agent or orchestrator label is that role's sugar; a bare set
-        # is a build host with those capabilities — in a human's `--group`
-        # at the org), else the repo's build host: its name as GitHub spells
-        # it, lowercased (Dev::EnrolledRunner — what the remote dispatch's
-        # lookup asks GitHub for). Org scope has nothing to derive a role
-        # from, so bare --org is a usage error; so is bare register outside
-        # a project, since the checkout is also what sizes the engine. A
-        # role's labels are its declaration: `--role x --labels y` is
-        # refused, as is `--org` with a dev.yml role (org scope is
-        # builtin-only) and `--group` with a pinned role (it names its own).
+        # The role this registration declares, by precedence: `--role` (a
+        # builtin by name, else one the checkout's dev.yml declares under
+        # `runner_roles:`; anything else is refused pointing at dev.yml),
+        # `--ai-flow` (the agent), `--labels` (an agent or orchestrator
+        # label is that role's sugar; a bare set is a build host with those
+        # capabilities, in a human's `--group` at the org), else the repo's
+        # build host with the repo's GitHub name, lowercased, as label
+        # (Dev::EnrolledRunner). Bare --org is a usage error: org scope has
+        # nothing to derive a role from. So is bare register outside a
+        # project. `--role x --labels y`, `--org` with a dev.yml role, and
+        # `--group` with a pinned role are refused.
         #
         # @param args [Cli::ParsedArgs]
         # @param context [Dev::Cli::ExecutionContext]

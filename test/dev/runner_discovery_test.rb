@@ -82,7 +82,7 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
     Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).owner == Etc.getpwuid(Process.uid).name
   end
 
-  test "an enrollment knows the runner group its registration joined (.runner poolName): the one fact that tells a lost enrollment's family, never its dir or name (dev#566)" do
+  test "an enrollment knows the runner group its registration joined (.runner poolName): the one fact that tells a lost enrollment's family, never its dir or name" do
     Given
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-ai-ask-2", scope: "d3mlabs", name: "JPSFF-ai-ask-2", pool: "ai-flow")
