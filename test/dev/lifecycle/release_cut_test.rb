@@ -61,6 +61,12 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     @git.capture(["commit", "-q", "--allow-empty", "-m", message])
   end
 
+  # A commit stamped at +seconds+ past the epoch, so a test can arrange
+  # the date order git logs by default.
+  def commit_at(message, seconds)
+    @git.capture(["commit", "-q", "--allow-empty", "-m", message], env: { "GIT_COMMITTER_DATE" => "@#{seconds} +0000" })
+  end
+
   def push
     @git.capture(["push", "-q", "origin", "main"])
   end
@@ -151,6 +157,28 @@ class Dev::Lifecycle::ReleaseCutTest < Minitest::Test
     !lock.include?("1.1.0")
     @git.capture(["show", "--name-only", "--format=", "HEAD"]).split == ["Gemfile.lock", "VERSION"]
     @git.capture(["status", "--porcelain"]).empty?
+  end
+
+  test "the notes are the changes themselves: merge commits are left out, and a merged branch's commits stay together" do
+    Given "a previous tag, then a branch of two commits merged into main around a commit of main's own, " \
+          "committed in an order that interleaves them by date"
+    @git.capture(["tag", "v1.1.0"])
+    @git.capture(["checkout", "-q", "-b", "feature"])
+    commit_at("feature a", 1)
+    @git.capture(["checkout", "-q", "main"])
+    commit_at("main side", 2)
+    @git.capture(["checkout", "-q", "feature"])
+    commit_at("feature b", 3)
+    @git.capture(["checkout", "-q", "main"])
+    @git.capture(["merge", "-q", "--no-ff", "-m", "Merge branch 'feature'", "feature"], env: { "GIT_COMMITTER_DATE" => "@4 +0000" })
+    subjects = ->(commits) { commits.map { |line| line.split(" ", 2).last } }
+
+    When
+    plan = cut.plan(TAG.new("1.2.0"))
+
+    Then "no merge line; the branch's two commits are adjacent"
+    subjects.call(plan.commits) == ["feature b", "feature a", "main side"]
+    plan.commits.all? { |line| line.match?(/\A\h{7} /) }
   end
 
   test "a project without a VERSION file is tagged as it is: no bump, no commit, stock notes for a first release" do

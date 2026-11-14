@@ -322,7 +322,8 @@ cut landed, and this run resumes at the push.
 The base line says which checkout is being released and how far it is
 from `origin/<branch>` as last fetched (`never fetched` when the remote
 branch is unknown). That drift is a warning to weigh, not a refusal. The
-notes are the one-line log since the previous tag, or `Release v1.2.0.`
+notes are the one-line log since the previous tag, merge commits left
+out and a merged branch's commits kept together, or `Release v1.2.0.`
 for a first release.
 
 `--yes` skips the confirmation. At a terminal, `n` aborts with nothing
