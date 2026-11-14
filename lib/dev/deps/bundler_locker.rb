@@ -40,7 +40,7 @@ module Dev
       #   to omit it (a project declaring no Ruby)
       # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby
       #   toolchain — `bundle lock` must solve under the pinned Ruby and its
-      #   bundler, not whatever the invoking shell carries (dev#76)
+      #   bundler, not whatever the invoking shell carries
       sig do
         params(
           project_root: T.any(Pathname, String),

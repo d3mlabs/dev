@@ -115,7 +115,7 @@ module Dev
         tree = @store.tree(key)
         return tree if tree
 
-        # Each build host owns the data root for its platform (ADR-0008): a
+        # Each build host owns the data root for its platform: a
         # Mac never holds the linux engine, its container does, and no `dev
         # up` here would change that — the build scripts that need the path
         # ask from inside.

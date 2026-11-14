@@ -50,8 +50,8 @@ module Dev
     # checkouts installing at once); the tools dev hands caches to are.
     #
     # Implementations: LocalStore (a directory tree under the data root).
-    # Remote backends (a CI cache, an OCI registry) are dev#27's subject;
-    # they implement this same interface.
+    # A remote backend (a CI cache, an OCI registry) would implement this
+    # same interface.
     class ArtifactStore
       extend T::Sig
       extend T::Helpers

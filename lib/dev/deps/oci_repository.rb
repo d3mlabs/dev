@@ -14,7 +14,7 @@ require_relative "repository"
 
 module Dev
   module Deps
-    # The floor of an `image` block (dev#277): a tagged image in a container
+    # The floor of an `image` block: a tagged image in a container
     # registry, resolved to the digest the registry serves for the tag.
     #
     # The url model, because a tag names one artifact: the source is the

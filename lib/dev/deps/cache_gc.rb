@@ -39,7 +39,7 @@ module Dev
     # - IN-USE versions (mounted by a running container) are never evicted —
     #   removing a directory a job has mounted would corrupt that job.
     #
-    # What gc says, it says through its Ui (plans#52, dev#573): a frame per
+    # What gc says, it says through its Ui: a frame per
     # tier that has something stale, a spin per removal (in-process, or a
     # captured engine call), a note per fact (a volume kept, and why; an
     # orphan already swept). A tier with nothing stale says nothing.

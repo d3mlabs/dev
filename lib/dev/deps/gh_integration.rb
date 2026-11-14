@@ -36,20 +36,18 @@ module Dev
     #      it empty); build: :none skips the build and publishes the source as-is.
     #   4. Publish $DEV_INSTALL_DIR (or the source tree for :none)
     #
-    # Deliberately a tree, never a blob: artifacts here are multi-gigabyte
-    # (the UE engine is ~8GB compressed; a built tree far more), so parking a
-    # second copy as a cached archive would double disk usage for no benefit.
-    # The store's published tree plus its marker file is the cache.
+    # A tree, never a blob: artifacts here are multi-gigabyte, so a second
+    # copy as a cached archive would double disk usage. The store's
+    # published tree plus its marker file is the cache.
     #
-    # Nothing else is written under the tree base: consumers locate the version
-    # dir through `dev deps path gh <name>` (Accessor), so an install is a pure
-    # read once the marker matches — a read-only shared tree (the agent identity
-    # on the human-owned engine tree, plans#26) needs no write to stay usable.
+    # Nothing else is written under the tree base: consumers locate the
+    # version dir through `dev deps path gh <name>`, so an install is a
+    # pure read once the marker matches, and a read-only shared tree stays
+    # usable.
     #
-    # A tree that ships a `bin/` is a tool, and after installing, the project
-    # shadowenv gets it on PATH (ADR-0010, dev#289) — the same activation a
-    # brew keg gets, so no consumer sources a `bin/env.sh` by hand to reach a
-    # published toolchain. Only when the integration knows its project.
+    # A tree that ships a `bin/` is a tool, and after installing, the
+    # project shadowenv gets it on PATH, the same activation a brew keg
+    # gets. Only when the integration knows its project.
     class GhIntegration < Integration
       extend T::Sig
 

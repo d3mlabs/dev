@@ -12,23 +12,18 @@ require "dev/lifecycle/track"
 
 module Dev
   module Deps
-    # The write side of the gems entry (dev#192 K5, dev#428): `gem push` of
-    # each shipped `.gem` to rubygems.org — the store the project's gems
-    # are installed from, publishable because the project already depends
-    # on it (ADR-0010). Every project whose lock pins gems gets the
-    # `deploy rubygems` channel with no dev.yml line; its first consumers
-    # are the org's gem repos, whose one target packages the gem itself.
+    # The write side of the gems entry: `gem push` of each shipped `.gem`
+    # to rubygems.org. Every project whose lock pins gems gets the `deploy
+    # rubygems` channel with no dev.yml line.
     #
     # rubygems.org has a single track: a pushed version is live the moment
-    # it lands and its number can never be reused (a yank hides it, it does
-    # not free it). So the testing track is **refused** rather than mapped
-    # — a working artifact from the store has nowhere to go here, a
-    # release's archive has (`dev deploy rubygems --release <v>`). The API
-    # key is the publisher's own: the Credentials provider under
-    # `rubygems api_key` (`GEM_HOST_API_KEY` in the environment overrides
-    # it, the variable `gem` itself reads), handed to `gem push` through
-    # its env and never on argv. The archive is read-only input — `gem
-    # push` uploads the file as it is — and nothing lands in the scratch.
+    # it lands and its number can never be reused. So the testing track is
+    # refused rather than mapped; a release's archive ships with `dev
+    # deploy rubygems --release <v>`. The API key is the publisher's own:
+    # the Credentials provider under `rubygems api_key` (`GEM_HOST_API_KEY`
+    # in the environment overrides it), handed to `gem push` through its
+    # env and never on argv. The archive is read-only input and nothing
+    # lands in the scratch.
     #
     # The project root (where `gem` runs), the shell and the credential
     # provider are fixed for a checkout and constructor-owned; the

@@ -34,12 +34,11 @@ module Dev
     # Declared in dependencies.rb as:
     #   steam "SatisfactoryServer", app: 1690800
     #
-    # Also the `steam` integration's **write side** (dev#192 K5, dev#426):
-    # the Publisher behind the `deploy steam` channel a project pinning a
-    # steam dependency gets. Both directions are one client and one auth —
-    # steamcmd, `app_update` to read a depot and `run_app_build` to write
-    # one — which is the rule by which a built-in publisher is its
-    # repository class. The upload is not a file but a build: each archive
+    # Also the `steam` integration's write side: the Publisher behind the
+    # `deploy steam` channel a project pinning a steam dependency gets.
+    # Both directions are one client and one auth: steamcmd, `app_update`
+    # to read a depot and `run_app_build` to write one. The upload is not a
+    # file but a build: each archive
     # is unpacked into a depot's content root in the channel's scratch,
     # the app and depot build scripts are written there (SteamAppBuild —
     # depot ids from the channel's `steam:` options, the branch from the

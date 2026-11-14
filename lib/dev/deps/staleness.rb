@@ -33,8 +33,8 @@ module Dev
     # leaves its stamp behind, and the key is a one-way hash of the path,
     # so `checkout` is what makes an orphan recognisable: every stamp
     # write sweeps the state dir of stamps whose checkout is gone, and of
-    # legacy stamps naming none (dev#529). A wrong sweep costs one "run
-    # dev up" nag on a checkout that still exists, which dev up heals.
+    # stamps naming none. A wrong sweep costs one "run dev up" nag on a
+    # checkout that still exists, which dev up heals.
     #
     # Stamps catch sequence drift (edit without dev deps update, lock bump without
     # dev up), not out-of-band mutation of installed artifacts — that's a
@@ -51,7 +51,7 @@ module Dev
       # of this system in everything but name — read without the project's
       # own gem's version (GemfileLock#without_own_version): a path gem is
       # pointed at, never installed from the lock, so a release bump of it
-      # is not an install change (dev#527).
+      # is not an install change.
       LOCK_FILES = T.let(
         [
           Lockfile::DEPS_LOCK_FILE,

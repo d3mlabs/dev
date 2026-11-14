@@ -21,13 +21,10 @@ module Dev
     # clean, and it passes through: in a project shell that is the
     # activation itself (`__shadowenv_data` current, GEM_HOME at the keg);
     # in a shell with none, `shadowenv exec` applies the project's lisps
-    # before the child runs. A `"KEY" => nil` here is per-spawn hygiene
-    # coming back — the discipline that failed four times (dev#180 nil'd
-    # the wrapper's GEM_HOME leak; #274/#306 found that nil'ing it without
-    # the marker made `shadowenv exec` a no-op and the child fell to brew's
-    # prefix-wide gem dir; #333 saw CommandRunner repeat #274) before the
-    # leak was fixed at its source. test/dev/spawn_seams_test.rb fails the
-    # build on a nil'd key in either seam.
+    # before the child runs. A `"KEY" => nil` here would be per-spawn
+    # hygiene coming back, which is the pattern that broke activation
+    # before the leak was fixed at its source; test/dev/spawn_seams_test.rb
+    # fails the build on a nil'd key in either seam.
     class ShadowenvExec
       extend T::Sig
 

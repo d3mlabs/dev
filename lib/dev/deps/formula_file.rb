@@ -82,7 +82,7 @@ module Dev
       # The formulas this one depends on, as brew resolves a `depends_on`:
       # the formula's own name, the tap prefix dropped — in file order,
       # `on_macos` and other blocks included. What the publisher reads to
-      # name only the roots in its upgrade line (dev#531).
+      # name only the roots in its upgrade line.
       #
       # @return [Array<String>]
       sig { returns(T::Array[String]) }

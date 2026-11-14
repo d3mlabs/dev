@@ -21,9 +21,9 @@ module Dev
     # tree holds the zip's layout — `Engine/Binaries/<OS>/BuildPatchTool` —
     # and BuildPatchTool.binary names the host's.
     #
-    # Pinning the tool is what gives the project its `deploy egs` channel
-    # (dev#426): the store is publishable exactly when the project depends
-    # on the tool that publishes to it (ADR-0010).
+    # Pinning the tool is what gives the project its `deploy egs` channel:
+    # the store is publishable exactly when the project depends on the tool
+    # that publishes to it.
     class EgsIntegration < Integration
       extend T::Sig
 
