@@ -6,16 +6,16 @@ require "dev/runner_registry"
 require "dev/ui"
 
 module Dev
-  # An org's runner groups, converged to their contracts (dev#470): the
+  # An org's runner groups, converged to their contracts: the
   # group a contract names exists with the access it obliges, the slots
   # of a host sit in it, and the repos whose checkouts register ran in
   # may use it. Every fact is read from GitHub and written back only when
-  # it differs (plans#26: inspected, never recorded).
+  # it differs (inspected, never recorded).
   #
   # One rule holds across every group, owned or named, and lives here
   # because GitHub has no setting for it: **a public repository may only
-  # use a runner group restricted to workflows** (plans#5 Gap 1 — an
-  # approved fork PR's YAML saying `runs-on: self-hosted` must find no
+  # use a runner group restricted to workflows** (an approved fork PR's
+  # YAML saying `runs-on: self-hosted` must find no
   # runner). Admitting a public repo to an unpinned group is refused,
   # whatever flags asked for it.
   #
@@ -33,7 +33,7 @@ module Dev
     class NoSuchGroupError < Error; end
 
     # A public repository asked into a group that is not restricted to
-    # workflows (plans#5 H3).
+    # workflows.
     class UnpinnedGroupError < Error; end
 
     # @param registry [#group, #create_group!, #update_group!, #group_repositories,
@@ -77,7 +77,7 @@ module Dev
       return group if drift.empty?
 
       # Visibility is named only when it must flip: a PATCH naming it
-      # clears the group's selected repositories (plans#5 H3), and a group
+      # clears the group's selected repositories, and a group
       # that was open to all has none to lose.
       flip = group.visibility == contract.visibility ? nil : contract.visibility
       ui.spin("Re-converging runner group '#{contract.name}' — drifted: #{drift.join("; ")}") do

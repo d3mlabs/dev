@@ -11,7 +11,7 @@ require "dev/runner_group_contract"
 require "dev/runner_user"
 
 module Dev
-  # The label doctrine's enforcement half (plans#26): a capability label is
+  # The label doctrine's enforcement half: a capability label is
   # not just routing metadata — it names an obligation the host must satisfy.
   # `dev runner register` converges the (possibly empty) requirements of
   # every label being advertised before it enrolls; the registry lives here
@@ -21,11 +21,11 @@ module Dev
   # (`ai-build`, `ai-learn`) make the box an agent host and require the
   # agent host bootstrap — one contract, an adapter per platform
   # (AgentBootstrap::Darwin, AgentBootstrap::Linux), chosen here, the
-  # composition root (plans#59). Org-side, an ai-flow label obliges a runner
+  # composition root. Org-side, an ai-flow label obliges a runner
   # group pinned to ai-flow's workflows — which group depends on what the
-  # slots are for (dev#495): the agent labels oblige the `ai-flow` group,
+  # slots are for: the agent labels oblige the `ai-flow` group,
   # whose selected repos are each repo's build concurrency on the host
-  # (AI_FLOW_GROUP, dev#470); `ai-orchestrator` obliges its own group,
+  # (AI_FLOW_GROUP); `ai-orchestrator` obliges its own group,
   # open to every repo (ORCHESTRATOR_GROUP) — the thin pool `/build
   # --split`'s orchestrator runs on has nothing to gate, and a plan in any
   # adopter may need one. A set carrying both is refused: one enrollment,
@@ -46,7 +46,7 @@ module Dev
     # this set; a partitioned topology passes --labels instead).
     AI_FLOW_AGENT_LABELS = T.let(%w[ai-ask ai-edit ai-split ai-build ai-learn].freeze, T::Array[String])
 
-    # The orchestrator pool's label (plans#53): the one ai-flow label that
+    # The orchestrator pool's label: the one ai-flow label that
     # is a host capability rather than a command. `/build --split`'s
     # orchestrator posts child `/build`s and polls their outcome for the
     # plan's whole critical path — API calls and sleep, hours long — so it
@@ -64,7 +64,7 @@ module Dev
 
     # The two ai-flow workflows that may land jobs on an ai-flow runner —
     # the reusable command workflow and the origin-firing check (both run
-    # on these labels; a single pin starved the checks, plans#5 H3). Jobs
+    # on these labels; a single pin starved the checks). Jobs
     # defined in a reusable workflow are checked against the reusable
     # workflow's path and ref, so this pins the runners to exactly these
     # files at ai-flow's main, whoever calls them. Another cross-repo
@@ -78,7 +78,7 @@ module Dev
       T::Array[String],
     )
 
-    # The org-side half of the ai-flow contract (dev#470): every runner
+    # The org-side half of the ai-flow contract: every runner
     # carrying an ai-flow label sits in the `ai-flow` runner group, which
     # dev owns — created when missing, pinned to AI_FLOW_WORKFLOWS, its
     # selected repositories the checkouts register ran in. Nothing about
@@ -86,10 +86,10 @@ module Dev
     # console can drift it, and the next register heals it.
     AI_FLOW_GROUP = T.let(RunnerGroupContract.new(name: "ai-flow", workflows: AI_FLOW_WORKFLOWS), RunnerGroupContract)
 
-    # The orchestrator pool's group (dev#495): dev's, pinned to the same
+    # The orchestrator pool's group: dev's, pinned to the same
     # workflows, open to every repo in the org. Not the `ai-flow` group:
     # that group's selection is a repo's *build* concurrency on the host
-    # (dev#470 keeps cellbound-3d out of it on purpose), and the pool's
+    # and the pool's
     # visibility must be the opposite — any adopter's `/build --split`
     # lands its orchestrator here, so a selection would only be a list to
     # forget a new adopter from. The pin keeps a fork's YAML off the box.
@@ -101,7 +101,7 @@ module Dev
     # The agent host obligation: the host-singular bootstrap, the agent's
     # own container engine when the served repo builds in one (a Mac's
     # colima; a Linux host refuses — its image-built agent runs inside the
-    # project's container, plans#61), and the post-enrollment
+    # project's container), and the post-enrollment
     # service/workdir setup.
     class AgentHostContract
       extend T::Sig
@@ -170,7 +170,7 @@ module Dev
 
       # The agent host bootstrap for this host: the Darwin adapter on a Mac
       # (the operator is the runner user), the Linux adapter on a Linux dev
-      # host (dev#310's runner user is). `dev runner status` builds its
+      # host (the runner user is). `dev runner status` builds its
       # inspector over the same object, so register and status read one
       # set of facts.
       #

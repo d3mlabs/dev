@@ -7,7 +7,7 @@ require "dev/registry_credential"
 
 module Dev
   # The engine's login to a container registry, performed by dev around the
-  # one operation that needs it (dev#277): `docker login` fed the registry
+  # one operation that needs it: `docker login` fed the registry
   # credential on stdin — the host's gh token, or the one DEV_REGISTRY_TOKEN
   # names (RegistryCredential) — the block, `docker logout` — whatever the
   # block did.

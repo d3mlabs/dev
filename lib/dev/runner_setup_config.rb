@@ -12,7 +12,7 @@ module Dev
   # the pinned runner version), at an org scope the runner group the
   # registration joins (config.sh's `--runnergroup`; unnamed = Default),
   # and whether config.sh may `--replace` a registration GitHub already
-  # holds under the name (register's rule, dev#565: only this family's own).
+  # holds under the name (register's rule: only this family's own).
   class RunnerSetupConfig
     extend T::Sig
     include Dev::ValueEquality::Derived
@@ -36,7 +36,7 @@ module Dev
     # name (`--replace`). GitHub refuses a duplicate runner name at a scope;
     # `--replace` turns that refusal into a takeover, so it is only ever
     # true for a name whose registration is this family's own — register
-    # decides, having looked the name up (dev#565). False enrolls plainly:
+    # decides, having looked the name up. False enrolls plainly:
     # a name nothing holds needs no replacing, and one another family holds
     # is refused upstream rather than stolen here.
     sig { returns(T::Boolean) }
@@ -64,7 +64,7 @@ module Dev
     # The first label, sanitized for a dir name: what the default install
     # dir (`~/actions-runner-<suffix>`) and, when a scope already has a
     # family under the bare hostname, the runner name (`<hostname>-<suffix>`)
-    # are derived from (dev#557) — one derivation, so a family's dirs and
+    # are derived from — one derivation, so a family's dirs and
     # names say the same thing.
     #
     # @return [String]

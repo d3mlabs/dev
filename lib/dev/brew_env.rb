@@ -9,12 +9,11 @@ module Dev
   # `$XDG_CONFIG_HOME/homebrew/brew.env` — read by every `brew` the user
   # runs, which is how dev tells brew about formulae it must not clean up:
   # a `dev up` keeps the keg the lock names alive through the user's own
-  # `brew upgrade` and `brew cleanup` (ADR-0010, dev#289).
+  # `brew upgrade` and `brew cleanup`.
   #
-  # The list only grows. Two projects on one machine share the file, and
-  # releasing a name needs to know no other project's lock still pins it —
-  # the cross-project view dev#286 asks for. Until then a stale entry costs
-  # one keg of disk, never a broken build.
+  # The list only grows: two projects on one machine share the file, and
+  # releasing a name would need to know no other project's lock still pins
+  # it. A stale entry costs one keg of disk, never a broken build.
   class BrewEnv
     extend T::Sig
 

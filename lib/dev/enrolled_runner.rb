@@ -4,7 +4,7 @@
 require_relative "value_equality"
 
 module Dev
-  # A repo's enrolled runner (dev#192, K8): what bare `dev runner register`
+  # A repo's enrolled runner: what bare `dev runner register`
   # makes, and what the lifecycle verbs' remote dispatch targets from a
   # machine that is not a build's environment. Both halves of its identity
   # derive from the one repo, "owner/repo" as GitHub spells it — the
@@ -16,7 +16,7 @@ module Dev
   # the identity. dev.yml `name:` is the package identity, may differ,
   # and never enters here.
   #
-  # Declared nowhere (plans#26: enrollment state is inspected, never
+  # Declared nowhere (enrollment state is inspected, never
   # recorded). Register derives it to enroll; EnrolledRunnerLookup
   # derives it to ask GitHub whether one is available; the two agree
   # because this is the one derivation.

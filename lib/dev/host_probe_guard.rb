@@ -15,8 +15,8 @@ module Dev
   # argument resolves through #probe, so the test fails fast on *every*
   # host with the seam to inject named, instead of only on the host unlike
   # CI's. Outside the harness the variable is unset and the guard is a
-  # no-op; it is not a user setting. The same shape as ProvisioningGuard
-  # (dev#208), for a different hazard.
+  # no-op; it is not a user setting. The same shape as
+  # ProvisioningGuard, for a different hazard.
   module HostProbeGuard
     extend T::Sig
 

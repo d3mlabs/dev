@@ -13,7 +13,7 @@ require "dev/tap_trust"
 require "dev/ui"
 
 module Dev
-  # The OS user a Linux host's runner services run as (dev#310) — the
+  # The OS user a Linux host's runner services run as — the
   # host rule `dev runner register` applies by default, not a flag the
   # operator has to remember.
   #
@@ -244,7 +244,7 @@ module Dev
       prefix && @owner_of.call(prefix)
     end
 
-    # brew is single-owner, and jobs upgrade dev through it (dev#337): on a
+    # brew is single-owner, and jobs upgrade dev through it: on a
     # Linux build host the prefix is the runner user's by rule. True also
     # without brew — nothing to own, nothing drifted.
     #
@@ -284,7 +284,7 @@ module Dev
     # user's is left alone. The hand-over is a step like the others, said
     # out loud, not a question: on a Linux build host the rule is that
     # jobs upgrade dev, and brew is single-owner, so the prefix is the
-    # runner user's (dev#337). Aborting leaves the host unmigrated, which
+    # runner user's. Aborting leaves the host unmigrated, which
     # `dev runner status` reports until a re-run.
     #
     # @return [void]
@@ -402,7 +402,7 @@ module Dev
 
     # The same, never prompting (`-n`): sudo refuses instead of asking for
     # a password. An inspector probes this way — a refusal is then a fact
-    # it reports, not a prompt swallowed into a false "absent" (dev#348);
+    # it reports, not a prompt swallowed into a false "absent";
     # register, which holds a sudo session, runs #sudo_argv.
     #
     # @param cmd [Array<String>]
@@ -417,9 +417,9 @@ module Dev
     # sudo's options that make a command the runner user's: its identity,
     # its home, the host's PATH — and a cwd it can read. sudo keeps the
     # caller's cwd, which is the operator's checkout under a home the
-    # runner user cannot enter (dev#310), and brew refuses to run from a
+    # runner user cannot enter, and brew refuses to run from a
     # directory it cannot stat ("The current working directory must
-    # exist", dev#493); GNU env's -C moves to `/` first. Linux-only, as
+    # exist"); GNU env's -C moves to `/` first. Linux-only, as
     # the runner user is (`for_host`), so GNU env is a given.
     #
     # @return [Array<String>]

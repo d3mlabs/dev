@@ -24,14 +24,14 @@ module Dev
   # as a failure (RunnerSetup.remove_registration, the shared seam).
   #
   # Enrollments are named the way an operator would: by scope when one
-  # local enrollment — or this host's slots there (dev#470) — serves it,
+  # local enrollment — or this host's slots there — serves it,
   # or by dir (absolute or `~`-relative), which is always one slot. Both come
   # from RunnerDiscovery and nothing else, so resolution works offline
   # (shell completion rides on it).
   #
   # Same CLI boundary as RunnerSetup (an injectable Executor over gh /
   # svc.sh / config.sh) and the same svc.sh OS split. An enrollment that
-  # belongs to another user (the Linux runner user, dev#310) is
+  # belongs to another user (the Linux runner user) is
   # deregistered as that user — `config.sh remove` and the file removal
   # through `sudo -u` — while the unit stays root's and the token the
   # operator's, as in RunnerSetup.
@@ -85,7 +85,7 @@ module Dev
     # The enrollments a command-line reference names, in slot order. A
     # reference starting with `/` or `~` is a dir — always exactly one
     # enrollment. Anything else is a scope ("owner/repo" or "owner"): one
-    # enrollment, or every slot this host has there (dev#470: the
+    # enrollment, or every slot this host has there (the
     # enrollments sharing a base name, each slot once) — a host serving a
     # scope with three slots is unregistered from it as a whole, the way
     # register enrolled it. Several enrollments at a scope that are *not*

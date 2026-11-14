@@ -5,7 +5,7 @@ module Dev
   # Whether this dev process runs inside a GitHub Actions job — the
   # generic lifecycle workflow's, or any other. One fact with one reader:
   # a lifecycle verb that would leave the machine from inside a job is a
-  # job dispatching a job (dev#420). The verb got there because a runner
+  # job dispatching a job. The verb got there because a runner
   # was told to run it; a runner that then finds itself not to be the
   # build's environment is misprovisioned, and the answer is to say so,
   # not to re-dispatch — once onto itself, or forever between two.

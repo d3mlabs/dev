@@ -9,7 +9,7 @@ module Dev
   # prepends a set of directories to PATH inside the project, so a project
   # runs exactly the tools its lock names — the locked brew keg rather than
   # whichever keg brew linked, a published gh tree's `bin/` without a
-  # hand-sourced script (ADR-0010, dev#289).
+  # hand-sourced script.
   #
   # Integrations decide *which* directories; this module only renders the
   # file and hands it to ShadowenvFile, which places it for the side this

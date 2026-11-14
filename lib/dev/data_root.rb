@@ -7,15 +7,15 @@ module Dev
   # Where dev's host-side artifacts (engines, dep caches, steam depots) live.
   #
   # On a Mac that is `~/.dev`. On an agent Mac the register bootstrap
-  # provisions a shared root (plans#26: anything both identities use is
+  # provisions a shared root (anything both identities use is
   # system-visible, not per-user) and the data root points there — for the
   # human *and* the agent, so one engine tree serves both. On Linux it is
-  # `/var/lib/dev` (dev#308, ADR-0008's Linux variant): user-independent,
+  # `/var/lib/dev`: user-independent,
   # because what the store holds is path-bound (UBT's build state, venvs,
   # binstubs) and one tree must read the same from every account that
   # builds it — and the path the container already uses, so a Linux host's
   # bind mount shows the container the store at its own path. Resolution is
-  # derivable, never recorded (plans#26: inspected, no record file):
+  # derivable, never recorded (inspected, no record file):
   # explicit `DEV_DATA_ROOT` env → (darwin) the shared root when it exists →
   # (linux) `/var/lib/dev`, existing or not → `~/.dev`.
   #
@@ -44,7 +44,7 @@ module Dev
     # The one cooperative group on every dev host: the identities that
     # share dev's state — the operator, a Linux host's runner user, an
     # agent host's agent user — are its members, and the shared root,
-    # the `_work` trees and the agent's workspaces carry it (plans#59).
+    # the `_work` trees and the agent's workspaces carry it.
     # Named by the layer that owns the root: both data-root provisioners
     # and both agent host bootstraps use this constant and no other, and
     # `dev runner register` hands the name to ai-flow in the service env

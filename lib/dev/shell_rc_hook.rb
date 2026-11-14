@@ -16,7 +16,7 @@ module Dev
   #
   # A hook is a convenience for a human's interactive shell, so it is only
   # installed when a human is there: off a tty (a runner job, an agent run
-  # as its own user — ai-flow#116, dev#483) the write is a no-op, never a
+  # as its own user) the write is a no-op, never a
   # profile scribbled into an identity that has no shell to hook, and never
   # a "Permission denied" for one that cannot. A run uses `shadowenv exec`.
   class ShellRcHook

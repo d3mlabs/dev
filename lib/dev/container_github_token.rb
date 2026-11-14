@@ -6,7 +6,7 @@ require "sorbet-runtime"
 
 module Dev
   # The host's gh token, carried into a container as GH_TOKEN. The container
-  # is a build host that fetches private releases for itself (ADR-0008) and
+  # is a build host that fetches private releases for itself and
   # a command run inside may call `gh` (a publisher's `gh release create`);
   # both need the auth the host already holds, and neither should hold a
   # copy of it: the token goes to the exec's `-e` and nowhere else — never
@@ -14,7 +14,7 @@ module Dev
   #
   # One rule for every exec dev makes: a GH_TOKEN the image's run_env names
   # wins; otherwise the host's, when gh is logged in; otherwise nothing.
-  # Whose token the host holds is the host's business (dev#310).
+  # Whose token the host holds is the host's business.
   class ContainerGithubToken
     extend T::Sig
 

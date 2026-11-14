@@ -12,7 +12,7 @@ require "dev/tap_trust"
 require "dev/ui"
 
 module Dev
-  # The agent host contract (plans#26 layer 3), converged by `dev runner
+  # The agent host contract, converged by `dev runner
   # register` when an advertised label carries it. Host-singular,
   # idempotent, admin-prompting: every step probes before it mutates, so
   # re-running register re-converges — which is also the drift repair. The
@@ -28,15 +28,15 @@ module Dev
   # keep agent-created dirs group-writable) and the brew edge beside it;
   # the data root the agent reads through the group; brew's lock dir as a
   # group space, so the agent's brew reads can take the API download lock
-  # in a prefix it does not own (dev#558); the agent's trust of the
-  # deployment's tap (TapTrust, dev#374 — the agent is a different brew
-  # user); and after enrollment, the `_work` tree as a group space and
+  # in a prefix it does not own; the agent's trust of the
+  # deployment's tap (TapTrust — the agent is a different brew user);
+  # and after enrollment, the `_work` tree as a group space and
   # the service env naming the agent user, the group and the slot.
   #
-  # One contract, two adapters (plans#59): the facts are the same on a Mac
+  # One contract, two adapters: the facts are the same on a Mac
   # and on a Linux dev host; the CLIs that establish them are not, and the
   # *runner user* differs — the operator on a Mac (the service is a
-  # per-user LaunchAgent), dev#310's `runner` on Linux. The platform
+  # per-user LaunchAgent), `runner` on Linux. The platform
   # primitives are the abstract methods below; AgentBootstrap::Darwin and
   # AgentBootstrap::Linux implement them, chosen at the composition root
   # (LabelContracts.agent_bootstrap). The only constants shared with
@@ -152,7 +152,7 @@ module Dev
     # `sudo -n` so a missing credential fails fast instead of hanging on a
     # swallowed password prompt — the caller primes sudo first. `prelude`
     # is what the adapter puts between sudo and the command (Linux: `env -C
-    # /`, so the agent is not left in the operator's cwd, dev#493).
+    # /`, so the agent is not left in the operator's cwd).
     class SudoAgentExecutor
       extend T::Sig
 
@@ -302,7 +302,7 @@ module Dev
     # The service env one slot's runner carries: the agent user (jobs
     # landing here execute as X — no manual env step), the group ai-flow
     # shares fresh workspaces with, and which of the host's slots this is
-    # (dev#485: ai-flow keys per-slot state by it, and only dev knows the
+    # (ai-flow keys per-slot state by it, and only dev knows the
     # naming). One record, written by both adapters in their service's
     # own shape.
     #
@@ -335,7 +335,7 @@ module Dev
     # machines): the agent may run exactly brew as the prefix owner,
     # NOPASSWD, so `dev deps install` converges formulae without a human
     # even though the prefix belongs to another user — the operator on a
-    # Mac, the runner user on a Linux box (dev#337). The owner is stat'd
+    # Mac, the runner user on a Linux box. The owner is stat'd
     # here at bootstrap time — never hardcoded — and re-running register
     # re-converges the edge. Waived when the host has no brew or the agent
     # owns the prefix itself (nothing to escalate). Consumed by
@@ -344,7 +344,7 @@ module Dev
     # cache in the store, the pinned-taps variables) as sudo's own
     # `VAR=value` assignments — sudoers matches the command, so nothing
     # may stand in front of brew — and sudo admits those assignments only
-    # under SETENV (dev#361). SETENV widens nothing material: a grant to
+    # under SETENV. SETENV widens nothing material: a grant to
     # run brew as the owner already runs arbitrary code as the owner
     # (`brew ruby`, `brew sh`, a formula from a local tap).
     #
@@ -395,7 +395,7 @@ module Dev
     # through. A path, never a PATH lookup: the fact belongs to the channel,
     # so it is read where the channel puts it. The enrolling shell's PATH
     # answers for the operator, which on a Linux box is neither the prefix's
-    # owner (the runner user, dev#337) nor the identity that runs the CLI.
+    # owner (the runner user) nor the identity that runs the CLI.
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
@@ -491,7 +491,7 @@ module Dev
     end
 
     # Step 5b: brew's lock dir as a cooperative space, before the agent's
-    # first brew (the tap trust, dev#558). Every brew read by a user with
+    # first brew (the tap trust). Every brew read by a user with
     # no API cache downloads the signed index under a lock in
     # `<prefix>/var/homebrew/locks`, which the prefix owner alone could
     # write — so on the box `brew trust` as the agent died on
@@ -518,7 +518,7 @@ module Dev
     # group. Unconditional, so a tree from before the group's name was
     # the data root's is re-grouped on the next register. The tree is made
     # under root as the runner user's own: the runner dir is that user's,
-    # which on Linux is not the operator running this (dev#310), and the
+    # which on Linux is not the operator running this, and the
     # first job has not created `_work` yet.
     #
     # @param runner_dir [String]

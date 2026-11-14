@@ -9,7 +9,7 @@ module Dev
   # A host baked from a project's image carries it, a container dev made
   # carries its image's, a bare machine carries none.
   #
-  # The host rule (dev#308, ADR-0007 amended) is one comparison over it:
+  # The host rule is one comparison over it:
   # a host runs an image's commands natively when it was provisioned from
   # that image — same name, same digest as the lock's pin — and inside the
   # image otherwise. The digest is the generated Dockerfile's, so the

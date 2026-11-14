@@ -17,7 +17,7 @@ module Dev
   # bootstrap removed dev-core), bin/container-provision-dev.sh installs the
   # host's version from the tap's history into the container's Linuxbrew
   # prefix — a named volume the script bootstraps Homebrew into when the
-  # image carries none (ADR-0008). The host is the only writer of the
+  # image carries none. The host is the only writer of the
   # container's dev; the inside dev (DEV_INSIDE_CONTAINER) never self-updates.
   class ContainerDevProvisioner
     extend T::Sig

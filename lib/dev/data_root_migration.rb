@@ -7,12 +7,11 @@ require "dev/ui"
 
 module Dev
   # The one-off move of a per-user `~/.dev` into a machine data root — the
-  # Mac's shared root (AgentBootstrap, plans#26) or Linux's `/var/lib/dev`
-  # (LinuxDataRootProvisioner, dev#308). Artifact trees (engines, caches,
+  # Mac's shared root (AgentBootstrap) or Linux's `/var/lib/dev`
+  # (LinuxDataRootProvisioner). Artifact trees (engines, caches,
   # steam depots) move as a rename, so multi-GB engine trees cost nothing;
-  # mutable per-user state (`state`) stays per-home (plans#26's pollution
-  # rule: sharing is for immutable artifacts and cooperative caches, never
-  # mutable state). Entries the destination already holds are skipped:
+  # mutable per-user state (`state`) stays per-home (sharing is for
+  # immutable artifacts and cooperative caches, never mutable state). Entries the destination already holds are skipped:
   # anything cheap is re-materialized by the next `dev up`, and a newer
   # shared tree must never be clobbered by a stale home one.
   class DataRootMigration

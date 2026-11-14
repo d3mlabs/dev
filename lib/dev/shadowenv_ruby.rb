@@ -31,7 +31,7 @@ module Dev
     # The project's name and the store are the interpreter activation
     # contract's (BrewIntegration::INTERPRETERS): what ShadowenvPython homes
     # the venv by. The Ruby activation keeps nothing in the store yet — the
-    # gem home is the keg's — until the per-project gem home (dev#294).
+    # gem home is the keg's — until the per-project gem home.
     #
     # @param keg [Pathname] the installed Ruby's prefix (brew's keg)
     # @param version [String] the version the lock pins

@@ -7,15 +7,15 @@ require "dev/runner_setup"
 
 module Dev
   # Whether the enclosing checkout's enrolled runner is available — the
-  # question the remote dispatch asks before targeting it (dev#192, K8:
-  # native when the host rule passes, else the enrolled runner, else the
-  # project's container). "Available" is the Actions API's answer, read
+  # question the remote dispatch asks before targeting it (native when
+  # the host rule passes, else the enrolled runner, else the project's
+  # container). "Available" is the Actions API's answer, read
   # live and recorded nowhere: a runner at the repo's scope carrying the
   # repo's label, online — the same health contract register reads of
   # its own enrollment (RunnerRegistry::Runner#online?). A busy runner is
   # available; the job queues behind it. A runner the org enrolled under
   # the same label serves the repo too in GitHub's routing, but it is a
-  # pool, named with `--runner <label>` (dev#420), not the repo's
+  # pool, named with `--runner <label>`, not the repo's
   # enrolled runner; listing it would also need admin:org, which a Mac's
   # operator login need not hold.
   #

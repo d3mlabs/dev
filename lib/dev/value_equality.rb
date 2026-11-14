@@ -20,9 +20,6 @@ module Dev
   # The contract every implementation must satisfy — equivalence relation,
   # ==/eql? agreement, equal implies same hash — is asserted by
   # ValueSemanticsAssertions#assert_value_semantics.
-  #
-  # Lifted from ai-flow's AiFlow::ValueEquality; the two copies are the
-  # seed of a shared gem (the plan is linked from both).
   module ValueEquality
     extend T::Sig
     # Includers are ordinary Objects; Kernel gives the stubs raise and

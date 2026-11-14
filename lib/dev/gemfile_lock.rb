@@ -11,11 +11,11 @@ module Dev
   # (`  dev (0.8.0)`, two spaces in, no digest for a path gem).
   #
   # `Lifecycle::ProjectVersion` moves both lines on a release bump, so the
-  # lock is never left half-moved for the next `bundle` to rewrite
-  # (dev#521). `Deps::Staleness` digests the lock **without** them: a path
+  # lock is never left half-moved for the next `bundle` to
+  # rewrite. `Deps::Staleness` digests the lock **without** them: a path
   # gem is pointed at, never installed from the lock, so its version is a
   # label and not an ingredient — counting it made every release bump nag
-  # "run dev up" for nothing (dev#527). Only `remote: .` is the own gem; a
+  # "run dev up" for nothing. Only `remote:.` is the own gem; a
   # sibling path gem (`remote: ../x`) is any other gem here.
   class GemfileLock
     extend T::Sig

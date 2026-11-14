@@ -15,7 +15,7 @@ require "dev/tap_trust"
 
 module Dev
   class AgentBootstrap
-    # The agent host contract on a Mac (plans#26 approach A): the admin
+    # The agent host contract on a Mac: the admin
     # CLIs are Darwin's (sysadminctl, dseditgroup, PlistBuddy), the runner
     # user is the operator (the service is a per-user LaunchAgent, so the
     # sudoers edge is operator → agent), the data root is the shared root
@@ -23,8 +23,8 @@ module Dev
     # `~/.dev` migration), and the agent has an engine of its own — colima,
     # per-user by nature — when the served repo pins an image.
     #
-    # A Mac bootstrapped before plans#59 carries its shared root and
-    # `_work` trees in a group named `ai` (LEGACY_GROUP); the next run
+    # A Mac whose shared root and `_work` trees are in a group named `ai`
+    # (LEGACY_GROUP) is re-grouped on the next run
     # re-groups them to the data root's group, so one name serves every
     # host and ai-flow reads it from the service env.
     class Darwin < AgentBootstrap
@@ -40,7 +40,7 @@ module Dev
       # cache store whose path is missing rather than creating it (probed on
       # ue5-mac 5.8), so register provisions the leaf; cellbound-3d's committed
       # DDC config points here (a cross-repo literal, duplicated knowingly like
-      # the shared root itself — d3mlabs/cellbound-3d#157).
+      # the shared root itself).
       DDC_DIR = "ddc"
 
       # @param agent_user [String] the run-as user to provision
@@ -200,7 +200,7 @@ module Dev
       end
 
       # A root in the legacy `ai` group moves, tree and all, to the data
-      # root's group (plans#59: one group name across hosts). Symlinks are
+      # root's group (one group name across hosts). Symlinks are
       # re-grouped themselves, never followed (`-h`), as the Linux
       # provisioner's share does. Modes are untouched — the root was
       # provisioned setgid group-writable already.
