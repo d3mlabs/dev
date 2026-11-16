@@ -1,0 +1,96 @@
+# d3mlabs/dev/up — install or upgrade dev on the runner a job landed on,
+# then `dev up`. One step, the same on every host a job can land on:
+#
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: d3mlabs/dev/up@main
+#
+# A stock GitHub-hosted image gets Homebrew (when the image carries none)
+# and dev installed. A hosted runner on its checkpoint and a self-hosted box
+# already carry both, so the install is skipped and dev is upgraded to the
+# tap's latest instead. Then `dev up` provisions the host — the data root,
+# the org tooling — and installs the lock of the checkout the calling job
+# made; on a warm host every step is a probe.
+#
+# The job's own identity runs this: the runner user owns the host it
+# converges. A process on a host someone else converged (an agent user,
+# a container) runs `dev deps install` instead, never this action.
+#
+# The calling job provides gh's credential: GH_TOKEN on a hosted runner, the
+# runner user's gh login on a box. `dev up` fetches private pins through it,
+# and the check below fails the job up front when it is missing.
+name: dev up
+description: >-
+  Install Homebrew and dev when the host has none, upgrade dev when it has
+  them, check dev and gh are on PATH and gh is authenticated, then run
+  `dev up` in the checkout.
+
+runs:
+  using: composite
+  steps:
+    # brew is looked for on PATH, then on disk at the standard prefixes: a
+    # job's PATH is the stock one (GITHUB_PATH is per job), so a checkpoint,
+    # a box, or a hosted image that ships Linuxbrew off PATH all carry brew
+    # where PATH does not say. A PATH probe alone would re-run the installer
+    # over an existing prefix on every run.
+    #
+    # Homebrew loads no formula from a third-party tap its user has not
+    # trusted, and the trust prompt dies on a non-interactive runner, so the
+    # tap is trusted before anything installs from it. Trust is per user and
+    # persists in the user's home, so a host that already carries dev had it
+    # granted when dev was installed and is not asked again.
+    - name: Install Homebrew + dev
+      shell: bash
+      run: |
+        locate_brew() {
+          command -v brew && return
+          for prefix in /opt/homebrew /usr/local /home/linuxbrew/.linuxbrew; do
+            if [ -x "$prefix/bin/brew" ]; then echo "$prefix/bin/brew"; return; fi
+          done
+          return 1
+        }
+
+        if ! brew="$(locate_brew)"; then
+          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          brew="$(locate_brew)"
+        fi
+        prefix="$(dirname "$(dirname "$brew")")"
+
+        # GITHUB_PATH reaches the later steps of this action and of the
+        # calling job, not this one: brew is addressed by path here.
+        echo "$prefix/bin" >> "$GITHUB_PATH"
+        echo "$prefix/sbin" >> "$GITHUB_PATH"
+
+        # `opt/dev` is brew's link to the installed deployment formula.
+        if [ ! -e "$prefix/opt/dev" ]; then
+          "$brew" tap d3mlabs/d3mlabs
+          "$brew" trust --tap d3mlabs/d3mlabs
+          "$brew" install d3mlabs/d3mlabs/dev
+        fi
+
+    # A dev release reaches every runner on its next job: no hand upgrade of
+    # a long-lived box, no wait for the next checkpoint. The formula is the
+    # deployment's, named in full so no core formula of the same name is
+    # meant. A no-op when dev is current, the just-installed host included.
+    - name: Upgrade dev
+      shell: bash
+      run: |
+        brew update
+        brew upgrade d3mlabs/d3mlabs/dev
+
+    # Fail up front, naming the missing piece, rather than mid-provision:
+    # `dev up` pulls private pins through gh's token.
+    - name: Check the toolchain
+      shell: bash
+      run: |
+        for tool in dev gh; do
+          command -v "$tool" >/dev/null || { echo "::error::'$tool' is not on the runner's PATH"; exit 1; }
+        done
+        gh auth token >/dev/null || { echo "::error::gh is not authenticated on this runner (GH_TOKEN, or the runner user's gh login)"; exit 1; }
+
+    # The host half (the data root under the runner's sudo, the org tooling)
+    # and the project half (the lock, the project's own `up:`); a probe on a
+    # warm host.
+    - name: dev up
+      shell: bash
+      run: dev up
