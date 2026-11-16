@@ -887,6 +887,29 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui.rows.none? { |_kind, text, _depth| text.include?("keepalive task") && text.include?("{{x}}") }
   end
 
+  # dev#571: a job under the runner's systemd service has neither interop
+  # nor WSL_DISTRO_NAME, so the keepalive's task cannot even be named
+  # there; the fact is unknown and the ledger goes on to the posture.
+  test "a session that names no distro (a service) reads the keepalive as unknown, nameless, and the ledger goes on" do
+    Given "a WSL runner host without interop whose task cannot be built"
+    ui = RecordingUi.new
+    wsl = wsl_runner_host(keepalive: nil)
+    wsl.stubs(:task).raises(Dev::WslHost::DistroUnknownError, "WSL_DISTRO_NAME is not set")
+    status = build_status(ui: ui, wsl_runner_host: wsl, host: "box", host_os: "linux")
+
+    When
+    status.check
+
+    Then
+    ui.rows == [
+      [:frame, "box · linux · systemd", 0],
+      [:note, "{{v}} systemd running (the runner service is a systemd unit)", 1],
+      [:note, "{{?}} logon keepalive: cannot tell from this session (no WSL interop — a service or an ssh login) — run `dev runner status` from a shell opened in the distro on the Windows desktop", 1],
+      [:note, "{{v}} no org Brewfile shipped (nothing to check)", 1],
+      [:note, "posture: 0 slots · 3 facts · 0 drifted", 0],
+    ]
+  end
+
   # --- the host frame: the agent host --------------------------------------
 
   test "an agent family puts the agent host's facts in the host frame, and each slot's _work tree in its own line" do
@@ -1099,6 +1122,138 @@ class Dev::RunnerStatusTest < Minitest::Test
     Then
     !out.string.include?("agent user")
     !out.string.include?("_work")
+  end
+
+  test "the agent host's facts are inspected when the agent user is on the host, with no agent family enrolled" do
+    Given "an orchestrator-only host whose agent user exists (register bootstrapped it; the agent slots were retired)"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ai-agent"] => true })
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
+    status = build_status(out: out, home: home, registry: CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP, &responder), executor: executor)
+
+    When
+    status.report
+
+    Then "the agent host facts land, the user green and the rest red"
+    out.string.include?("✓ agent user ai-agent exists")
+    out.string.include?("✗ runner → agent sudoers edge missing")
+  end
+
+  # --- --check (dev#571): the host's posture alone, GitHub not asked ---------
+
+  # A job runs this after every `dev up`, on its own identity: the host
+  # frame and the posture, nothing GitHub would have to be asked for. The
+  # roles enrolled are read from the records' pools, as for a slot GitHub
+  # has lost — an org agent family names its pool.
+  test "--check renders the host frame and the posture alone — no family frame — and never asks GitHub when every fact holds" do
+    Given "a green Linux agent host with an org agent family and the orchestrator pool, and a registry that must not be asked"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "box-agent", pool: "ai-flow")
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator", pool: "ai-orchestrator")
+    registry = CannedRegistry.new { |_scope, name| raise "GitHub was asked about #{name}" }
+    data_root = Dir.mktmpdir
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "ai-agent"] => true, ["sudo", "-n", "-u", "ai-agent", "true"] => true },
+      capture_results: {
+        ["id", "-nG", "runner"] => "runner docker dev\n",
+        ["id", "-nG", "ai-agent"] => "ai-agent dev\n",
+        ["stat", "-c", "%G %A", data_root] => "dev drwxrwsr-x\n",
+        AGENT_SUDO_LIST => AGENT_RULES_HEADER,
+      },
+    )
+    bootstrap = Dev::AgentBootstrap::Linux.new(
+      runner_user: "runner", executor: executor, data_root: data_root, tap: nil, brew_executable: nil, owner_of: ->(_path) { "runner" },
+    )
+    status = build_status(ui: ui, home: home, registry: registry, executor: executor, bootstrap: bootstrap, host: "box", host_os: "linux")
+
+    When
+    status.check
+
+    Then "the ledger is the host frame's facts and the posture; the slots are counted, not inspected"
+    ui.rows == [
+      [:frame, "box · linux · systemd", 0],
+      [:note, "{{v}} agent user ai-agent exists", 1],
+      [:note, "{{v}} runner in the dev group", 1],
+      [:note, "{{v}} ai-agent in the dev group", 1],
+      [:note, "{{v}} runner → agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)", 1],
+      [:note, "{{v}} no brew edge (#{NO_BREW_EDGE_REASON})", 1],
+      [:note, "{{v}} data root #{data_root} shared with group dev (setgid)", 1],
+      [:note, "{{v}} no org Brewfile shipped (nothing to check)", 1],
+      [:note, "posture: 2 slots · 7 facts · 0 drifted", 0],
+    ]
+  end
+
+  test "--check raises PostureDriftError once the ledger is printed, when a fact is red — the message sums the drift and points at the lines" do
+    Given "an org agent family on a cold host"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "box-agent", pool: "ai-flow")
+    registry = CannedRegistry.new { |_scope, name| raise "GitHub was asked about #{name}" }
+    status = build_status(ui: ui, home: home, registry: registry, shared_root: File.join(Dir.mktmpdir, "absent"))
+
+    When
+    error = assert_raises(Dev::RunnerStatus::PostureDriftError) { status.check }
+
+    Then "the host frame and the posture were rendered before the raise, and the message names the count"
+    ui.rows.fetch(0) == [:frame, "mac1 · darwin · launchd", 0]
+    ui.rows.include?([:note, "{{x}} agent user ai-agent exists", 1])
+    ui.rows.last == [:note, "posture: 1 slot · 6 facts · 5 drifted", 0]
+    error.message == "host posture: 5 of 6 facts drifted — the red lines above name each remedy (`dev runner register` converges the host; `dev up` the tooling)"
+  end
+
+  test "--check on a host with no enrollments and nothing drifted returns quietly" do
+    Given
+    ui = RecordingUi.new
+    status = build_status(ui: ui, registry: CannedRegistry.new { |_scope, name| raise "GitHub was asked about #{name}" })
+
+    When
+    status.check
+
+    Then
+    ui.rows == [
+      [:frame, "mac1 · darwin · launchd", 0],
+      [:note, "{{v}} no org Brewfile shipped (nothing to check)", 1],
+      [:note, "posture: 0 slots · 1 fact · 0 drifted", 0],
+    ]
+  end
+
+  # The Mac's cellbound-3d slot: a repo-scoped agent family records no
+  # pool (Default), so without GitHub its role reads as a build host — the
+  # agent user on the host is what says the host is an agent host.
+  test "--check inspects the agent host through the agent user when the only agent family is repo-scoped (its record names no pool)" do
+    Given "a repo-scoped agent slot and the agent user on the host, the edge missing"
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "mac-agent")
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ai-agent"] => true, ["sudo", "-n", "-u", "ai-agent", "true"] => false })
+    registry = CannedRegistry.new { |_scope, name| raise "GitHub was asked about #{name}" }
+    status = build_status(out: out, home: home, registry: registry, executor: executor)
+
+    When
+    error = assert_raises(Dev::RunnerStatus::PostureDriftError) { status.check }
+
+    Then
+    out.string.include?("✓ agent user ai-agent exists")
+    out.string.include?("✗ runner → agent sudoers edge missing")
+    error.message.start_with?("host posture: ")
+  end
+
+  test "--check skips a build-host-only machine's agent facts: no agent family, no agent user" do
+    Given
+    out = StringIO.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "box")
+    status = build_status(out: out, home: home, registry: CannedRegistry.new { |_scope, name| raise "GitHub was asked about #{name}" })
+
+    When
+    status.check
+
+    Then
+    !out.string.include?("agent user")
+    out.string.include?("posture: 1 slot · 1 fact · 0 drifted")
   end
 
   # --- the host frame: the tooling -------------------------------------------

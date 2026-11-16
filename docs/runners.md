@@ -17,6 +17,7 @@ dev runner register --org --role orchestrator --slots 8 # the orchestrator pool
 dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
+dev runner status --check                 # the host's posture alone, no GitHub; exit 1 on drift (every job runs it)
 dev runner unregister d3mlabs             # by scope …
 dev runner unregister ~/actions-runner    # … or by directory (Tab completes both)
 ```
@@ -315,9 +316,9 @@ The host frame carries what is true of the machine regardless of its
 slots: the runner user and its gh login with the token's expiry, who owns
 the toolchain, whether that identity can read this checkout's lock
 (every `gh` pin's repo, every image's floor package), the agent host's
-contract when an agent family is enrolled (agent user, group memberships,
-the sudoers edge and the absence of a brew edge, data root, brew locks,
-engine), the WSL keepalive and
+contract when the host is one — an agent family enrolled, or the agent
+user on the host (agent user, group memberships, the sudoers edge and the
+absence of a brew edge, data root, brew locks, engine), the WSL keepalive and
 systemd facts inside a distro, and host tooling against the org Brewfile.
 
 Each family frame opens with its **reach** — what GitHub lets this
@@ -347,6 +348,34 @@ with its directory and the findings.
 After the frames, in a checkout, `this checkout (owner/repo) reaches: …`
 names the families whose reach admits that repo, and
 `posture: N slots · M facts · K drifted` sums the run.
+
+#### --check
+
+`dev runner status --check` prints the host frame and the posture line
+alone and exits 1 when any fact is red. It is what a job runs after `dev
+up` — ai-flow's dispatch job does, and puts the drift in the command's
+reply — so a host whose posture is behind the running dev's contract goes
+red in the next run's log rather than waiting for someone to run `status`.
+Posture stays `register`'s to converge (users, sudoers, ownership need
+root, and the runner user has no sudo); a job inspects it and refuses to
+be quiet.
+
+What `--check` reads is today's host against today's contract — no stamp,
+no version file — and nothing GitHub would have to be asked for: the
+runner user and its login, the toolchain's owner, the agent host's
+contract (agent user, group memberships, the sudoers edge and the absence
+of a brew edge, data root, brew locks), the WSL systemd and keepalive
+facts, host tooling against the org Brewfile. The family frames — reach,
+online, labels, the runner group — need the org token and stay the
+human's `dev runner status`. Which roles are enrolled is read from each
+enrollment's own `.runner` record (its runner group), as for a slot GitHub
+has lost; a repo-scoped agent family records no group, so the agent user's
+presence on the host is what brings the agent host's facts in there. Run
+as the job's own identity, facts that identity cannot probe read `?`, not
+`✗` — the runner user's gh login from a job that cannot sudo, the
+keepalive from a service without interop — and only a `✗` fails the
+check. Each red line names its remedy; most are `re-run dev runner
+register`, the tooling line's is `dev up`.
 
 A job nobody picks up sits at *Waiting for a runner to pick up this job…*
 under a `Requested labels:` line, the same whether the runners are busy,

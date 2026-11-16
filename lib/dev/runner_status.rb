@@ -25,6 +25,7 @@ require "dev/settings"
 require "dev/ui"
 require "dev/version"
 require "dev/wsl_conf"
+require "dev/wsl_host"
 require "dev/wsl_runner_host"
 
 module Dev
@@ -64,8 +65,23 @@ module Dev
   #
   # After the frames, bare: in a checkout, which families that repo's
   # jobs reach; then the posture — slots, facts, drifted.
+  #
+  # `--check` (#check) is the host frame and the posture alone, GitHub
+  # not asked: what a job runs on its own identity after every `dev up`,
+  # so a host whose posture is behind the running dev's contract goes red
+  # in the job rather than waiting for a human's `status`. Posture stays
+  # register's to converge — a job inspects it and refuses to be quiet.
   class RunnerStatus
     extend T::Sig
+
+    # `--check` found red facts. The ledger above names each with its
+    # remedy; the message sums them. A RuntimeError so the CLI boundary
+    # prints it and exits 1 — the job's step goes red, the run log holds
+    # the ledger.
+    class PostureDriftError < RuntimeError; end
+
+    # Why a slot has no GitHub record under `--check`: not lost — not asked.
+    NOT_ASKED = "not asked (--check reads the host alone)"
 
     # Days of token life left under which the line turns red.
     EXPIRY_WARNING_DAYS = 30
@@ -182,11 +198,48 @@ module Dev
       families.each { |family| report_family(family, scoped: shared_roles.include?(family.role.name)) }
       @ui.note("No runners enrolled on this host (run `dev runner register`).") if families.empty?
       report_invocation(families)
-      slots = families.sum { |family| family.slots.length }
-      @ui.note("posture: #{plural(slots, "slot")} · #{plural(@facts, "fact")} · #{@drifted} drifted")
+      report_posture(families)
+    end
+
+    # `--check`: the host's frame, then the posture — today's host against
+    # today's contract, nothing recorded and GitHub not asked. The family
+    # frames are skipped: reach, online, labels and group need the org
+    # token and are the human's `dev runner status`. Which roles are
+    # enrolled is read from the records' pools (RunnerFamily::Slot#role,
+    # as for a slot GitHub has lost), so an org agent family still brings
+    # the agent host's facts in; a repo-scoped one names no pool, and the
+    # agent user on the host stands in for it (#agent_host_facts). Fast
+    # and token-free, so every job runs it on its own identity, and a red
+    # fact is the exit status.
+    #
+    # @return [void]
+    # @raise [PostureDriftError] when any fact is red
+    sig { void }
+    def check
+      slots = @discovery.enrollments.map do |enrollment|
+        RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: NOT_ASKED)
+      end
+      families = RunnerFamily.of(slots)
+      report_host(families)
+      report_posture(families)
+      return if @drifted.zero?
+
+      raise PostureDriftError,
+        "host posture: #{@drifted} of #{plural(@facts, "fact")} drifted — the red lines above name each remedy " \
+        "(`dev runner register` converges the host; `dev up` the tooling)"
     end
 
     private
+
+    # The sum of the run: how many slots this host holds, how many facts
+    # were inspected, how many drifted.
+    #
+    # @param families [Array<Dev::RunnerFamily>]
+    sig { params(families: T::Array[RunnerFamily]).void }
+    def report_posture(families)
+      slots = families.sum { |family| family.slots.length }
+      @ui.note("posture: #{plural(slots, "slot")} · #{plural(@facts, "fact")} · #{@drifted} drifted")
+    end
 
     # One fact: counted, and a drift when not ok.
     #
@@ -573,8 +626,8 @@ module Dev
     # --- the host ------------------------------------------------------------
 
     # The host's frame: the Linux host rule's identity and what it can
-    # read, the agent host when an agent family is enrolled, the WSL
-    # runner host inside a distro, the tooling.
+    # read, the agent host when the host is one, the WSL runner host
+    # inside a distro, the tooling.
     #
     # @param families [Array<Dev::RunnerFamily>]
     sig { params(families: T::Array[RunnerFamily]).void }
@@ -582,7 +635,7 @@ module Dev
       manager = SERVICE_MANAGERS.fetch(@host_os, "no service manager")
       @ui.frame("#{@host} · #{@host_os} · #{manager}") do
         report_host_reach if report_host_identity
-        agent_host_facts if families.any? { |family| family.role.name == RunnerRole::AGENT_NAME }
+        agent_host_facts(enrolled: families.any? { |family| family.role.name == RunnerRole::AGENT_NAME })
         wsl = @wsl_runner_host
         wsl_runner_host_facts(wsl) if wsl
         host_tooling_fact
@@ -692,21 +745,24 @@ module Dev
     # service is a unit of it), then the keepalive: present, holding a
     # session, running, and the verdict — does the distro autostart at
     # logon and stay up. Each line's remedy is register; the keepalive
-    # lines are `{{?}}` when this session cannot ask Windows.
+    # lines are `{{?}}` when this session cannot ask Windows — and the
+    # task is named only after that check, since a session without
+    # interop (a job under the runner's service) has no distro name to
+    # build it from either.
     #
     # @param wsl [Dev::WslRunnerHost]
     sig { params(wsl: WslRunnerHost).void }
     def wsl_runner_host_facts(wsl)
       status = wsl.status
       report_wsl_systemd(status)
-      task = wsl.task
       observed = status.keepalive
       if observed.nil?
-        unknown("logon keepalive '#{task.name}': cannot tell from this session (no WSL interop — a service or an " \
+        unknown("logon keepalive#{wsl_task_name(wsl)}: cannot tell from this session (no WSL interop — a service or an " \
                 "ssh login) — run `dev runner status` from a shell opened in the distro on the Windows desktop")
         return
       end
 
+      task = wsl.task
       unless observed.present
         line(false, "logon keepalive task '#{task.name}' missing — #{task.distro} does not start at logon " \
                     "(run `dev runner register`)")
@@ -734,6 +790,19 @@ module Dev
       end
     end
 
+    # The keepalive's name for the unknown line, ` 'Start-WSL-<distro>-Runner'`
+    # — or nothing when the session does not name its distro (WSL's /init
+    # sets WSL_DISTRO_NAME for a login session, never for a service).
+    #
+    # @param wsl [Dev::WslRunnerHost]
+    # @return [String]
+    sig { params(wsl: WslRunnerHost).returns(String) }
+    def wsl_task_name(wsl)
+      " '#{wsl.task.name}'"
+    rescue WslHost::DistroUnknownError
+      ""
+    end
+
     # systemd running, or why not: a wsl.conf that enables it awaits a
     # restart; one that does not awaits register.
     #
@@ -754,11 +823,22 @@ module Dev
     # edge sits beside it), the data root's cooperative shape, brew's lock
     # dir, and the engine where required.
     # The `_work` trees are the agent slots' own facts, in their family.
-    sig { void }
-    def agent_host_facts
+    #
+    # A host is an agent host when an agent family is enrolled on it, or
+    # when the agent user is on it: register creates that user for agent
+    # labels alone, so its presence says the host was bootstrapped as one
+    # — what tells under `--check`, where GitHub is not asked and a
+    # repo-scoped family's record names no pool. Nothing on any other host.
+    #
+    # @param enrolled [Boolean] whether an agent family is enrolled here
+    sig { params(enrolled: T::Boolean).void }
+    def agent_host_facts(enrolled:)
       agent = @bootstrap.agent_user
+      exists = @executor.quiet?("id", "-u", agent)
+      return unless enrolled || exists
+
       group = DataRoot::GROUP
-      line(@executor.quiet?("id", "-u", agent), "agent user #{agent} exists")
+      line(exists, "agent user #{agent} exists")
       [@bootstrap.runner_user, agent].each do |member|
         line(@bootstrap.group_member?(member), "#{member} in the #{group} group")
       end

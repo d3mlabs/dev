@@ -21,6 +21,39 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     command.category == Dev::Cli::Command::Category::Environment
     command.staleness_exempt? == false
     command.stamps? == false
+    command.flags.map(&:name) == ["--check"]
+  end
+
+  # dev#571: a job runs `--check` after every `dev up`; the inspector's
+  # check is the host's posture alone and raises on drift (the boundary
+  # exits 1).
+  test "--check runs the inspector's check, not its report" do
+    Given "a status factory handing back an inspector that expects check"
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:check).once
+    status.expects(:report).never
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _ui) { status })
+
+    When "running status --check with no project"
+    command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
+
+    Then
+    true
+  end
+
+  test "a PostureDriftError from --check reaches the boundary unwrapped" do
+    Given "an inspector whose check finds drift"
+    status = typed_mock(Dev::RunnerStatus)
+    status.expects(:check).raises(Dev::RunnerStatus::PostureDriftError, "host posture: 1 of 2 facts drifted")
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _ui) { status })
+
+    When
+    error = assert_raises(Dev::RunnerStatus::PostureDriftError) do
+      command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
+    end
+
+    Then
+    error.message == "host posture: 1 of 2 facts drifted"
   end
 
   test "status wires the inspector with the container fact and the context's Ui (plans#52)" do
