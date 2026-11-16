@@ -378,23 +378,84 @@ difference. The host's job is to bring a data root to the start line.
 | **Host provisioned from the environment's image** (a cloud worker or WSL distro baked from it) | its disk | `dev up` installs the whole lock on the host; no container | `dev up` is a probe |
 | **Linux host not provisioned from it** (the box, a stock hosted runner) | its disk, at `/var/lib/dev` | `dev up` creates the root, converges docker, pulls the image, installs the lock, starts the container over the host's own root | probe on both sides |
 | **Mac** | the Mac's disk, and named volumes in the colima VM for the container | `dev up` installs the darwin lock on the host, then the Linux lock inside the container's volumes | probe on both sides |
-| **Self-hosted runner** (a box) | its disk | Homebrew + dev, `gh auth login`, `dev runner register` | probe; several branches stay warm at once; `dev cache gc --keep N` per job trims |
-| **Hosted runner** (GitHub larger runner) | a **checkpoint**: a custom runner image of the disk after `dev up` | Homebrew + dev, `dev up` installs the full lock — minutes to tens of minutes | boots the checkpoint; `dev up` is a probe |
+| **Self-hosted runner** (a box) | its disk | Homebrew + dev, `gh auth login`, `dev runner register` | `d3mlabs/dev/up` upgrades dev and probes; several branches stay warm at once; `dev cache gc --keep N` per job trims |
+| **Hosted runner** (GitHub larger runner) | a **checkpoint**: a custom runner image of the disk after `dev up` | `d3mlabs/dev/up` installs Homebrew + dev, then the full lock — minutes to tens of minutes | boots the checkpoint; `d3mlabs/dev/up` is a probe |
 
 ### The hosted recipe
 
-A hosted runner's disk does not persist, so its warmth is a checkpoint
-minted by a `main`-only job. cellbound-3d's `ci.yml` is the reference.
+A job converges the runner it landed on with one step, the same on a
+GitHub-hosted runner and on a self-hosted box:
 
-- **Tests** (the project's job): `runs-on` the hosted runner;
-  `actions/checkout`; install Homebrew + dev if missing (a no-op on the
-  checkpoint); `dev up`; the project's commands. The job neither knows nor
-  declares that it runs on a checkpoint.
-- **checkpoint**: `needs: tests`; a job-level `if:` for `main` and for a
-  lock file having changed; `snapshot: <image-name>`; body = the same
-  bootstrap → `dev cache gc` → `docker logout` → empty the checkout (`find
-  "$GITHUB_WORKSPACE" -mindepth 1 -delete`). The captured disk holds the
-  data root, Linuxbrew and dev, nothing else.
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: d3mlabs/dev/up@main
+  # the project's commands
+```
+
+The step takes no inputs. Everything it needs to know about the project
+is in the checkout: `dev.yml` and the lock. It runs, in order:
+
+1. **Install Homebrew + dev**, each when the host lacks it: the Homebrew
+   installer when no `brew` is on PATH or at a standard prefix; then `brew
+   tap d3mlabs/d3mlabs`, `brew trust --tap d3mlabs/d3mlabs` and `brew
+   install d3mlabs/d3mlabs/dev` when the prefix has no dev. Homebrew loads
+   no formula from a tap its user has not trusted, and the trust prompt
+   dies on a non-interactive runner, so the trust comes before the
+   install. A host that already carries both — a checkpoint, a box —
+   skips this step.
+2. **Upgrade dev**: `brew update`, then `brew upgrade d3mlabs/d3mlabs/dev`.
+   A dev release reaches every runner on its next job; a no-op when dev is
+   current.
+3. **Check the toolchain**: `dev` and `gh` on PATH, and `gh auth token`
+   answering. A missing credential fails the job here, named, rather than
+   partway through provisioning.
+4. **`dev up`**: the host half (the data root, the org tooling) and the
+   project half (the lock, the project's own `up:`). A cold runner
+   provisions; a warm one probes and returns in seconds.
+
+The job supplies gh's credential. On a hosted runner that is `GH_TOKEN` in
+the job's `env`, a token that can read every private pin the lock names.
+On a box it is the [runner user's gh login](#linux-the-runner-user), and
+the job sets nothing.
+
+#### Which verb: `dev up` or `dev deps install`
+
+Two kinds of identity run dev inside a job, and each has one verb.
+
+**A job's own identity runs `dev up`.** The runner user — on a hosted
+runner or on a self-hosted box — owns the host it runs on: it provisions
+the data root under its own sudo, converges the host tooling and installs
+the lock, cold or warm, every job. The step above is this verb.
+
+**A non-owning identity runs `dev deps install`.** A process on a host
+someone else converged — the agent user ai-flow spawns inside a job, a
+process inside a container the host provisioned — installs the checkout's
+lock against a data root that already exists. It does no host work.
+
+`dev deps install` run as the runner user on a cold runner fails with
+`Permission denied @ dir_s_mkdir - /var/lib/dev`: the data root was never
+provisioned, and this verb does not provision it. That failure calls for
+`dev up`, not for a permission grant.
+
+When copying a workflow precedent: the runner user's step is `uses:
+d3mlabs/dev/up@main`. A `dev deps install` in a workflow belongs to the
+agent user's step, never to the runner's.
+
+#### The checkpoint
+
+A hosted runner's disk does not persist across jobs, so its warmth is a
+**checkpoint**: a custom runner image of the disk after `dev up`, minted
+by a `main`-only job. cellbound-3d's `ci.yml` is the reference.
+
+- **The project's jobs**: the two steps above, then the project's
+  commands. A job neither knows nor declares that it runs on a
+  checkpoint; on one, the install is skipped and `dev up` is a probe.
+- **checkpoint**: `needs:` the project's jobs; a job-level `if:` for
+  `main` and for a lock file having changed; `snapshot: <image-name>`;
+  body = the same two steps → `dev cache gc` → `docker logout` → empty
+  the checkout (`find "$GITHUB_WORKSPACE" -mindepth 1 -delete`). The
+  captured disk holds the data root, Linuxbrew and dev, nothing else.
 - **Once, by hand**: enable image generation on the runner; let `main`
   mint the first version; bind the runner to the image at `latest`
   (`PATCH /orgs/<org>/actions/hosted-runners/<id>` with
