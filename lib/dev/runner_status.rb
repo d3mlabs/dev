@@ -96,6 +96,10 @@ module Dev
     # width of the glyph, its space, and `reach: `.
     CLAUSE_INDENT = T.let(" " * "✓ reach: ".length, String)
 
+    # The indent of a family's own line after its slot facts: the width
+    # of the glyph and its space, so it reads under the facts' text.
+    FACT_INDENT = T.let(" " * "✓ ".length, String)
+
     # Slot suffixes `-2 … -N` collapse from this many consecutive ones.
     SUFFIX_RUN_COLLAPSE = 3
 
@@ -194,8 +198,7 @@ module Dev
     def report
       families = RunnerFamily.of(@discovery.enrollments.map { |enrollment| slot_of(enrollment) })
       report_host(families)
-      shared_roles = families.map { |family| family.role.name }.tally.select { |_name, count| count > 1 }.keys
-      families.each { |family| report_family(family, scoped: shared_roles.include?(family.role.name)) }
+      families.each { |family| report_family(family) }
       @ui.note("No runners enrolled on this host (run `dev runner register`).") if families.empty?
       report_invocation(families)
       report_posture(families)
@@ -294,18 +297,16 @@ module Dev
       RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: e.message)
     end
 
-    # One family's frame: its reach, then its slots. The title names the
-    # scope when the host plays the role at more than one — the Mac's org
-    # agent pool beside cellbound-3d's own slot — and is the bare role
-    # otherwise.
+    # One family's frame: its reach, then its slots. The title ends with
+    # the scope — `agent · 3 slots · d3mlabs` — because the scope is what
+    # `dev runner unregister` takes and nothing else on screen says it:
+    # the slot dirs are named from history (an org slot in a repo-named
+    # dir), and a lone family has no sibling to be told apart from.
     #
     # @param family [Dev::RunnerFamily]
-    # @param scoped [Boolean] whether another family of the same role is on the host
-    sig { params(family: RunnerFamily, scoped: T::Boolean).void }
-    def report_family(family, scoped:)
-      title = "#{family.role.name} · #{plural(family.slots.length, "slot")}"
-      title += " · #{family.scope}" if scoped
-      @ui.frame(title) do
+    sig { params(family: RunnerFamily).void }
+    def report_family(family)
+      @ui.frame("#{family.role.name} · #{plural(family.slots.length, "slot")} · #{family.scope}") do
         report_reach(family)
         report_slots(family)
       end
@@ -503,23 +504,42 @@ module Dev
 
     # Each slot's facts folded: slots whose facts read the same share one
     # line naming them; a slot that deviates is its own ✗ line, its dir
-    # beside its name.
+    # beside its name and its remedy. When every slot is red the family
+    # adds the one command that retires it whole — a red slot is as
+    # likely a slot to retire as one to repair, and the scope is the
+    # argument nothing else on the line names.
     #
     # @param family [Dev::RunnerFamily]
     sig { params(family: RunnerFamily).void }
     def report_slots(family)
-      family.slots.group_by { |slot| slot_verdict(slot, family) }.each do |(ok, text), slots|
+      verdicts = family.slots.group_by { |slot| slot_verdict(slot, family) }
+      verdicts.each do |(ok, text), slots|
         case ok
         when true then line(true, "#{slot_names(slots)} — #{text}")
-        when false then line(false, "#{slot_names(slots, dirs: true)} — #{text}")
+        when false then line(false, "#{slot_names(slots, dirs: true)} — #{text} (#{slot_remedy(slots)})")
         else unknown("#{slot_names(slots)} — #{text}")
         end
       end
+      return unless verdicts.keys.all? { |ok, _text| ok == false }
+
+      @ui.note("#{FACT_INDENT}every slot red — `dev runner unregister #{family.scope}` retires the family")
+    end
+
+    # A red slot line's remedy: register repairs, unregister with the
+    # slot's dir — the exact argument — retires. Several slots folded
+    # into one line each get their own unregister.
+    #
+    # @param slots [Array<Dev::RunnerFamily::Slot>] the red slots of one line
+    # @return [String]
+    sig { params(slots: T::Array[RunnerFamily::Slot]).returns(String) }
+    def slot_remedy(slots)
+      retire = slots.map { |slot| "`dev runner unregister #{slot.enrollment.display_dir}`" }.join(", ")
+      "re-run `dev runner register` to repair, or #{retire} to retire #{slots.length == 1 ? "it" : "them"}"
     end
 
     # One slot's facts as a verdict: `[true, …]` when every fact holds,
-    # `[false, …]` naming each finding with the remedy, `[nil, …]` when
-    # GitHub's half could not be read.
+    # `[false, …]` naming each finding (the remedy is the line's,
+    # slot_remedy), `[nil, …]` when GitHub's half could not be read.
     #
     # @param slot [Dev::RunnerFamily::Slot]
     # @param family [Dev::RunnerFamily]
@@ -543,7 +563,7 @@ module Dev
         end
       end
 
-      return [false, "#{findings.join("; ")} (re-run `dev runner register`)"] unless findings.empty?
+      return [false, findings.join("; ")] unless findings.empty?
       return [nil, (held + unknowns).join(" · ")] unless unknowns.empty?
 
       [true, held.join(" · ")]

@@ -130,6 +130,14 @@ module Dev
         @prompt.confirm(question, default: default)
       end
 
+      sig { override.params(question: String, options: T::Array[String]).returns(T.nilable(String)) }
+      def choose(question, options)
+        TerminalOwner.claim!("a prompt")
+        return nil unless @input.tty?
+
+        @prompt.ask(question, options: options)
+      end
+
       sig { override.params(text: String).void }
       def note(text)
         @cli_ui.puts(@cli_ui.fmt(text))

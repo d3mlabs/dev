@@ -73,6 +73,16 @@ class Dev::NoUiTest < Minitest::Test
     ui.confirm("Proceed?").nil?
   end
 
+  test "#choose never asks: nil, nothing written — nobody to pick" do
+    Given
+    out = StringIO.new
+    ui = Dev::NoUi.new(out:)
+
+    Expect
+    ui.choose("Which scope?", ["d3mlabs", "~/actions-runner"]).nil?
+    out.string.empty?
+  end
+
   test "the plain tier keeps the spinner's rule too: a child with inherited stdio under #spin is refused — so a test catches the misuse the terminal would (plans#52)" do
     Given
     ui = Dev::NoUi.new(out: StringIO.new)
