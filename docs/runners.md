@@ -61,7 +61,13 @@ Unreal editor enrolls one build host and has concurrency 1 by
 construction. `--org --labels <set>` makes a custom set an org pool
 instead.
 
-A build host for a **public** repo is refused: any of the repo's
+Scope fixes the first clause of a family's reach. A registration at the
+org lets a group fix which repos and which workflows reach the slots; a
+registration at a repo fixes the repos to that one and leaves the
+workflows open, whatever the role — a build host always, an agent family
+when one repo keeps slots of its own (cellbound-3d's on the Mac).
+
+Any role registered at a **public** repo is refused: any of the repo's
 workflows, an approved fork PR's included, could otherwise run on the
 host. Enroll for a private repo, or put the runners in a pinned group.
 
@@ -263,7 +269,9 @@ the brew prefix. It arrives through the org Brewfile on the prefix owner's
 The machine's view, framed by subject at a terminal and plain through a
 pipe: one frame for the **host**, then one per **role family** — this
 host's slots sharing a scope and a role (`agent · 3 slots`,
-`orchestrator · 10 slots`, `build-host · 1 slot`). Every line is a fact
+`orchestrator · 10 slots`, `build-host · 1 slot`; when the host plays one
+role at two scopes, the title names each — `agent · 3 slots · d3mlabs`
+beside `agent · 1 slot · d3mlabs/cellbound-3d`). Every line is a fact
 with a verdict (`✓`, `✗`, or `?` when GitHub could not be asked), and the
 box and a Mac render the same shape.
 
@@ -282,17 +290,19 @@ three clauses:
 ```text
 orchestrator · 2 slots
 ✓ reach: jobs from every d3mlabs repo
-         via d3mlabs/ai-flow/ai-commands.yml@main | d3mlabs/ai-flow/origin-firing.yml@main
+         via d3mlabs/ai-flow/ai-commands.yml@main, d3mlabs/ai-flow/origin-firing.yml@main only
          runs-on ai-orchestrator
 ✓ box-orchestrator, -2 — online · service installed · runs as runner
 ```
 
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
-printed only under a ✗, as the `cause:` of the drift, with the remedy
-(`re-run dev runner register --role agent from a checkout at d3mlabs`). A
-build host sitting in the unpinned `Default` group and an agent family
-whose group lost the ai-flow pin each render that way. Slot facts (online,
+printed only under a ✗, as the `cause:` line, with the remedy when a
+clause drifted (`re-run dev runner register --role agent from a checkout
+at d3mlabs`). A build host sitting in the unpinned `Default` group and an
+agent family whose group lost the ai-flow pin each render that way; a
+registration at a public repo renders as `exposed:` with the cause and no
+remedy, since the exposure sentence says what to do. Slot facts (online,
 service installed, who it runs as, the `_work` grant for agents) fold into
 one line while uniform, and a deviating slot breaks out on its own ✗ line
 with its directory and the findings.

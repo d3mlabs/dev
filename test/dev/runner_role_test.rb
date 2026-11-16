@@ -182,9 +182,9 @@ class Dev::RunnerRoleTest < Minitest::Test
 
   # --- reach: who may land a job on a slot of this role ----------------------
 
-  test "the agent's expected reach is the target repo, through the pinned workflows, on its labels" do
+  test "the agent's expected reach at its org is the target repo, through the pinned workflows, on its labels" do
     Given
-    target = Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: false)
+    target = Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: false, org_scoped: true)
 
     When
     reach = Dev::RunnerRole::AGENT.expected_reach(target)
@@ -198,7 +198,7 @@ class Dev::RunnerRoleTest < Minitest::Test
 
   test "the orchestrator's expected reach is every repo, through the pinned workflows" do
     When
-    reach = Dev::RunnerRole::ORCHESTRATOR.expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: true))
+    reach = Dev::RunnerRole::ORCHESTRATOR.expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: true, org_scoped: true))
 
     Then
     reach.repos == Dev::Reach::ALL
@@ -208,7 +208,7 @@ class Dev::RunnerRoleTest < Minitest::Test
 
   test "a build host's expected reach is its repo through any workflow — the one gate that cannot drift, since there is no group" do
     When
-    reach = Dev::RunnerRole.build_host(labels: ["snappy"]).expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: false))
+    reach = Dev::RunnerRole.build_host(labels: ["snappy"]).expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/snappy", public: false, org_scoped: false))
 
     Then
     reach.repos == Set["d3mlabs/snappy"]
@@ -216,12 +216,34 @@ class Dev::RunnerRoleTest < Minitest::Test
     !reach.pinned?
   end
 
+  test "an agent registered at a private repo (cellbound-3d's Mac slot) reaches that repo through any workflow: scope fixes the first clause, the role keeps its labels" do
+    Given
+    target = Dev::Reach::Target.new(repo: "d3mlabs/cellbound-3d", public: false, org_scoped: false)
+
+    When
+    reach = Dev::RunnerRole::AGENT.expected_reach(target)
+
+    Then
+    reach.repos == Set["d3mlabs/cellbound-3d"]
+    reach.workflows == Dev::Reach::ANY
+    reach.labels == Set.new(AGENT_LABELS)
+    !reach.pinned?
+  end
+
+  test "an agent registered at a public repo is refused like a build host: no group pins what may land on it" do
+    When
+    error = assert_raises(Dev::Reach::ExposedError) { Dev::RunnerRole::AGENT.expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/dev", public: true, org_scoped: false)) }
+
+    Then
+    error.message.include?("d3mlabs/dev is public and its agent runners")
+  end
+
   test "a build host for a public repo is refused: any workflow could land on it, and the message says so" do
     Given
     role = Dev::RunnerRole.build_host(labels: ["snappy"])
 
     When
-    error = assert_raises(Dev::Reach::ExposedError) { role.expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/dev", public: true)) }
+    error = assert_raises(Dev::Reach::ExposedError) { role.expected_reach(Dev::Reach::Target.new(repo: "d3mlabs/dev", public: true, org_scoped: false)) }
 
     Then
     error.message.include?("d3mlabs/dev is public")

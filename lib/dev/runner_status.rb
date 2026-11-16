@@ -178,7 +178,8 @@ module Dev
     def report
       families = RunnerFamily.of(@discovery.enrollments.map { |enrollment| slot_of(enrollment) })
       report_host(families)
-      families.each { |family| report_family(family) }
+      shared_roles = families.map { |family| family.role.name }.tally.select { |_name, count| count > 1 }.keys
+      families.each { |family| report_family(family, scoped: shared_roles.include?(family.role.name)) }
       @ui.note("No runners enrolled on this host (run `dev runner register`).") if families.empty?
       report_invocation(families)
       slots = families.sum { |family| family.slots.length }
@@ -240,12 +241,18 @@ module Dev
       RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: e.message)
     end
 
-    # One family's frame: its reach, then its slots.
+    # One family's frame: its reach, then its slots. The title names the
+    # scope when the host plays the role at more than one — the Mac's org
+    # agent pool beside cellbound-3d's own slot — and is the bare role
+    # otherwise.
     #
     # @param family [Dev::RunnerFamily]
-    sig { params(family: RunnerFamily).void }
-    def report_family(family)
-      @ui.frame("#{family.role.name} · #{plural(family.slots.length, "slot")}") do
+    # @param scoped [Boolean] whether another family of the same role is on the host
+    sig { params(family: RunnerFamily, scoped: T::Boolean).void }
+    def report_family(family, scoped:)
+      title = "#{family.role.name} · #{plural(family.slots.length, "slot")}"
+      title += " · #{family.scope}" if scoped
+      @ui.frame(title) do
         report_reach(family)
         report_slots(family)
       end
@@ -294,7 +301,7 @@ module Dev
       labels = Set.new(runner.custom_labels)
       unless family.org_scoped?
         observed = Reach.new(repos: Set[family.scope], workflows: Reach::ANY, labels: labels)
-        target = Reach::Target.new(repo: family.scope, public: @registry.repository(family.scope).public?)
+        target = Reach::Target.new(repo: family.scope, public: @registry.repository(family.scope).public?, org_scoped: false)
         return compare_reach(family.role, target, observed, ReachFact::RepoRegistration.new(repo: family.scope))
       end
 
@@ -304,7 +311,7 @@ module Dev
       repos = group.selected? ? Set.new(@registry.group_repositories(org: family.scope, group_id: group.id).map(&:full_name)) : Reach::ALL
       workflows = group.restricted_to_workflows ? Set.new(group.selected_workflows) : Reach::ANY
       observed = Reach.new(repos: repos, workflows: workflows, labels: labels)
-      target = Reach::Target.new(repo: org_target_repo(family, observed), public: false)
+      target = Reach::Target.new(repo: org_target_repo(family, observed), public: false, org_scoped: true)
       compare_reach(family.role, target, observed, ReachFact::GroupPlacement.new(group: group))
     end
 
@@ -367,7 +374,13 @@ module Dev
 
       exposure = fact.exposure
       clause("exposed: #{exposure}") if exposure
-      clause("cause: #{fact.fixed_by.evidence} — #{remedy(family)}") unless drift.empty?
+      return if fact.ok?
+
+      # The exposure sentence carries its own advice; a drift gets the
+      # register run that converges it.
+      cause = "cause: #{fact.fixed_by.evidence}"
+      cause += " — #{remedy(family)}" unless drift.empty?
+      clause(cause)
     end
 
     # @param observed [Dev::Reach]
@@ -415,18 +428,20 @@ module Dev
       labels.empty? ? "no label" : labels.to_a.join(" | ")
     end
 
-    # The register run that converges the family's reach.
+    # The register run that converges the family's reach: at the org for a
+    # pinned role's org family, at the repo for everything else — a build
+    # host found at the org included, since the role's reach is the repo
+    # registration's.
     #
     # @param family [Dev::RunnerFamily]
     # @return [String]
     sig { params(family: RunnerFamily).returns(String) }
     def remedy(family)
       role = family.role
-      if role.build_host?
-        "re-run `dev runner register` from the repo's checkout"
-      else
-        "re-run `dev runner register --role #{role.name}` from a checkout at #{family.org}"
-      end
+      flag = role.build_host? ? "" : " --role #{role.name}"
+      at_org = family.org_scoped? && role.org_scoped?
+      where = at_org ? "a checkout at #{family.org}" : "the repo's checkout"
+      "re-run `dev runner register#{flag}` from #{where}"
     end
 
     # --- slots ---------------------------------------------------------------

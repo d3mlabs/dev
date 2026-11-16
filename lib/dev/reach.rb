@@ -20,10 +20,13 @@ module Dev
     # unrestricted group).
     ANY = :any
 
-    # The repo a registration is for, and whether it is public.
+    # The repo a registration is for, whether it is public, and whether
+    # the registration is made at the repo's org — where a runner group
+    # fixes the reach — rather than at the repo itself.
     class Target < T::Struct
       const :repo, String
       const :public, T::Boolean
+      const :org_scoped, T::Boolean
     end
 
     # A runner that any workflow of a public repo could use: an approved

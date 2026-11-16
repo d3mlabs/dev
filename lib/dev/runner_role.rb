@@ -225,11 +225,13 @@ module Dev
     end
 
     # Who may land a job on a slot of this role, for a registration made
-    # for `target`. A pinned role reaches through its group's workflows:
-    # the agent from the group's selected repos, the orchestrator from
-    # every repo. A build host reaches its repo through any workflow, and
-    # is refused for a public repo: an approved fork PR's workflow could
-    # then run on the host.
+    # for `target`. Scope fixes the first clause: a pinned role registered
+    # at its org reaches through its group's workflows — the agent from the
+    # group's selected repos, the orchestrator from every repo. Any role
+    # registered at a repo — a build host always, a pinned role when the
+    # repo keeps slots of its own — reaches that repo through any of its
+    # workflows, and is refused for a public repo: an approved fork PR's
+    # workflow could then run on the host.
     #
     # @param target [Dev::Reach::Target]
     # @return [Dev::Reach]
@@ -237,7 +239,7 @@ module Dev
     sig { params(target: Reach::Target).returns(Reach) }
     def expected_reach(target)
       labels = Set.new(@labels)
-      if org_scoped?
+      if target.org_scoped && org_scoped?
         group = T.must(@group)
         repos = group.open? ? Reach::ALL : Set[target.repo]
         return Reach.new(repos: repos, workflows: Set.new(group.workflows), labels: labels)
@@ -245,7 +247,7 @@ module Dev
 
       if target.public
         raise Reach::ExposedError,
-          "#{target.repo} is public and a #{@name} runner would take jobs from any of its workflows — an approved fork PR's " \
+          "#{target.repo} is public and its #{@name} runners would take jobs from any of its workflows — an approved fork PR's " \
             "YAML could land on this host. Enroll for a private repo, or put the runners in a group " \
             "pinned to the workflows that may use them."
       end

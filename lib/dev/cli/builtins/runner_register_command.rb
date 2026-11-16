@@ -421,7 +421,7 @@ module Dev
           # (Reach): computed here so a build host for a public repo is
           # refused before anything converges. The comparison against what
           # GitHub holds is `dev runner status`'s.
-          role.expected_reach(Dev::Reach::Target.new(repo: repo, public: @registry.repository(repo).public?))
+          role.expected_reach(Dev::Reach::Target.new(repo: repo, public: @registry.repository(repo).public?, org_scoped: org))
 
           container = context.project&.project_images&.containerized? || false
           engine = context.project&.engine

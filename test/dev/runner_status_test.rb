@@ -379,8 +379,75 @@ class Dev::RunnerStatusTest < Minitest::Test
       [:note, "{{x}} reach: jobs from d3mlabs/dev", 1],
       [:note, "#{INDENT}via any workflow", 1],
       [:note, "#{INDENT}runs-on dev", 1],
-      [:note, "#{INDENT}exposed: d3mlabs/dev is public and a build-host runner would take jobs from any of its workflows — an approved fork PR's YAML could land on this host. Enroll for a private repo, or put the runners in a group pinned to the workflows that may use them.", 1],
+      [:note, "#{INDENT}exposed: d3mlabs/dev is public and its build-host runners would take jobs from any of its workflows — an approved fork PR's YAML could land on this host. Enroll for a private repo, or put the runners in a group pinned to the workflows that may use them.", 1],
     ]
+
+    # the mechanism is evidence under the ✗ too; the exposure carries its own advice, so no remedy follows it
+    ui.rows.include?([:note, "#{INDENT}cause: reach is fixed by the repo registration at d3mlabs/dev (its own workflows, no pin) — only an org registration in a group can widen or pin it", 1])
+  end
+
+  test "an agent family registered at a private repo (cellbound-3d's Mac slot): its reach is that repo through any workflow, and that is the role's expectation at repo scope — ✓" do
+    Given
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "mac-agent")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
+    registry = CannedRegistry.new(&responder)
+    status = build_status(ui: ui, home: home, registry: registry, executor: CannedStatusExecutor.new(capture_results: cooperative_work_trees(home, "actions-runner-cellbound3d")))
+
+    When
+    status.report
+
+    Then
+    rows_from(ui, "agent · 1 slot").take(4) == [
+      [:frame, "agent · 1 slot", 0],
+      [:note, "{{v}} reach: jobs from d3mlabs/cellbound-3d", 1],
+      [:note, "#{INDENT}via any workflow", 1],
+      [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
+    ]
+    ui.rows.none? { |_kind, text, _depth| text.include?("cause:") }
+    registry.group_asks.empty?
+  end
+
+  test "two families of one role on the host: each frame names its scope, so the reader needn't reach the from clause to tell them apart" do
+    Given "the Mac today: three org agent slots and cellbound-3d's repo-scoped agent slot"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    %w[mac-agent mac-agent-2 mac-agent-3].each_with_index { |name, i| write_runner(home, "actions-runner-agent#{"-#{i + 1}" if i > 0}", scope: "d3mlabs", name: name) }
+    write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs/cellbound-3d", name: "mac")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
+    registry = CannedRegistry.new(group: CannedRegistry::AI_FLOW_GROUP, repos: ["d3mlabs/dev"], &responder)
+    captures = cooperative_work_trees(home, "actions-runner-agent", "actions-runner-agent-2", "actions-runner-agent-3", "actions-runner-cellbound3d")
+    status = build_status(ui: ui, home: home, registry: registry, executor: CannedStatusExecutor.new(capture_results: captures))
+
+    When
+    status.report
+
+    Then
+    ui.rows.select { |kind, _text, _depth| kind == :frame }.map { |_kind, text, _depth| text }.drop(1) ==
+      ["agent · 3 slots · d3mlabs", "agent · 1 slot · d3mlabs/cellbound-3d"]
+  end
+
+  test "with the runner found but its group unqueryable, the reach is unknown — neither glyph — and the slot line still lands" do
+    Given "a registry that lists the runner and then fails on the group lookup"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "box-agent")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
+    registry = CannedRegistry.new(&responder)
+    registry.define_singleton_method(:group_of) { |org:, runner_id:| raise Dev::RunnerRegistry::QueryError, "HTTP 502 from api.github.com" }
+    status = build_status(ui: ui, home: home, registry: registry, executor: CannedStatusExecutor.new(capture_results: cooperative_work_trees(home, "actions-runner-agent")))
+
+    When
+    status.report
+
+    Then
+    rows_from(ui, "agent · 1 slot").take(3) == [
+      [:frame, "agent · 1 slot", 0],
+      [:note, "{{?}} reach: cannot tell — HTTP 502 from api.github.com", 1],
+      [:note, "{{v}} box-agent — online · service installed · runs as #{ME} · _work shared with group dev", 1],
+    ]
+    rows_from(ui, "agent · 1 slot").none? { |_kind, text, _depth| text.include?("{{x}}") }
   end
 
   test "an org slot no group lists has no reach: a ✗ with register as the remedy" do
