@@ -302,7 +302,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       [:note, "{{x}} reach: jobs from d3mlabs/dev", 1],
       [:note, "#{INDENT}via any workflow — the agent role expects #{PINS_CLAUSE}", 1],
       [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
-      [:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility selected, not restricted to workflows) — re-run `dev runner register --role agent` from a checkout at d3mlabs", 1],
+      [:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility selected, not restricted to workflows) — re-run `dev runner register --org --role agent` from a checkout at d3mlabs", 1],
     ]
   end
 
@@ -320,7 +320,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     ui.rows.include?([:note, "{{x}} reach: jobs from every d3mlabs repo — the agent role expects a selection", 1])
-    ui.rows.include?([:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility all, restricted to 2 workflows) — re-run `dev runner register --role agent` from a checkout at d3mlabs", 1])
+    ui.rows.include?([:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility all, restricted to 2 workflows) — re-run `dev runner register --org --role agent` from a checkout at d3mlabs", 1])
   end
 
   test "a build host found in an org group that pins workflows (dev#471): the via clause drifts and the group is named as the cause" do

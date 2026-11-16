@@ -10,9 +10,10 @@ gets warm.
 ```bash
 dev runner register                       # this repo's build host: repo scope, label = the repo name
 dev runner register --labels ue-engine    # a build host with custom labels
-dev runner register --role agent          # the org agent host (--ai-flow is the same)
-dev runner register --role agent --slots 3              # three jobs at once
-dev runner register --role orchestrator --slots 8       # the orchestrator pool
+dev runner register --org --role agent    # the org agent host (--ai-flow is the same)
+dev runner register --org --role agent --slots 3        # three jobs at once
+dev runner register --ai-flow --slots 2   # this repo's own agent slots
+dev runner register --org --role orchestrator --slots 8 # the orchestrator pool
 dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
@@ -53,14 +54,15 @@ is `--role x --labels y` (the role's labels are its declaration) and
 
 ### Scope
 
-A role whose group is pinned to workflows is **org-scoped**: every repo the
-group admits may send jobs, and `--org` is implied. `--repo-scope` keeps
-such a role at the repo instead, for a repo that wants agent slots of its
-own. A **build host** is its repo's: only that repo's jobs land on it. Use
-one when a repo needs its own hardware or its own concurrency cap — a repo
-whose jobs hold the one Unreal editor enrolls one build host and has
-concurrency 1 by construction. `--org --labels <set>` makes a custom set
-an org pool instead.
+Scope follows the checkout. Without `--org`, the slots are the repo's:
+only that repo's jobs land on them, for every role — a build host, or a
+repo that wants agent slots of its own. `--org` registers at the repo's
+org: an agent or orchestrator joins its pinned runner group there, and
+every repo the group admits may send jobs; `--org --labels <set>` makes a
+custom set an org pool. A **build host** is the repo-scoped default: use
+one when a repo needs its own hardware or its own concurrency cap — a
+repo whose jobs hold the one Unreal editor enrolls one build host and has
+concurrency 1 by construction.
 
 A repo owned by a **user account** is registered at the repo whatever the
 role. A user account has no runner groups, so there is no org to register
@@ -81,7 +83,7 @@ What a registration gets, by the repo's owner and visibility:
 
 | | Private repo | Public repo |
 |---|---|---|
-| **Organization** | A pinned role at the org, in its group (`--org` implied); or any role at the repo (`--repo-scope`, or a build host by default) | A pinned role at the org, in its group. Repo scope refused |
+| **Organization** | Any role at the repo (the default); a pinned role at the org, in its group (`--org`) | A pinned role at the org, in its group (`--org`). Repo scope refused |
 | **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners |
 
 ai-flow adopters: its README's *Choosing your runner setup* says which
@@ -314,8 +316,8 @@ orchestrator · 2 slots
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
 printed only under a ✗, as the `cause:` line, with the remedy when a
-clause drifted (`re-run dev runner register --role agent from a checkout
-at d3mlabs`). A build host sitting in the unpinned `Default` group and an
+clause drifted (`re-run dev runner register --org --role agent from a
+checkout at d3mlabs`). A build host sitting in the unpinned `Default` group and an
 agent family whose group lost the ai-flow pin each render that way; a
 registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,

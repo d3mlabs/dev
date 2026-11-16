@@ -170,9 +170,10 @@ module Dev
       @builtin
     end
 
-    # Whether the role's runners live at the org by construction: only a
-    # group can carry the workflow pin, so a pinned role is org-scoped
-    # because of the pin, not as an input.
+    # Whether the role has a pinned runner group of its own: registered at
+    # the org (`--org`), its runners join that group and the group's pin
+    # fixes which workflows reach them. Registered at a repo, the role is
+    # that repo's like any other.
     sig { returns(T::Boolean) }
     def org_scoped?
       group = @group

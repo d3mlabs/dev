@@ -37,13 +37,14 @@ module Dev
       #
       #   dev runner register                    # the repo's build host; label = the repo name
       #   dev runner register --labels ue-engine # a build host with custom capabilities
-      #   dev runner register --role agent       # org agent host, the full ai-flow set (--ai-flow)
-      #   dev runner register --role orchestrator --slots 4   # the thin pool
+      #   dev runner register --org --role agent # the org agent host, the full ai-flow set (--ai-flow)
+      #   dev runner register --org --role orchestrator --slots 4   # the thin pool
       #   dev runner register --role ue-farm     # a role dev.yml declares under runner_roles:
       #
-      # The role decides the scope: a role with a pinned group is org-scoped,
-      # a build host is its repo's unless `--org` makes a `--labels` set an
-      # org pool. A build host for a public repo is refused
+      # Scope follows the checkout: a registration is the repo's unless
+      # `--org` puts it at the repo's org, where a pinned role joins its
+      # group. A repo owned by a user account has no org and `--org` is
+      # refused there. Any role at a public repo at repo scope is refused
       # (Reach::ExposedError). `--slots N` enrolls N runners with the same
       # labels; re-running keeps the count it finds, a smaller N retires the
       # surplus after asking. A family is `(scope, host, role)`, and
@@ -86,7 +87,6 @@ module Dev
         class RegistrationHeldError < RuntimeError; end
 
         ORG_FLAG = "--org"
-        REPO_SCOPE_FLAG = "--repo-scope"
         ROLE_FLAG = "--role"
         LABELS_FLAG = "--labels"
         AI_FLOW_FLAG = "--ai-flow"
@@ -237,15 +237,15 @@ module Dev
               <dev.yml>     a role this repo declares under runner_roles:
                             (`ue-farm: { labels: [ue, gpu] }`), enrolled with --role ue-farm.
 
-            agent and orchestrator are org-scoped (only a group carries the workflow
-            pin); --org is implied, and --repo-scope keeps them at this repo instead
-            (the repo's jobs through any of its workflows, no group). A build host is
-            its repo's unless --org makes a --labels set an org pool. A dev.yml role
-            is always its repo's. A repo owned by a user account is registered at the
-            repo whatever the role: a user account has no runner groups. --role x with
-            no declaration, or together with --labels, is refused; so is any role at
-            repo scope for a PUBLIC repo, since any of its workflows — a fork PR's
-            included — could then run on this host.
+            Scope follows the checkout: without --org the slots are this repo's — its
+            jobs through any of its workflows, no runner group — for every role. --org
+            puts them at the repo's org: agent and orchestrator join their pinned group
+            (the group carries the workflow pin), --labels makes a custom set an org
+            pool. A dev.yml role is always its repo's. A repo owned by a user account
+            has no org, so --org is refused there. --role x with no declaration, or
+            together with --labels, is refused; so is any role at repo scope for a
+            PUBLIC repo, since any of its workflows — a fork PR's included — could
+            then run on this host.
 
             Runner names are <hostname>-<role>[-n] (JPSFF-agent, JPSFF-agent-2, beside
             JPSFF-orchestrator…), the bare hostname for a build host; dirs are
@@ -358,10 +358,11 @@ module Dev
             Examples:
               dev runner register                      # this repo's build host: repo scope, label = the repo name, named <hostname>
               dev runner register --labels ue-engine   # a build host with custom capabilities
-              dev runner register --role agent         # the org agent host, the full ai-flow set, named <hostname>-agent (--ai-flow is the same)
+              dev runner register --org --role agent   # the org agent host, the full ai-flow set, named <hostname>-agent (--ai-flow is the same)
               dev runner register --org --labels ai-build      # an agent host advertising a subset
-              dev runner register --role agent --slots 3       # three jobs at once; this repo may use them
-              dev runner register --role orchestrator --slots 4   # the orchestrator pool, on an always-on thin box
+              dev runner register --org --role agent --slots 3 # three jobs at once; this repo may use them
+              dev runner register --ai-flow --slots 2          # this repo's own agent slots, no group
+              dev runner register --org --role orchestrator --slots 4   # the orchestrator pool, on an always-on thin box
               dev runner register --role ue-farm               # a role this repo's dev.yml declares (runner_roles:)
               dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
           DESC
@@ -375,9 +376,8 @@ module Dev
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
           [
-            Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org): implied by the agent and orchestrator roles; with --labels, an org pool instead of this repo's runner"),
-            Cli::Flag.new(REPO_SCOPE_FLAG, desc: "enroll a pinned role (agent, orchestrator) at this repo instead of its org: the repo's jobs through any of its workflows, no runner group; refused for a public repo"),
-            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: #{RunnerRole::BUILTINS.keys.join(" | ")} (builtin; org-scoped, named <host>-<role>), or a role dev.yml declares under runner_roles:; default: this repo's build host"),
+            Cli::Flag.new(ORG_FLAG, desc: "enroll at the repo's org (needs admin:org): agent and orchestrator join their pinned group there; with --labels, an org pool instead of this repo's runner. Without it the slots are this repo's"),
+            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: #{RunnerRole::BUILTINS.keys.join(" | ")} (builtin, named <host>-<role>), or a role dev.yml declares under runner_roles:; default: this repo's build host"),
             Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels for a build host; default: the repo's name. An agent or orchestrator label is that role's sugar"),
             Cli::Flag.new(AI_FLOW_FLAG, desc: "--role #{RunnerRole::AGENT_NAME}: the agent host's ai-flow label set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); the orchestrator pool is --role #{RunnerRole::ORCHESTRATOR_NAME}"),
             Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
@@ -404,7 +404,7 @@ module Dev
           role = resolve_role(args, context, resolve_repo)
           repo = resolve_repo.call
           repository = @registry.repository(repo)
-          org = resolve_org(role, args, repository)
+          org = resolve_org(args, repository)
           slots = resolve_slots(args)
           # The group is an org-side contract: a pinned role registered at
           # its repo joins none.
@@ -983,36 +983,23 @@ module Dev
         # project. `--role x --labels y`, `--org` with a dev.yml role, and
         # `--group` with a pinned role are refused.
         #
-        # Whether the registration is made at the org. A pinned role's is,
-        # and `--org` makes a `--labels` set an org pool; `--repo-scope`
-        # keeps a pinned role at its repo (a repo with agent slots of its
-        # own). A repo owned by a user account is registered at the repo
-        # whatever the role: a user account has no runner groups, so there
-        # is nothing to register at, and `--org` is refused there.
+        # Whether the registration is made at the org: `--org` says so, for
+        # any role. A repo owned by a user account has no org — a user
+        # account has no runner groups, so there is nothing to register at
+        # — and `--org` is refused there.
         #
-        # @param role [Dev::RunnerRole]
         # @param args [Cli::ParsedArgs]
         # @param repository [Dev::RunnerRegistry::Repository] the repo this registration is for
         # @return [Boolean]
-        # @raise [ArgumentError] when the flags contradict each other or the owner
-        sig { params(role: RunnerRole, args: Cli::ParsedArgs, repository: RunnerRegistry::Repository).returns(T::Boolean) }
-        def resolve_org(role, args, repository)
-          repo_scope = args.flag?(REPO_SCOPE_FLAG)
-          org_flag = args.flag?(ORG_FLAG)
-          raise ArgumentError, "#{REPO_SCOPE_FLAG} keeps the slots at the repo and #{ORG_FLAG} puts them at the org — pass one" if repo_scope && org_flag
+        # @raise [ArgumentError] when `--org` names a user account's repo
+        sig { params(args: Cli::ParsedArgs, repository: RunnerRegistry::Repository).returns(T::Boolean) }
+        def resolve_org(args, repository)
+          org = args.flag?(ORG_FLAG)
+          return org unless org && repository.user_owned?
 
-          if repository.user_owned?
-            owner = T.must(repository.full_name.split("/").first)
-            if org_flag
-              raise ArgumentError,
-                "#{owner} is a user account: it has no runner groups, so the registration is #{repository.full_name}'s — drop #{ORG_FLAG}"
-            end
-            return false
-          end
-
-          return false if repo_scope
-
-          role.org_scoped? || org_flag
+          owner = T.must(repository.full_name.split("/").first)
+          raise ArgumentError,
+            "#{owner} is a user account: it has no runner groups, so the registration is #{repository.full_name}'s — drop #{ORG_FLAG}"
         end
 
         # @param args [Cli::ParsedArgs]

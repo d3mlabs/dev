@@ -146,7 +146,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
     command.flags.map(&:name) == [
-      "--org", "--repo-scope", "--role", "--labels", "--ai-flow", "--slots", "--group",
+      "--org", "--role", "--labels", "--ai-flow", "--slots", "--group",
       "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"
     ]
   end
@@ -1177,13 +1177,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings == []
   end
 
-  test "--repo-scope registers a pinned role at an org repo instead of at the org: no group converged, the setup wired repo-scoped" do
-    Given "cellbound-3d keeps an agent slot of its own on this host"
+  test "--role agent without --org from an org repo's checkout registers at the repo: no org probe, no group converged, the setup wired repo-scoped" do
+    Given "cellbound-3d keeps an agent slot of its own on this host; the org probe would be refused if made"
     registry = FakeRegistry.new(refused: ["d3mlabs"])
     harness = build_harness(registry: registry, scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts: 1)
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--role", "agent", "--repo-scope"]), context: harness.projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent"]), context: harness.projectless_context)
 
     Then
     config, _repo, org, _as, _ui = harness.wirings.last
@@ -1193,27 +1193,13 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
   end
 
-  test "--repo-scope with --org is a usage error" do
-    Given
-    harness = build_harness
-
-    When
-    harness.command.call(args: parsed_args(harness.command, ["--org", "--repo-scope", "--role", "agent"]), context: harness.projectless_context)
-
-    Then
-    error = raises ArgumentError
-    error.message.include?("--repo-scope")
-    error.message.include?("--org")
-    harness.wirings == []
-  end
-
   test "a pinned role at a public repo at repo scope is refused like a build host, and the refusal names the scope rules" do
     Given
     dev = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public")
     harness = build_harness(registry: FakeRegistry.new(repositories: { "d3mlabs/dev" => dev }), scope: "d3mlabs/dev", repo: "d3mlabs/dev")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--ai-flow", "--repo-scope"]), context: harness.projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.projectless_context)
 
     Then
     error = raises Dev::Reach::ExposedError
@@ -1321,7 +1307,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
 
   # --- roles: declare the role, derive the labels and the scope ---
 
-  test "--ai-flow without --org is still the agent role, and the agent is org-scoped because of its pin: enrolled at the org, no exclusivity question" do
+  test "--org --ai-flow is the agent role at the org: enrolled there, in the pinned group, no exclusivity question for a repo the group already selects" do
     Given "a checkout whose repo is among the ai-flow group's repos"
     registry = FakeRegistry.new(
       groups: { ["d3mlabs", "ai-flow"] => FakeRegistry.group(id: 7, name: "ai-flow", pinned: true) },
@@ -1331,7 +1317,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.ui.expects(:confirm).never
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--ai-flow"]), context: harness.build_context(name: "Cellbound3D"))
 
     Then "the setup was wired at the org; the repo stays in the group"
     harness.wirings.first[2] == true
@@ -1340,12 +1326,12 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     !harness.out.string.include?("may also use")
   end
 
-  test "--role #{name} is the builtin role, org-scoped, named <host>-#{name}" do
+  test "--org --role #{name} is the builtin role at the org, named <host>-#{name}" do
     Given
     harness = build_harness(scope: "d3mlabs", hostname: "mac1")
 
     When
-    harness.command.call(args: parsed_args(harness.command, ["--role", name]), context: harness.projectless_context)
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--role", name]), context: harness.projectless_context)
 
     Then
     harness.wirings.first.first.role == role
@@ -1730,7 +1716,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc.include?("trust the deployment's tap")
     desc.include?("sudo -iu runner brew")
     desc.include?("/etc/profile.d/linuxbrew.sh")
-    desc.include?("dev runner register --role agent")
+    desc.include?("dev runner register --org --role agent")
     desc.include?("GITHUB_TOKEN")
   end
 
