@@ -90,6 +90,13 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  skips), a checkout's pins and gems are whoever runs `dev up` there
  (a human through the owner with their password, the agent never).
  → .cursor/skills/learnings/state-kind-before-identity-rule/
+- [architecture/converge-gates-on-the-inspector] A register / `dev up`
+ step that has a `dev runner status` inspector is gated on that same
+ method and converges everything it reads — never a proxy (one group
+ name, a mode assumed from provisioning); a verb that may skip returns
+ what it did, and the summary above it reads that, so register's ✓ and
+ status's ✗ never meet on one fact.
+ → .cursor/skills/learnings/converge-gates-on-the-inspector/
 
 ## toolchain
 
