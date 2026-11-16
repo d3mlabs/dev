@@ -23,6 +23,13 @@ module Dev
     # What the container service injects (`-e DEV_INSIDE_CONTAINER=1`).
     MARKER_ENV = T.let({ MARKER => "1" }.freeze, T::Hash[String, String])
 
+    # The two sides' names, as store keys carry them (TreeKey#platform):
+    # per-project state built for one interpreter on one OS/arch (a venv, a
+    # gem home) gets one tree per side, because a Linux host bind-mounts its
+    # data root into the container at the same path.
+    HOST_SIDE = "host"
+    CONTAINER_SIDE = "container"
+
     class << self
       extend T::Sig
 
@@ -34,6 +41,15 @@ module Dev
       sig { params(env: T::Hash[String, String]).returns(T::Boolean) }
       def inside?(env = ENV.to_h)
         env[MARKER] == "1"
+      end
+
+      # The name of one side of the build container, this dev's by default.
+      #
+      # @param inside [Boolean] whether the side is the container's
+      # @return [String] HOST_SIDE or CONTAINER_SIDE
+      sig { params(inside: T::Boolean).returns(String) }
+      def side(inside: inside?)
+        inside ? CONTAINER_SIDE : HOST_SIDE
       end
     end
   end

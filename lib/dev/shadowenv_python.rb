@@ -55,9 +55,6 @@ module Dev
     # The marker a venv carries once built and pip-bootstrapped: the proof
     # the store reads on the next activation.
     MARKER_FILE = ".dev-venv"
-    # The side segment of a venv's store path (TreeKey#platform).
-    HOST_SIDE = "host"
-    CONTAINER_SIDE = "container"
 
     module_function
 
@@ -85,7 +82,7 @@ module Dev
     def venv_key(project_name:, keg:, inside: ContainerContext.inside?)
       Deps::TreeKey.new(
         base: "#{VENVS_ROOT}/#{project_name}",
-        platform: inside ? CONTAINER_SIDE : HOST_SIDE,
+        platform: ContainerContext.side(inside:),
         version: keg.basename.to_s,
         marker: MARKER_FILE,
       )

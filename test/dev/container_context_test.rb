@@ -27,6 +27,32 @@ class Dev::ContainerContextTest < Minitest::Test
     Dev::ContainerContext.inside?(Dev::ContainerContext::MARKER_ENV)
   end
 
+  test "side names the #{expected} side of the build container, as store keys carry it" do
+    Expect
+    Dev::ContainerContext.side(inside: inside) == expected
+
+    Where
+    inside | expected
+    false  | "host"
+    true   | "container"
+  end
+
+  test "side defaults to the process's own side" do
+    Given "the marker set in ENV"
+    original = ENV["DEV_INSIDE_CONTAINER"]
+    ENV["DEV_INSIDE_CONTAINER"] = "1"
+
+    Expect "the default argument reads it as the container's"
+    Dev::ContainerContext.side == Dev::ContainerContext::CONTAINER_SIDE
+
+    Cleanup
+    if original.nil?
+      ENV.delete("DEV_INSIDE_CONTAINER")
+    else
+      ENV["DEV_INSIDE_CONTAINER"] = original
+    end
+  end
+
   test "inside? defaults to the process environment" do
     Given "the marker set in ENV"
     original = ENV["DEV_INSIDE_CONTAINER"]
