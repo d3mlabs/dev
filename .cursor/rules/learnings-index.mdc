@@ -31,6 +31,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [process/ai-flow-gitlink-exclusion] Commit sweeps (`git add -A`) must
   exclude nested-checkout gitlinks such as `.ai-flow`.
   → .cursor/skills/learnings/ai-flow-gitlink-exclusion/
+- [process/two-identity-rule] In a workflow, a job's own identity runs
+ `dev up` (`uses: d3mlabs/dev/up@main`); a non-owning identity on a host
+ someone else converged runs `dev deps install` — pick the verb by the
+ identity, not by the precedent copied.
+ → skill: two-identity-rule (ships in dev's share/cursor-skills; linked
+ machine-wide by `dev up` / `dev deps install`)
 
 ## architecture
 
