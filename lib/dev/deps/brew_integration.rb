@@ -184,13 +184,16 @@ module Dev
       # (`-n`) with no NOPASSWD rule for the owner's brew; a rule without
       # SETENV for the assignments; at a terminal, a caller sudoers does
       # not know, or one who could not answer the prompt.
+      # sudo's words for a prompt answered wrongly: the one refusal whose
+      # fix is to retype, not to find a sudoer.
+      PASSWORD_REFUSAL = "incorrect password attempt"
       SUDO_REFUSALS = T.let(
         [
           "a password is required",
           "not allowed to set the following environment variables",
           "is not in the sudoers file",
           "is not allowed to execute",
-          "incorrect password attempt",
+          PASSWORD_REFUSAL,
         ].freeze,
         T::Array[String],
       )
@@ -841,16 +844,16 @@ module Dev
         return if success
 
         command = "brew #{args.join(" ")}"
-        raise InstallError, refused_escalation_message(command) if sudo_refused?(err)
+        raise InstallError, refused_escalation_message(command, err) if sudo_refused?(err)
 
         raise InstallError, "#{command} failed: #{err}"
       end
 
       # What a refused escalation means, by the caller's shape. At a
-      # terminal, sudo asked and was not satisfied: the caller is no sudoer
-      # on this host, or could not answer — a project's pins are converged
-      # through the owner's brew with the caller's own password, so the
-      # remedy is a sudoer's `dev up`. Headless, this user holds no rule to
+      # terminal, sudo asked and was not satisfied — the password was
+      # wrong (retype it), or the caller is no sudoer on this host (a
+      # sudoer's `dev up`); sudo has already said which, so the message
+      # only names the fix. Headless, this user holds no rule to
       # run the owner's brew, and dev converges none — the agent writes no
       # prefix, so the pin is the prefix owner's to converge (the
       # dispatcher's `dev deps install` before the job) and the job reports
@@ -858,14 +861,17 @@ module Dev
       # register remedy: register retires such a rule, it does not write one.
       #
       # @param command [String] the brew write, e.g. "brew install cmake"
+      # @param err [String] the write's stderr, sudo's refusal in it
       # @return [String]
-      sig { params(command: String).returns(String) }
-      def refused_escalation_message(command)
+      sig { params(command: String, err: String).returns(String) }
+      def refused_escalation_message(command, err)
         owner = escalation.last
         if @tty
-          return "#{command} needs the prefix owner (#{owner}) and sudo refused — a project's pins are converged " \
-            "through the owner's brew with your password, so this takes sudo on this host: have a sudoer run " \
-            "`dev up` in this checkout"
+          if err.include?(PASSWORD_REFUSAL)
+            return "#{command} runs as #{owner} and your password was not accepted — re-run `dev up` and retype it"
+          end
+
+          return "#{command} runs as #{owner} and you cannot sudo on this host — have a sudoer run `dev up` in this checkout"
         end
 
         "#{command} needs the prefix owner (#{owner}) and sudo -n was refused — this user holds no brew edge, by " \
@@ -989,8 +995,9 @@ module Dev
       # Remediation appended to escalated tap failures: the two facts that
       # break them — a path the owner cannot read, and a refused sudo,
       # which reads by the caller's shape as #refused_escalation_message
-      # does: a sudoer's `dev up` at a terminal, the agent's `WANTED:`
-      # posture headless.
+      # does (the tap streams, so its stderr is above, not here): a retyped
+      # password or a sudoer's `dev up` at a terminal, the agent's
+      # `WANTED:` posture headless.
       #
       # @return [String] "" when not escalated
       sig { returns(String) }
@@ -999,8 +1006,8 @@ module Dev
         return "" unless owner
 
         if @tty
-          return " (escalated to the brew prefix owner #{owner}: any local tap path must be readable by them, and " \
-            "the write takes sudo on this host with your password — refused, have a sudoer run `dev up` here)"
+          return " (escalated to the brew prefix owner #{owner}: any local tap path must be readable by them; if sudo " \
+            "refused, retype your password or have a sudoer run `dev up` here)"
         end
 
         " (escalated to the brew prefix owner #{owner}: any local tap path must be readable by them; a sudo " \

@@ -1018,7 +1018,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "at a terminal, a refused sudo (#{shape}) names a sudoer's `dev up` as the remedy — never the agent's WANTED posture, never a register" do
+  test "at a terminal, a refused sudo (#{shape}) names the fix — #{remedy} — never the agent's WANTED posture, never a register" do
     Given "an unwritable prefix, a terminal, and a sudo that refuses the caller: #{shape}"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
@@ -1038,11 +1038,11 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     When "installing"
     integration.install_all([legacy_cmake_pin("4.3.4")])
 
-    Then "the failure is the refusal shape, with the human's remedy"
+    Then "the failure names the owner and the one fix, nothing to explain"
     error = raises Dev::Deps::Integration::PartialInstallError
     message = error.failures.fetch(0).fetch(1).message
-    message.include?("brew install cmake needs the prefix owner (#{owner}) and sudo refused")
-    message.include?("have a sudoer run `dev up` in this checkout")
+    message.include?("brew install cmake runs as #{owner}")
+    message.include?(remedy)
     !message.include?("WANTED:")
     !message.include?("dev runner register")
 
@@ -1051,10 +1051,10 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
 
     Where
-    shape                     | refusal
-    "the prompt unanswered"   | "sudo: 3 incorrect password attempts\n"
-    "no sudoer"               | "#{Etc.getpwuid(Process.uid).name} is not in the sudoers file.\n"
-    "no rule for the command" | "Sorry, user #{Etc.getpwuid(Process.uid).name} is not allowed to execute '/x/brew' as root on host.\n"
+    shape                     | refusal                                                                                                 | remedy
+    "a mistyped password"     | "sudo: 3 incorrect password attempts\n"                                                                 | "your password was not accepted — re-run `dev up` and retype it"
+    "no sudoer"               | "#{Etc.getpwuid(Process.uid).name} is not in the sudoers file.\n"                                       | "you cannot sudo on this host — have a sudoer run `dev up` in this checkout"
+    "no rule for the command" | "Sorry, user #{Etc.getpwuid(Process.uid).name} is not allowed to execute '/x/brew' as root on host.\n" | "you cannot sudo on this host — have a sudoer run `dev up` in this checkout"
   end
 
   test "an escalated write keeps brew in sudo's command position: assignments go to sudo, no env, the executable by path" do
@@ -1275,7 +1275,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Then "the error names the owner and the human's remedy"
     error.message.include?("escalated to the brew prefix owner #{owner}")
-    error.message.include?("have a sudoer run `dev up` here")
+    error.message.include?("retype your password or have a sudoer run `dev up` here")
     !error.message.include?("WANTED:")
     !error.message.include?("dev runner register")
 

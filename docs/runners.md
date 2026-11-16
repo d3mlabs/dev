@@ -213,8 +213,13 @@ After the handover, package work by hand on that host is `sudo -iu runner
 brew …`. Your own `dev up` in a checkout there does two different things
 with brew. The host half — dev's self-update and the org Brewfile — is
 skipped silently: it is host state the jobs converge on their next run.
-The checkout's pins (`dependencies.rb`) are project state nobody
-converges for you, so `dev up` installs them through the runner user's
+To converge it by hand — to test a release before the next job, or to
+repair the box — run `dev up` as the prefix's owner, outside any
+checkout: `sudo -iu runner dev up` (`runner` unless register ran with
+`--as`). `dev up` is the upgrade — brew's update and the scoped
+upgrade of dev itself — so there is no `brew upgrade` to type. The
+checkout's pins (`dependencies.rb`) are project state nobody converges
+for you, so your own `dev up` installs them through the runner user's
 brew, asking your password once (`sudo -u runner <prefix>/bin/brew …`);
 no sudoers line is written for it — a sudoer gains nothing from one, and
 dev builds no new grant. Without a terminal the same write runs `sudo -n`
