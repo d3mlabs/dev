@@ -686,7 +686,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     pinner.stubs(:restore!)
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
-      tap_pinner: pinner,
+      tap_pinner: pinner, tty: false,
     )
     integration.stubs(:brew_installed?).returns(true)
     brew_lists_cmake("4.4.4", "4.4.5")
@@ -950,8 +950,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "brew writes escalate to the prefix owner when the prefix is not writable" do
-    Given "an integration whose brew prefix is owned read-only"
+  test "headless, brew writes escalate to the prefix owner with sudo -n when the prefix is not writable" do
+    Given "an integration whose brew prefix is owned read-only, and no terminal"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
@@ -960,7 +960,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: dir),
-      brew_prefix: prefix,
+      brew_prefix: prefix, tty: false,
     )
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
@@ -983,6 +983,80 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # dev#570: the operator's `dev up` on a Linux build host meets a prefix
+  # that is the runner user's by rule (dev#337). Project pins are the
+  # operator's own `dev up` to converge — no job converges their checkout
+  # — so at a terminal the escalation asks for their password instead of
+  # refusing with `-n`. No sudoers line is written for it: a sudoer gains
+  # nothing from one, and dev builds no new grant.
+  test "at a terminal, an escalated write asks the caller's password: sudo -u <owner>, no -n" do
+    Given "an unwritable prefix and a human at the terminal"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    ui = RecordingUi.new
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      tty: true, ui: ui,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!).returns(false)
+    Open3.expects(:capture3)
+         .with("sudo", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
+         .returns(["", "", stub(success?: true)])
+
+    When "installing"
+    integration.install_all([legacy_cmake_pin("4.3.4")])
+
+    Then "sudo may prompt (Mocha-verified argv), and the write is a step naming whose brew it is, since sudo owns the terminal"
+    ui.rows == [[:step, "Installing cmake (sudo -u #{owner})", 0]]
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "at a terminal, a refused sudo (#{shape}) names a sudoer's `dev up` as the remedy — never the agent's WANTED posture, never a register" do
+    Given "an unwritable prefix, a terminal, and a sudo that refuses the caller: #{shape}"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      tty: true,
+    )
+    integration.stubs(:brew_installed?).returns(false)
+    integration.stubs(:verify_installed!).returns(false)
+    Open3.stubs(:capture3)
+         .with("sudo", "-u", owner, cache_assignment(dir), owner_brew(prefix), "install", "cmake")
+         .returns(["", refusal, stub(success?: false)])
+
+    When "installing"
+    integration.install_all([legacy_cmake_pin("4.3.4")])
+
+    Then "the failure is the refusal shape, with the human's remedy"
+    error = raises Dev::Deps::Integration::PartialInstallError
+    message = error.failures.fetch(0).fetch(1).message
+    message.include?("brew install cmake needs the prefix owner (#{owner}) and sudo refused")
+    message.include?("have a sudoer run `dev up` in this checkout")
+    !message.include?("WANTED:")
+    !message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+
+    Where
+    shape                     | refusal
+    "the prompt unanswered"   | "sudo: 3 incorrect password attempts\n"
+    "no sudoer"               | "#{Etc.getpwuid(Process.uid).name} is not in the sudoers file.\n"
+    "no rule for the command" | "Sorry, user #{Etc.getpwuid(Process.uid).name} is not allowed to execute '/x/brew' as root on host.\n"
+  end
+
   test "an escalated write keeps brew in sudo's command position: assignments go to sudo, no env, the executable by path" do
     Given "an unwritable prefix and a pinned-taps install, the longest environment a write carries"
     dir = Dir.mktmpdir("dev-brew-int-test-")
@@ -994,7 +1068,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     pinner.stubs(:pin!)
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
-      pin_taps: true, tap_pinner: pinner,
+      pin_taps: true, tap_pinner: pinner, tty: false,
     )
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!).returns(false)
@@ -1022,6 +1096,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     owner = Etc.getpwuid(File.stat(prefix).uid).name
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      tty: false,
     )
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!).returns(false)
@@ -1048,8 +1123,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
   # dev#569: no host grants the agent a brew edge, so a refusal is the
   # posture — the pin is the owner's to converge, the job reports a
   # WANTED — and never a missing sudoers line register would write.
-  test "a sudo refusal names the WANTED posture, not a sudoers edge to re-converge" do
-    Given "an unwritable prefix and a sudo -n that refuses (no sudoers edge)"
+  test "headless, a sudo refusal names the WANTED posture, not a sudoers edge to re-converge" do
+    Given "an unwritable prefix, no terminal, and a sudo -n that refuses (no sudoers edge)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
@@ -1058,7 +1133,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: dir),
-      brew_prefix: prefix,
+      brew_prefix: prefix, tty: false,
     )
     deps = [
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build,
@@ -1091,8 +1166,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "tap registration escalates with the same prefix-owner rule" do
-    Given "a remote tap and an unwritable brew prefix"
+  test "tap registration escalates with the same prefix-owner rule, in the caller's shape — #{shape}" do
+    Given "a remote tap and an unwritable brew prefix, #{shape}"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
@@ -1102,21 +1177,26 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: dir),
-      taps: [tap], project_dir: dir, brew_prefix: prefix,
+      taps: [tap], project_dir: dir, brew_prefix: prefix, tty: tty,
     )
     integration.expects(:system)
-               .with("sudo", "-n", "-u", owner, owner_brew(prefix), "tap", "org/tap", "https://github.com/org/homebrew-tap")
+               .with("sudo", *sudo_options, "-u", owner, owner_brew(prefix), "tap", "org/tap", "https://github.com/org/homebrew-tap")
                .returns(true)
 
     When "installing all (no deps, taps only)"
     integration.install_all([])
 
-    Then "brew tap ran through sudo -n as the prefix owner (Mocha-verified)"
+    Then "brew tap ran through sudo as the prefix owner, -n only headless (Mocha-verified)"
     true
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
     FileUtils.rm_rf(dir)
+
+    Where
+    shape           | tty   | sudo_options
+    "headless"      | false | ["-n"]
+    "at a terminal" | true  | []
   end
 
   test "a URL-less tap registers by name alone and a failure raises without the escalation hint" do
@@ -1143,8 +1223,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "an escalated tap failure carries the owner's name and the WANTED posture, never a register" do
-    Given "a URL-less tap and an unwritable brew prefix, where the escalated brew tap fails"
+  test "a headless escalated tap failure carries the owner's name and the WANTED posture, never a register" do
+    Given "a URL-less tap, an unwritable brew prefix and no terminal, where the escalated brew tap fails"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
@@ -1154,7 +1234,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     integration = Dev::Deps::BrewIntegration.new(
       repository: Dev::Deps::BrewRepository.new,
       store: Dev::Deps::LocalStore.new(data_root: dir),
-      taps: [tap], project_dir: dir, brew_prefix: prefix,
+      taps: [tap], project_dir: dir, brew_prefix: prefix, tty: false,
     )
     integration.stubs(:system).with("sudo", "-n", "-u", owner, owner_brew(prefix), "tap", "org/tap").returns(false)
 
@@ -1166,6 +1246,37 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     Then "the error names the owner the write was escalated to and the WANTED line to report"
     error.message.include?("escalated to the brew prefix owner #{owner}")
     error.message.include?("`WANTED: brew tap <tap> as #{owner} — <what needed it>`")
+    !error.message.include?("dev runner register")
+
+    Cleanup
+    FileUtils.chmod(0o755, prefix)
+    FileUtils.rm_rf(dir)
+  end
+
+  test "an escalated tap failure at a terminal names a sudoer's `dev up`, not the WANTED posture" do
+    Given "a URL-less tap, an unwritable brew prefix and a terminal, where the escalated brew tap fails"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    FileUtils.mkdir_p(prefix)
+    FileUtils.chmod(0o555, prefix)
+    owner = Etc.getpwuid(File.stat(prefix).uid).name
+    tap = Dev::Deps::Tap.new(name: "org/tap")
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new,
+      store: Dev::Deps::LocalStore.new(data_root: dir),
+      taps: [tap], project_dir: dir, brew_prefix: prefix, tty: true,
+    )
+    integration.stubs(:system).with("sudo", "-u", owner, owner_brew(prefix), "tap", "org/tap").returns(false)
+
+    When "installing all (no deps, taps only)"
+    error = assert_raises(Dev::Deps::BrewIntegration::TapRegistrationError) do
+      integration.install_all([])
+    end
+
+    Then "the error names the owner and the human's remedy"
+    error.message.include?("escalated to the brew prefix owner #{owner}")
+    error.message.include?("have a sudoer run `dev up` here")
+    !error.message.include?("WANTED:")
     !error.message.include?("dev runner register")
 
     Cleanup
@@ -1611,7 +1722,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     owner = Etc.getpwuid(File.stat(prefix).uid).name
     ui = RecordingUi.new
     integration = Dev::Deps::BrewIntegration.new(
-      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix, ui: ui,
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+      tty: false, ui: ui,
     )
     integration.stubs(:brew_installed?).returns(false)
     integration.stubs(:verify_installed!).returns(false)

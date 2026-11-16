@@ -49,6 +49,26 @@ class Dev::TapTrustTest < Minitest::Test
     ui.out_text.include?("✗ Trusting the tap d3mlabs/d3mlabs for runner")
   end
 
+  # dev#570: the operator trusts for themselves on a Linux build host (a
+  # brew non-owner after the hand-over) — the by-hand command is theirs to
+  # type in their own shell, no `sudo -iu` into their own account.
+  test "a refusal for the user running dev (as_self) names the plain command, no sudo" do
+    Given "a run-as-user seam that fails, trusting as the operator"
+    ui = RecordingUi.new
+    trust = Dev::TapTrust.new(
+      user: "jpduchesne", brew: "/home/linuxbrew/.linuxbrew/bin/brew", tap: org_tap, as_self: true, ui: ui,
+      run_as_user: ->(_argv) { false },
+    )
+
+    When
+    trust.trust!
+
+    Then
+    ui.rows.fetch(1).fetch(1).start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for jpduchesne")
+    ui.rows.fetch(1).fetch(1).include?("`brew trust --tap d3mlabs/d3mlabs`")
+    !ui.rows.fetch(1).fetch(1).include?("sudo")
+  end
+
   test "nothing to trust without a tap, or without brew" do
     Given
     runs = []

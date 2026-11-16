@@ -326,9 +326,10 @@ module Dev
     end
 
     # Inspection: what the drop-in does about brew — nothing, and why
-    # (NO_BREW_EDGE). Dev::Deps::BrewIntegration's `sudo -n` escalation
-    # still exists for a caller whose host grants one by other means; for
-    # the agent its refusal is the posture, reported as a `WANTED:`.
+    # (NO_BREW_EDGE). Dev::Deps::BrewIntegration's escalation still exists
+    # — a password prompt for a human at a terminal, `sudo -n` for a
+    # headless caller whose host grants a rule by other means; for the
+    # agent its refusal is the posture, reported as a `WANTED:`.
     #
     # @return [NoBrewEdge]
     sig { returns(NoBrewEdge) }

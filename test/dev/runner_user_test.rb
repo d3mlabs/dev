@@ -119,7 +119,7 @@ class Dev::RunnerUserTest < Minitest::Test
     drifted_runs.last == %w[sudo chown -R runner:runner /home/linuxbrew/.linuxbrew /home/linuxbrew]
     drifted_runs.count(&chowns) == 1
     drifted_rows.include?([:step, "Handing the toolchain /home/linuxbrew/.linuxbrew (owned by jpduchesne) to runner: jobs upgrade dev through it; " \
-                                  "brew as jpduchesne becomes `sudo -iu runner brew ...`", 0])
+                                  "brew by hand as jpduchesne becomes `sudo -iu runner brew ...` (a checkout's `dev up` escalates its pins itself)", 0])
     @executor.runs.none?(&chowns)
     @ui.rows.none? { |_kind, text, _depth| text.include?("Handing the toolchain") }
   end
@@ -141,12 +141,44 @@ class Dev::RunnerUserTest < Minitest::Test
     runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: org_tap).converge!
 
     Expect "brew trust as the runner user, on the host PATH, the brew dev found; the refusal is one warning naming the by-hand command"
-    trusting.calls.count(&trusts) == 1
-    trusting.calls.find(&trusts) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
+    trusting.calls.count(&sudo_trusts) == 1
+    trusting.calls.find(&sudo_trusts) == %w[sudo -u runner -H env -C / PATH=/opt/brew/bin:/usr/bin env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
     first_rows.include?([:step, "Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)", 0])
     first_rows.none? { |_kind, text, _depth| text.include?("could not trust") }
     @ui.rows.any? { |kind, text, _depth| kind == :note && text.start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for runner") }
     @ui.rows.any? { |_kind, text, _depth| text.include?("sudo -iu runner brew trust --tap d3mlabs/d3mlabs") }
+  end
+
+  # dev#570: after the hand-over the operator is a brew user of a prefix
+  # that is not theirs — their own `dev up` resolves tap formulae as them
+  # and escalates the writes to the runner user — and brew's trust is per
+  # user, so theirs is converged beside the runner user's: as themselves,
+  # no sudo, the same brew by path.
+  test "converge! has the operator trust the tap too — as themselves, no sudo, after the runner user's; the refusal names the by-hand command for them" do
+    Given "the operator jpduchesne on a host with brew and the org tap; and one whose brew predates `brew trust`"
+    trusting = GhExecutor.new(logged_in: true)
+    runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: trusting, tap: org_tap,
+      operator: "jpduchesne").converge!
+    first_rows = @ui.rows.dup
+    @ui.events.clear
+    old = GhExecutor.new(logged_in: true, trusts: false)
+    runner_user(homes: { "runner" => "/home/runner" }, brew: "/home/linuxbrew/.linuxbrew/bin/brew", gh: old, tap: org_tap,
+      operator: "jpduchesne").converge!
+
+    Expect "two trusts: the runner user's through sudo, then the operator's as a plain command; each refusal its own warning"
+    trusting.calls.count(&trusts) == 2
+    trusting.calls.select(&trusts).last == %w[env HOMEBREW_NO_AUTO_UPDATE=1 /home/linuxbrew/.linuxbrew/bin/brew trust --tap d3mlabs/d3mlabs]
+    first_rows.map { |_kind, text, _depth| text }.grep(/Trusting the tap/) == [
+      "Trusting the tap d3mlabs/d3mlabs for runner (brew loads nothing from a tap its user has not trusted)",
+      "Trusting the tap d3mlabs/d3mlabs for jpduchesne (brew loads nothing from a tap its user has not trusted)",
+    ]
+    @ui.rows.any? { |kind, text, _depth| kind == :note && text.start_with?("{{x}} could not trust the tap d3mlabs/d3mlabs for jpduchesne") }
+    @ui.rows.any? { |_kind, text, _depth| text.include?("for jpduchesne") && text.end_with?("`brew trust --tap d3mlabs/d3mlabs`") }
+  end
+
+  test "by default the operator whose trust is converged is the user running register" do
+    Expect
+    Dev::RunnerUser.new(name: "runner").operator == Etc.getpwuid(Process.uid).name
   end
 
   test "no tap to trust without a deployment tap, or without brew" do
@@ -397,14 +429,20 @@ class Dev::RunnerUserTest < Minitest::Test
     ->(argv) { argv.include?("trust") }
   end
 
+  # The runner user's trust: the one run through sudo.
+  def sudo_trusts
+    ->(argv) { argv.include?("trust") && argv.first == "sudo" }
+  end
+
   def org_tap
     Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
   end
 
-  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil, ui: @ui)
+  def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil,
+    operator: "operator", ui: @ui)
     steps = Dev::PrivilegedSteps.new(executor: @executor, tty: true, purpose: "create the runner user")
     Dev::RunnerUser.new(name: name, steps: steps, executor: gh, ui: ui, home_of: ->(user) { homes[user] },
-      brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of, tap: tap)
+      brew: brew, path: "/opt/brew/bin:/usr/bin", owner_of: owner_of, tap: tap, operator: operator)
   end
 
   # A terminal that answers every hidden question with one secret,
