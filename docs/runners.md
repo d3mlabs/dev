@@ -71,11 +71,21 @@ org lets a group fix which repos and which workflows reach the slots; a
 registration at a repo fixes the repos to that one and leaves the
 workflows open, whatever the role.
 
-Any role registered at a **public** repo is refused: any of the repo's
-workflows, an approved fork PR's included, could otherwise run on the
-host. Enroll for a private repo, or put the runners in a pinned group.
-Which setup fits which owner and visibility is laid out in ai-flow's
-README under *Choosing your runner setup*.
+Any role registered at a **public** repo is refused. A repo-scoped
+runner takes jobs from any of the repo's workflows, and on a public repo
+that includes an approved fork PR's — a workflow file the fork's author
+wrote. Only an org runner group can pin which workflows reach a runner,
+so a public repo's runners must be org-scoped, in a pinned group.
+
+What a registration gets, by the repo's owner and visibility:
+
+| | Private repo | Public repo |
+|---|---|---|
+| **Organization** | A pinned role at the org, in its group (`--org` implied); or any role at the repo (`--repo-scope`, or a build host by default) | A pinned role at the org, in its group. Repo scope refused |
+| **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners |
+
+ai-flow adopters: its README's *Choosing your runner setup* says which
+runners ai-flow needs in each case and what else the public case requires.
 
 GitHub routes a job to any online runner visible to the repo whose labels
 cover the job's `runs-on`. There is no repo-beats-org priority, so an org

@@ -1207,7 +1207,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.wirings == []
   end
 
-  test "a pinned role at a public repo at repo scope is refused like a build host, and the refusal names the runner setup guide" do
+  test "a pinned role at a public repo at repo scope is refused like a build host, and the refusal names the scope rules" do
     Given
     dev = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public")
     harness = build_harness(registry: FakeRegistry.new(repositories: { "d3mlabs/dev" => dev }), scope: "d3mlabs/dev", repo: "d3mlabs/dev")
@@ -1218,7 +1218,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Then
     error = raises Dev::Reach::ExposedError
     error.message.include?("d3mlabs/dev is public")
-    error.message.include?("choosing-your-runner-setup")
+    error.message.include?("docs/runners.md#scope")
     harness.events == []
   end
 
