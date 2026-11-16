@@ -13,11 +13,14 @@ module Dev
       # `dev runner status` — inspect-only: this machine's discovered runner
       # enrollments and their contract facts (see Dev::RunnerStatus). Needs no
       # project (the machine view), but reports the container contract when
-      # run inside a project that declares a build container. A leaf of the
-      # `runner` group (RunnerRegisterCommand and RunnerUnregisterCommand are
-      # the others).
+      # run inside a project that declares a build container. `--check` is
+      # the host's posture alone, GitHub not asked, exiting 1 on any red
+      # fact — what a job runs after `dev up`. A leaf of the `runner` group
+      # (RunnerRegisterCommand and RunnerUnregisterCommand are the others).
       class RunnerStatusCommand < BuiltinCommand
         extend T::Sig
+
+        CHECK_FLAG = "--check"
 
         # Builds the status inspector over the context's Ui; injected for tests.
         StatusFactory = T.type_alias do
@@ -52,9 +55,27 @@ module Dev
           end
         end
 
+        # The summary line, then what `--check` is for.
         sig { override.returns(String) }
         def desc
-          "Inspect this host's runner enrollments and their contract facts"
+          <<~DESC
+            Inspect this host's runner enrollments and their contract facts (--check: the host's posture, exit 1 on drift)
+
+            The machine's view, framed by subject: the host, then one frame per role
+            family — each slot's reach, online state and labels against what its role
+            expects — then the posture line. Nothing is recorded; every fact is
+            re-derived from the host and GitHub each time, and the remedy is named
+            on each red line (most: re-run `dev runner register`).
+
+            #{CHECK_FLAG} inspects the host's posture alone — the runner user and its login,
+            the toolchain, the agent host (its user, group memberships, sudoers edge,
+            data root, brew locks), the WSL runner host, host tooling — and exits 1
+            when any fact is red. GitHub is not asked: the family facts need the org
+            token and are the human's run. Which roles are enrolled is read from each
+            enrollment's own record, so it runs in every job on the job's identity;
+            a host whose posture is behind the running dev's contract goes red in the
+            job's log. Posture stays register's to converge: a job inspects it.
+          DESC
         end
 
         sig { override.returns(Command::Category) }
@@ -62,10 +83,21 @@ module Dev
           Command::Category::Environment
         end
 
+        sig { override.returns(T::Array[Cli::Flag]) }
+        def flags
+          [
+            Cli::Flag.new(CHECK_FLAG, desc: "the host's posture alone, GitHub not asked: the host frame and the posture line, exit 1 when any fact is red — for every job, on its own identity"),
+          ]
+        end
+
+        # The full report, or with `--check` the host's posture alone
+        # (Dev::RunnerStatus#check raises on drift; the boundary exits 1).
+        #
+        # @raise [Dev::RunnerStatus::PostureDriftError] `--check`, with a red fact
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
-          _ = args
-          @runner_status_factory.call(context.project&.project_images&.containerized? || false, context.project&.root, context.ui).report
+          status = @runner_status_factory.call(context.project&.project_images&.containerized? || false, context.project&.root, context.ui)
+          args.flag?(CHECK_FLAG) ? status.check : status.report
         end
       end
     end
