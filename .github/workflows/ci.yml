@@ -72,3 +72,26 @@ jobs:
           files: coverage/coverage.xml
           disable_search: true
           fail_ci_if_error: false
+
+  # The `up/` action exercised cold: a stock image carries no dev (and may
+  # carry no Homebrew), so the job runs the full install path — the one a
+  # warm host skips — against this checkout, then asserts what the action
+  # promises a calling job: a working `dev`, the Linux data root
+  # provisioned, and the checkout's lock installed (`dev deps check` exits
+  # non-zero when the installed stamp lags the lock). GH_TOKEN is the
+  # credential the action's toolchain check requires; the job's own
+  # token reaches every pin this public tap serves.
+  up-action:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./up
+
+      - name: Assert the host is provisioned
+        run: |
+          dev --version
+          test -d /var/lib/dev
+          dev deps check
