@@ -65,7 +65,8 @@ class ScriptedRemote
 
   # Copy dev's workflow into the project, as an adopting repo commits it.
   def install_workflow
-    Dev::Lifecycle::LifecycleWorkflow.new(root: @root).path.tap { |path| path.dirname.mkpath }.write(Dev::Lifecycle::LifecycleWorkflow::SOURCE.read)
+    workflow = Dev::Lifecycle::LifecycleWorkflow.new(root: @root)
+    workflow.path.tap { |path| path.dirname.mkpath }.write(workflow.source.read)
   end
 
   # The inputs of the one dispatch the forge saw, by name; nil when none crossed.

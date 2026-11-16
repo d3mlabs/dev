@@ -427,7 +427,7 @@ is replaced on each deploy so nothing from a previous one rides along.
 
 | Channel | Contributed by | `testing` | `live` | Credentials |
 | --- | --- | --- | --- | --- |
-| `rubygems` | a `gem` declaration | refused: rubygems.org has no track that is not live | `gem push` of each `.gem` | `dev cred` `rubygems/api_key` (`GEM_HOST_API_KEY` overrides) |
+| `rubygems` | a `gem` declaration | refused: rubygems.org has no track that is not live | `gem push` of each `.gem` | `dev cred` `rubygems/api_key` (`GEM_HOST_API_KEY` overrides; the shipped publish workflow sets it from a trusted-publishing token) |
 | `ghcr` | an `image` block | pushed as `ghcr.io/<org>/<name>:testing-<build id>` | pushed as `ghcr.io/<org>/<name>:<version>` | the registry login's: gh's token with `write:packages`, or `DEV_REGISTRY_TOKEN` |
 | `steam` | a `steam` app pin | set live on the `beta` branch | uploaded; the operator sets it live on `default` in Steamworks | `dev cred` `steam/username`, `steam/password` (or steamcmd's cached login) |
 | `egs` | the `egs` BuildPatchTool pin | labelled `Testing` | labelled `Live` | `dev cred` `egs/client_id`, `egs/client_secret` |
@@ -447,6 +447,24 @@ that is not a `.gem` is refused before the first push. A store artifact
 is refused: a pushed version can never be reused, so a working artifact
 has nowhere to go; the message names `dev deploy rubygems --release <v>`.
 Receipt: `pushed to https://rubygems.org: <file>, …`.
+
+The project publishes from the workflow dev ships. Copy
+`share/workflows/dev-publish-rubygems.yml` verbatim to
+`.github/workflows/dev-publish-rubygems.yml` and commit it; a `deploy
+rubygems` from a project without it is refused and names the `cp`. The
+workflow runs on `ubuntu-latest` when a release is published, or by hand
+with a `version` input for a release that already carries its assets. It
+converges the runner with `d3mlabs/dev/up`, waits for `release.json` on
+the release (`dev release` creates the release before it uploads the
+assets), exchanges the job's OIDC token for a push key that lives for the
+job under rubygems.org trusted publishing, and runs `dev deploy rubygems
+--release <v>`. No API key is stored anywhere.
+
+On rubygems.org, once: register a trusted publisher for the gem — a
+pending one for a gem not yet pushed — with this repository and the
+workflow file `dev-publish-rubygems.yml`. A first push must name the
+account that owns the new gem: set the repository or organization
+variable `RUBYGEMS_OWNER` to that account's rubygems.org handle or id.
 
 #### ghcr
 

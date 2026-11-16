@@ -8,6 +8,7 @@ require "support/release_fixtures"
 require "fileutils"
 require "pathname"
 require "tmpdir"
+require "yaml"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::RubygemsPublisherTest < Minitest::Test
@@ -51,6 +52,7 @@ class Dev::Deps::RubygemsPublisherTest < Minitest::Test
     @root = Pathname(Dir.mktmpdir("rubygems-publisher-"))
     @project = @root / "project"
     @project.mkpath
+    install_workflow(@project)
     @shell = RecordingShell.new
     @credentials = RecordingCredentials.new
     @publisher = Dev::Deps::RubygemsPublisher.new(project_root: @project, shell: @shell, credentials: @credentials)
@@ -59,6 +61,18 @@ class Dev::Deps::RubygemsPublisherTest < Minitest::Test
   def teardown
     FileUtils.rm_rf(@root)
     super
+  end
+
+  # @return [Dev::Lifecycle::ShippedWorkflow] the publish workflow as a project carries it
+  def publish_workflow(root)
+    Dev::Lifecycle::ShippedWorkflow.new(file_name: Dev::Deps::RubygemsPublisher::WORKFLOW_FILE_NAME, root:)
+  end
+
+  # Copy dev's publish workflow into the project, as an adopting repo commits it.
+  def install_workflow(root)
+    workflow = publish_workflow(root)
+    workflow.path.dirname.mkpath
+    FileUtils.cp(workflow.source, workflow.path)
   end
 
   # @return [Dev::Lifecycle::Shipment] a release's archive of the gem target
@@ -134,6 +148,49 @@ class Dev::Deps::RubygemsPublisherTest < Minitest::Test
     @credentials.asks.empty?
   end
 
+  test "a project carrying no copy of the publish workflow is refused with the copy named, source included, before anything runs" do
+    Given "a project without .github/workflows/dev-publish-rubygems.yml"
+    bare = @root / "bare"
+    bare.mkpath
+    publisher = Dev::Deps::RubygemsPublisher.new(project_root: bare, shell: @shell, credentials: @credentials)
+
+    When
+    publisher.publish([release_shipment("rspock")], channel:, track: Dev::Lifecycle::Track::Live, scratch: @root / ".rubygems")
+
+    Then
+    error = raises(Dev::Deps::RubygemsPublisher::PublishWorkflowMissingError)
+    error.message == "#{bare} has no .github/workflows/dev-publish-rubygems.yml: `deploy rubygems` publishes a release from the " \
+      "project's copy of dev's publish workflow, which runs it under rubygems.org trusted publishing — copy it in and commit " \
+      "it (mkdir -p .github/workflows && cp #{publish_workflow(bare).source} .github/workflows/dev-publish-rubygems.yml)"
+    @shell.runs.empty?
+    @credentials.asks.empty?
+  end
+
+  test "the shipped publish workflow runs on a published release and by hand with a version, with the publish permissions, on the dev/up action" do
+    Given
+    shipped = YAML.safe_load(publish_workflow(@project).source.read)
+    triggers = shipped.fetch(true) # YAML 1.1 reads a bare `on:` key as the boolean
+    version = triggers.fetch("workflow_dispatch").fetch("inputs").fetch("version")
+    job = shipped.fetch("jobs").values.first
+    steps = job.fetch("steps")
+
+    Expect
+    triggers.keys.sort == ["release", "workflow_dispatch"]
+    triggers.fetch("release") == { "types" => ["published"] }
+    triggers.fetch("workflow_dispatch").fetch("inputs").keys == ["version"]
+    version.fetch("required")
+    version.fetch("type") == "string"
+    shipped.fetch("permissions") == { "contents" => "read", "id-token" => "write", "deployments" => "write" }
+    job.fetch("runs-on") == "ubuntu-latest"
+    job.fetch("env") == { "GH_TOKEN" => "${{ github.token }}" }
+    steps.map { |step| step["uses"] }.compact == ["actions/checkout@v4", "d3mlabs/dev/up@main"]
+    steps.any? { |step| step["id"] == "version" && step.dig("env", "INPUT_VERSION") == "${{ inputs.version }}" }
+    steps.any? { |step| step["run"].to_s.include?("grep -qx 'release.json'") }
+    steps.any? { |step| step.dig("env", "RUBYGEMS_OWNER") == "${{ vars.RUBYGEMS_OWNER }}" && step["run"].include?("GEM_HOST_API_KEY=") }
+    steps.last.fetch("run") == "dev deploy rubygems --release \"$VERSION\""
+    steps.last.fetch("env") == { "VERSION" => "${{ steps.version.outputs.version }}" }
+  end
+
   test "an archive that is not a .gem refuses the whole set before the first push" do
     Given "a gem, then a zip"
     gem = release_shipment("rspock")
@@ -167,14 +224,19 @@ class Dev::Deps::RubygemsPublisherTest < Minitest::Test
   end
 
   test "a missing gem executable surfaces as the shell's spawn error" do
-    Given "a publisher over the real shell, in a project root that does not exist"
-    publisher = Dev::Deps::RubygemsPublisher.new(project_root: @root / "missing", credentials: @credentials)
+    Given "a publisher over the real shell, with nothing on PATH"
+    publisher = Dev::Deps::RubygemsPublisher.new(project_root: @project, credentials: @credentials)
+    original_path = ENV.fetch("PATH")
+    ENV["PATH"] = (@root / "empty-bin").tap(&:mkpath).to_s
 
     When
     publisher.publish([release_shipment("rspock")], channel:, track: Dev::Lifecycle::Track::Live, scratch: @root / ".rubygems")
 
     Then
     raises Dev::Lifecycle::Shell::SpawnError
+
+    Cleanup
+    ENV["PATH"] = original_path if original_path
   end
 
   test "the publisher renders as the tool it runs" do
