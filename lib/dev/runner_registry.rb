@@ -179,9 +179,18 @@ module Dev
       # GitHub's word: "public", "private" or "internal".
       const :visibility, String
 
+      # GitHub's word for the owner: "Organization" or "User". Only an
+      # organization has runner groups.
+      const :owner_type, String, default: "Organization"
+
       sig { returns(T::Boolean) }
       def public?
         visibility == "public"
+      end
+
+      sig { returns(T::Boolean) }
+      def user_owned?
+        owner_type == "User"
       end
     end
 
@@ -330,7 +339,10 @@ module Dev
       raise QueryError, "could not read #{repo}: #{err.strip}" if !ok || out.strip.empty?
 
       record = JSON.parse(out)
-      Repository.new(id: Integer(record.fetch("id")), full_name: record.fetch("full_name").to_s, visibility: record.fetch("visibility").to_s)
+      Repository.new(
+        id: Integer(record.fetch("id")), full_name: record.fetch("full_name").to_s, visibility: record.fetch("visibility").to_s,
+        owner_type: record.fetch("owner", {}).fetch("type", "Organization").to_s,
+      )
     end
 
     private

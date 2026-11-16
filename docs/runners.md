@@ -54,22 +54,28 @@ is `--role x --labels y` (the role's labels are its declaration) and
 ### Scope
 
 A role whose group is pinned to workflows is **org-scoped**: every repo the
-group admits may send jobs, and `--org` is implied. A **build host** is
-its repo's: only that repo's jobs land on it. Use one when a repo needs its
-own hardware or its own concurrency cap — a repo whose jobs hold the one
-Unreal editor enrolls one build host and has concurrency 1 by
-construction. `--org --labels <set>` makes a custom set an org pool
-instead.
+group admits may send jobs, and `--org` is implied. `--repo-scope` keeps
+such a role at the repo instead, for a repo that wants agent slots of its
+own. A **build host** is its repo's: only that repo's jobs land on it. Use
+one when a repo needs its own hardware or its own concurrency cap — a repo
+whose jobs hold the one Unreal editor enrolls one build host and has
+concurrency 1 by construction. `--org --labels <set>` makes a custom set
+an org pool instead.
+
+A repo owned by a **user account** is registered at the repo whatever the
+role. A user account has no runner groups, so there is no org to register
+at; `--org` is refused there.
 
 Scope fixes the first clause of a family's reach. A registration at the
 org lets a group fix which repos and which workflows reach the slots; a
 registration at a repo fixes the repos to that one and leaves the
-workflows open, whatever the role — a build host always, an agent family
-when one repo keeps slots of its own (cellbound-3d's on the Mac).
+workflows open, whatever the role.
 
 Any role registered at a **public** repo is refused: any of the repo's
 workflows, an approved fork PR's included, could otherwise run on the
 host. Enroll for a private repo, or put the runners in a pinned group.
+Which setup fits which owner and visibility is laid out in ai-flow's
+README under *Choosing your runner setup*.
 
 GitHub routes a job to any online runner visible to the repo whose labels
 cover the job's `runs-on`. There is no repo-beats-org priority, so an org

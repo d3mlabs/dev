@@ -146,7 +146,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Expect "no flag lists by name alone"
     command.flags.all? { |flag| !flag.desc.empty? }
     command.flags.map(&:name) == [
-      "--org", "--role", "--labels", "--ai-flow", "--slots", "--group",
+      "--org", "--repo-scope", "--role", "--labels", "--ai-flow", "--slots", "--group",
       "--dir", "--name", "--repo", "--agent-user", "--as", "--yes"
     ]
   end
@@ -1141,6 +1141,84 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     error = raises Dev::Reach::ExposedError
     error.message.include?("YAML could land on this host")
     registry.group_writes == []
+    harness.events == []
+  end
+
+  test "--ai-flow from a user-account repo's checkout registers the agent role at the repo: no org pre-flight, no group, the setup wired repo-scoped" do
+    Given "snappy, owned by a user; any org-level probe at that owner would be refused"
+    snappy = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "JPDuchesne/snappy", visibility: "private", owner_type: "User")
+    registry = FakeRegistry.new(repositories: { "JPDuchesne/snappy" => snappy }, refused: ["JPDuchesne"])
+    harness = build_harness(registry: registry, scope: "JPDuchesne/snappy", repo: "JPDuchesne/snappy", contracts: 1)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.projectless_context)
+
+    Then "repo scope, the agent labels, the agent host contract converged, nothing written to any group"
+    config, _repo, org, _as, _ui = harness.wirings.last
+    org == false
+    config.role == Dev::RunnerRole::AGENT
+    registry.group_writes == []
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
+  end
+
+  test "--org on a user-account repo is refused before anything converges: a user has no runner groups, so the registration can only be the repo's" do
+    Given
+    snappy = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "JPDuchesne/snappy", visibility: "private", owner_type: "User")
+    harness = build_harness(registry: FakeRegistry.new(repositories: { "JPDuchesne/snappy" => snappy }), scope: "JPDuchesne", repo: "JPDuchesne/snappy")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--labels", "ai-orchestrator"]), context: harness.projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("JPDuchesne is a user account")
+    error.message.include?("drop --org")
+    harness.events == []
+    harness.wirings == []
+  end
+
+  test "--repo-scope registers a pinned role at an org repo instead of at the org: no group converged, the setup wired repo-scoped" do
+    Given "cellbound-3d keeps an agent slot of its own on this host"
+    registry = FakeRegistry.new(refused: ["d3mlabs"])
+    harness = build_harness(registry: registry, scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", contracts: 1)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent", "--repo-scope"]), context: harness.projectless_context)
+
+    Then
+    config, _repo, org, _as, _ui = harness.wirings.last
+    org == false
+    config.role == Dev::RunnerRole::AGENT
+    registry.group_writes == []
+    harness.events == [[:converge, false, nil, nil, nil], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
+  end
+
+  test "--repo-scope with --org is a usage error" do
+    Given
+    harness = build_harness
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--repo-scope", "--role", "agent"]), context: harness.projectless_context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("--repo-scope")
+    error.message.include?("--org")
+    harness.wirings == []
+  end
+
+  test "a pinned role at a public repo at repo scope is refused like a build host, and the refusal names the runner setup guide" do
+    Given
+    dev = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public")
+    harness = build_harness(registry: FakeRegistry.new(repositories: { "d3mlabs/dev" => dev }), scope: "d3mlabs/dev", repo: "d3mlabs/dev")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--ai-flow", "--repo-scope"]), context: harness.projectless_context)
+
+    Then
+    error = raises Dev::Reach::ExposedError
+    error.message.include?("d3mlabs/dev is public")
+    error.message.include?("choosing-your-runner-setup")
     harness.events == []
   end
 

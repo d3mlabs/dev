@@ -86,6 +86,7 @@ module Dev
         class RegistrationHeldError < RuntimeError; end
 
         ORG_FLAG = "--org"
+        REPO_SCOPE_FLAG = "--repo-scope"
         ROLE_FLAG = "--role"
         LABELS_FLAG = "--labels"
         AI_FLOW_FLAG = "--ai-flow"
@@ -237,11 +238,14 @@ module Dev
                             (`ue-farm: { labels: [ue, gpu] }`), enrolled with --role ue-farm.
 
             agent and orchestrator are org-scoped (only a group carries the workflow
-            pin); --org is implied. A build host is its repo's unless --org makes a
-            --labels set an org pool. A dev.yml role is always its repo's. --role x
-            with no declaration, or together with --labels, is refused; so is a build
-            host for a PUBLIC repo, since any of its workflows — a fork PR's included —
-            could then run on this host.
+            pin); --org is implied, and --repo-scope keeps them at this repo instead
+            (the repo's jobs through any of its workflows, no group). A build host is
+            its repo's unless --org makes a --labels set an org pool. A dev.yml role
+            is always its repo's. A repo owned by a user account is registered at the
+            repo whatever the role: a user account has no runner groups. --role x with
+            no declaration, or together with --labels, is refused; so is any role at
+            repo scope for a PUBLIC repo, since any of its workflows — a fork PR's
+            included — could then run on this host.
 
             Runner names are <hostname>-<role>[-n] (JPSFF-agent, JPSFF-agent-2, beside
             JPSFF-orchestrator…), the bare hostname for a build host; dirs are
@@ -372,6 +376,7 @@ module Dev
         def flags
           [
             Cli::Flag.new(ORG_FLAG, desc: "enroll at the org scope (needs admin:org): implied by the agent and orchestrator roles; with --labels, an org pool instead of this repo's runner"),
+            Cli::Flag.new(REPO_SCOPE_FLAG, desc: "enroll a pinned role (agent, orchestrator) at this repo instead of its org: the repo's jobs through any of its workflows, no runner group; refused for a public repo"),
             Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: #{RunnerRole::BUILTINS.keys.join(" | ")} (builtin; org-scoped, named <host>-<role>), or a role dev.yml declares under runner_roles:; default: this repo's build host"),
             Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels for a build host; default: the repo's name. An agent or orchestrator label is that role's sugar"),
             Cli::Flag.new(AI_FLOW_FLAG, desc: "--role #{RunnerRole::AGENT_NAME}: the agent host's ai-flow label set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); the orchestrator pool is --role #{RunnerRole::ORCHESTRATOR_NAME}"),
@@ -397,14 +402,13 @@ module Dev
           # resolve.
           resolve_repo = memoized { @repo_resolver.call(args.value(REPO_FLAG)) }
           role = resolve_role(args, context, resolve_repo)
-          # Scope is derived from the role: a pinned role lives at the org,
-          # a build host is its repo's — unless --labels names a custom set
-          # and --org makes it an org pool, the one place the flag is an
-          # input.
-          org = role.org_scoped? || args.flag?(ORG_FLAG)
           repo = resolve_repo.call
+          repository = @registry.repository(repo)
+          org = resolve_org(role, args, repository)
           slots = resolve_slots(args)
-          contract = role.group
+          # The group is an org-side contract: a pinned role registered at
+          # its repo joins none.
+          contract = org ? role.group : nil
           labels = role.labels.join(",")
           config = RunnerSetupConfig.new(
             role: role,
@@ -421,7 +425,7 @@ module Dev
           # (Reach): computed here so a build host for a public repo is
           # refused before anything converges. The comparison against what
           # GitHub holds is `dev runner status`'s.
-          role.expected_reach(Dev::Reach::Target.new(repo: repo, public: @registry.repository(repo).public?, org_scoped: org))
+          role.expected_reach(Dev::Reach::Target.new(repo: repo, public: repository.public?, org_scoped: org))
 
           container = context.project&.project_images&.containerized? || false
           engine = context.project&.engine
@@ -979,6 +983,38 @@ module Dev
         # project. `--role x --labels y`, `--org` with a dev.yml role, and
         # `--group` with a pinned role are refused.
         #
+        # Whether the registration is made at the org. A pinned role's is,
+        # and `--org` makes a `--labels` set an org pool; `--repo-scope`
+        # keeps a pinned role at its repo (a repo with agent slots of its
+        # own). A repo owned by a user account is registered at the repo
+        # whatever the role: a user account has no runner groups, so there
+        # is nothing to register at, and `--org` is refused there.
+        #
+        # @param role [Dev::RunnerRole]
+        # @param args [Cli::ParsedArgs]
+        # @param repository [Dev::RunnerRegistry::Repository] the repo this registration is for
+        # @return [Boolean]
+        # @raise [ArgumentError] when the flags contradict each other or the owner
+        sig { params(role: RunnerRole, args: Cli::ParsedArgs, repository: RunnerRegistry::Repository).returns(T::Boolean) }
+        def resolve_org(role, args, repository)
+          repo_scope = args.flag?(REPO_SCOPE_FLAG)
+          org_flag = args.flag?(ORG_FLAG)
+          raise ArgumentError, "#{REPO_SCOPE_FLAG} keeps the slots at the repo and #{ORG_FLAG} puts them at the org — pass one" if repo_scope && org_flag
+
+          if repository.user_owned?
+            owner = T.must(repository.full_name.split("/").first)
+            if org_flag
+              raise ArgumentError,
+                "#{owner} is a user account: it has no runner groups, so the registration is #{repository.full_name}'s — drop #{ORG_FLAG}"
+            end
+            return false
+          end
+
+          return false if repo_scope
+
+          role.org_scoped? || org_flag
+        end
+
         # @param args [Cli::ParsedArgs]
         # @param context [Dev::Cli::ExecutionContext]
         # @param resolve_repo [Proc] derives the repo this registration is for, asked only when the label derives from it

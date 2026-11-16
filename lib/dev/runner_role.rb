@@ -41,6 +41,10 @@ module Dev
 
     # GitHub's default runner group, where a registration naming no group
     # lands; every repo-scoped registration records it.
+    # Where ai-flow's README lays out which runner setup works for which
+    # owner and visibility.
+    SETUP_GUIDE_URL = "https://github.com/d3mlabs/ai-flow#choosing-your-runner-setup"
+
     DEFAULT_POOL = "Default"
 
     sig { returns(String) }
@@ -249,7 +253,8 @@ module Dev
         raise Reach::ExposedError,
           "#{target.repo} is public and its #{@name} runners would take jobs from any of its workflows — an approved fork PR's " \
             "YAML could land on this host. Enroll for a private repo, or put the runners in a group " \
-            "pinned to the workflows that may use them."
+            "pinned to the workflows that may use them (ai-flow's README, Choosing your runner setup: " \
+            "#{SETUP_GUIDE_URL})."
       end
 
       Reach.new(repos: Set[target.repo], workflows: Reach::ANY, labels: labels)
