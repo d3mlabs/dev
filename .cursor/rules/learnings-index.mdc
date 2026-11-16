@@ -63,9 +63,10 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  → .cursor/skills/learnings/per-side-project-state/
 - [architecture/installed-state-in-the-store] Anything dev installs lives
  in the store under an identity key (per-project state under dev.yml
- `name`), never in the checkout, which a hosted clean wipes: the project
- tree holds a symlink or a lisp path, and path-bound artifacts run by
- their store path.
+ `name`), never in the checkout, which a hosted clean wipes, nor in
+ another tool's prefix (a brew keg), which its owner alone can write: the
+ project tree holds a symlink or a lisp path, and path-bound artifacts run
+ by their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
 - [architecture/one-brew-prefix-resolution] `Settings.brew_prefix` is the
  one brew-prefix resolution (`RunnerUser.brew_path` for the binary): never
