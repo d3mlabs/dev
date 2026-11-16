@@ -36,6 +36,15 @@ module Dev
   # operator on stdin — dev never sees or stores it, and refuses to enroll
   # while the login is missing, naming the command.
   #
+  # brew is single-owner and the host's prefix is the runner user's, so
+  # the hand-over leaves two brew users on one prefix: the runner user,
+  # whose jobs upgrade dev through it, and the operator, whose own `dev
+  # up` in a checkout reads the tap's formulae as themselves and writes
+  # the checkout's pins through the runner user's brew (an escalation
+  # with their password, Dev::Deps::BrewIntegration). Homebrew's tap
+  # trust is per brew user, so converging the runner user converges both
+  # trusts (TapTrust).
+  #
   # macOS has no runner user: the service is a per-user LaunchAgent and the
   # agent user is its own identity there (AgentBootstrap). `for_host`
   # answers nil and register runs as it always has.
@@ -86,6 +95,10 @@ module Dev
     # (whose capture of it becomes every job's PATH), the gh login check.
     sig { returns(String) }
     attr_reader :path
+
+    # The operator: the user running register, the prefix's other brew user.
+    sig { returns(String) }
+    attr_reader :operator
 
     class << self
       extend T::Sig
@@ -181,8 +194,11 @@ module Dev
     # @param path [String] the PATH the runner user's commands run on
     # @param owner_of [Proc] who owns a path (injectable for tests)
     # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap, which the
-    #   runner user must trust before brew will load dev's formula for it
-    #   (TapTrust); nil for none
+    #   runner user and the operator must each trust before brew will load
+    #   dev's formulae for them (TapTrust); nil for none
+    # @param operator [String] the user running register — the prefix's
+    #   other brew user, whose trust is converged beside the runner user's
+    #   (this process's user; injectable for tests)
     sig do
       params(
         name: String,
@@ -194,6 +210,7 @@ module Dev
         path: String,
         owner_of: OwnerOf,
         tap: T.nilable(TapTrust::Tap),
+        operator: String,
       ).void
     end
     def initialize(name:, steps: PrivilegedSteps.new(purpose: "create the runner user #{name}"),
@@ -201,7 +218,7 @@ module Dev
                    home_of: ->(user) { RunnerUser.passwd_home(user) },
                    brew: RunnerUser.brew_path, path: RunnerUser.host_path(brew: brew),
                    owner_of: ->(path_to_own) { RunnerUser.owner_of(path_to_own) },
-                   tap: TapTrust.deployment_tap)
+                   tap: TapTrust.deployment_tap, operator: T.must(Etc.getpwuid(Process.uid)).name)
       @name = name
       @steps = steps
       @exec = executor
@@ -210,11 +227,19 @@ module Dev
       @brew = brew
       @path = path
       @owner_of = owner_of
+      @operator = operator
       # Streams (`system`, not `capture`): brew's own refusal is the
       # warning's context, and the sudo session is already open.
       @tap_trust = T.let(
         TapTrust.new(user: name, brew: brew, tap: tap, ui: ui,
           run_as_user: ->(argv) { @exec.system(*sudo_argv(*argv)) == true }),
+        TapTrust,
+      )
+      # The operator's own trust runs as the operator: no sudo, the same
+      # brew by path (theirs after the hand-over only through it).
+      @operator_tap_trust = T.let(
+        TapTrust.new(user: operator, brew: brew, tap: tap, as_self: true, ui: ui,
+          run_as_user: ->(argv) { @exec.system(*argv) == true }),
         TapTrust,
       )
     end
@@ -278,14 +303,16 @@ module Dev
     end
 
     # Make the user exist, in its groups, with brew in every login shell,
-    # owning the toolchain: one sudo session, one argv per step.
+    # owning the toolchain, and both of the prefix's brew users trusting
+    # the deployment's tap: one sudo session, one argv per step.
     # Idempotent — a present user has its membership converged, the
     # profile.d file is rewritten in place, a toolchain already the runner
-    # user's is left alone. The hand-over is a step like the others, said
-    # out loud, not a question: on a Linux build host the rule is that
-    # jobs upgrade dev, and brew is single-owner, so the prefix is the
-    # runner user's. Aborting leaves the host unmigrated, which
-    # `dev runner status` reports until a re-run.
+    # user's is left alone, a trusted tap is trusted again for nothing.
+    # The hand-over is a step like the others, said out loud, not a
+    # question: on a Linux build host the rule is that jobs upgrade dev,
+    # and brew is single-owner, so the prefix is the runner user's.
+    # Aborting leaves the host unmigrated, which `dev runner status`
+    # reports until a re-run.
     #
     # @return [void]
     # @raise [PrivilegedSteps::StepFailedError, PrivilegedSteps::SudoRequiredError]
@@ -306,9 +333,12 @@ module Dev
         @steps.install_file!("eval \"$(#{brew} shellenv)\"\n", PROFILE_D, mode: "0644") if brew
       end
       own_toolchain!
-      # The deployment's tap, trusted by the runner user — the operator's
-      # trust does not carry over (TapTrust); in the session, as that user.
+      # The deployment's tap, trusted by each brew user of the prefix in
+      # turn — trust is per user and carries over to nobody (TapTrust): the
+      # runner user's in the session, as that user; then the operator's,
+      # as themselves.
       @tap_trust.trust!
+      @operator_tap_trust.trust!
     end
 
     # Hand the toolchain to the runner user when someone else owns it.
@@ -322,7 +352,7 @@ module Dev
       prefix = toolchain_roots.fetch(0)
       chown = ["sudo", "chown", "-R", "#{@name}:#{@name}"] + toolchain_roots
       @ui.step("Handing the toolchain #{prefix} (owned by #{owner}) to #{@name}: jobs upgrade dev through it; " \
-               "brew as #{owner} becomes `sudo -iu #{@name} brew ...`") do
+               "brew by hand as #{owner} becomes `sudo -iu #{@name} brew ...` (a checkout's `dev up` escalates its pins itself)") do
         @steps.step!(*T.unsafe(chown))
       end
     end

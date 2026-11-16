@@ -213,7 +213,8 @@ Before enrolling, register converges in one sudo session: the shared
 groups `docker` and `dev`), Homebrew's shellenv in
 `/etc/profile.d/linuxbrew.sh`, brew's prefix handed to the runner user
 (jobs upgrade dev through brew, and brew has one owner), and the
-deployment tap trusted by the runner user.
+deployment tap trusted by the runner user and by you (brew's trust is per
+user, and your own `dev up` reads the tap's formulae as you).
 
 Then register logs the runner user in to gh. At a terminal it asks for a
 **machine user's** token — a dedicated account with read access to what the
@@ -226,10 +227,23 @@ repo and every image's floor package, and refuses to enroll while one is
 unreachable, printing the grant to make. `dev runner status` reports the
 same as host facts.
 
-After the handover, package work on that host is `sudo -iu runner brew …`
-and `sudo -iu runner dev up`; your own `dev up` there skips the brew layer.
-An enrollment owned by anyone but the runner user is drift and is
-re-enrolled as the runner user on the next `dev runner register`.
+After the handover, package work by hand on that host is `sudo -iu runner
+brew …`. Your own `dev up` in a checkout there does two different things
+with brew. The host half — dev's self-update and the org Brewfile — is
+skipped silently: it is host state the jobs converge on their next run.
+To converge it by hand — to test a release before the next job, or to
+repair the box — run `dev up` as the prefix's owner, outside any
+checkout: `sudo -iu runner dev up` (`runner` unless register ran with
+`--as`). `dev up` is the upgrade — brew's update and the scoped
+upgrade of dev itself — so there is no `brew upgrade` to type. The
+checkout's pins (`dependencies.rb`) are project state nobody converges
+for you, so your own `dev up` installs them through the runner user's
+brew, asking your password once (`sudo -u runner <prefix>/bin/brew …`);
+no sudoers line is written for it — a sudoer gains nothing from one, and
+dev builds no new grant. Without a terminal the same write runs `sudo -n`
+and a refusal is reported, never prompted for. An enrollment owned by
+anyone but the runner user is drift and is re-enrolled as the runner user
+on the next `dev runner register`.
 
 Macs have no runner user: the service is your LaunchAgent.
 

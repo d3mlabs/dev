@@ -78,6 +78,9 @@ module Dev
     # @param run_as_user [Proc] how to run a command as that user
     # @param brew [String, nil] Homebrew's binary on this host, if any
     # @param tap [Tap, nil] the deployment's tap; nil for none to trust
+    # @param as_self [Boolean] whether the user is the one running dev (the
+    #   operator trusting for themselves): the by-hand command a refusal
+    #   names then needs no `sudo -iu`
     # @param ui [Ui] the trust is one step on it (brew streams); a refusal
     #   marks the step and is noted after it
     sig do
@@ -86,14 +89,16 @@ module Dev
         run_as_user: RunAsUser,
         brew: T.nilable(String),
         tap: T.nilable(Tap),
+        as_self: T::Boolean,
         ui: Ui,
       ).void
     end
-    def initialize(user:, run_as_user:, brew:, tap: TapTrust.deployment_tap, ui: NoUi.new)
+    def initialize(user:, run_as_user:, brew:, tap: TapTrust.deployment_tap, as_self: false, ui: NoUi.new)
       @user = user
       @run_as_user = run_as_user
       @brew = brew
       @tap = tap
+      @as_self = as_self
       @ui = ui
     end
 
@@ -121,7 +126,20 @@ module Dev
     rescue TrustRefusedError
       @ui.note("{{x}} could not trust the tap #{tap} for #{@user} (brew's refusal is above; a brew without " \
                "`trust` has no gate to pass) — if brew as #{@user} is refused the tap's formulae: " \
-               "`sudo -iu #{@user} brew trust --tap #{tap}`")
+               "`#{by_hand_command}`")
+    end
+
+    private
+
+    # The one command that trusts the tap by hand, as the user: in their
+    # own shell when they are the one reading this, through `sudo -iu`
+    # for any other identity.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def by_hand_command
+      trust = "brew trust --tap #{@tap}"
+      @as_self ? trust : "sudo -iu #{@user} #{trust}"
     end
   end
 end

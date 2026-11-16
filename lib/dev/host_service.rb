@@ -166,8 +166,12 @@ module Dev
     # self-skips. A no-op on brewless machines (no prefix means no system
     # config location, no Brewfile, nothing to upgrade), and — silently —
     # for a caller who does not own the prefix: on a Linux build host brew
-    # is the runner user's, and the operator's own `dev up` there
-    # has nothing to converge and nothing to warn about; the jobs do it.
+    # is the runner user's, and this layer is *host* state the jobs
+    # converge on their next run, so the operator's own `dev up` there
+    # has nothing to converge and nothing to warn about. The checkout's
+    # pins are not this layer: they are project state the operator's `dev
+    # up` is for, and Dev::Deps::BrewIntegration escalates them to the
+    # prefix owner with the operator's password.
     #
     # @return [void]
     sig { void }
