@@ -1013,8 +1013,8 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "sudo refusing the assignments is the stale-edge remediation too" do
-    Given "an unwritable prefix and a drop-in whose brew edge predates SETENV"
+  test "sudo refusing the assignments is the no-edge posture too" do
+    Given "an unwritable prefix and a sudo rule without SETENV for the assignments"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
     FileUtils.mkdir_p(prefix)
@@ -1033,18 +1033,22 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     When "installing"
     integration.install_all([legacy_cmake_pin("4.3.4")])
 
-    Then "the failure says the edge is stale and what rewrites it"
+    Then "the failure says this user may not write the owner's prefix, and names the WANTED posture, never a register"
     error = raises Dev::Deps::Integration::PartialInstallError
     message = error.failures.fetch(0).fetch(1).message
     message.include?("sudo -n was refused")
-    message.include?("dev runner register")
+    message.include?("`WANTED: brew install cmake as #{owner} — <what needed it>`")
+    !message.include?("dev runner register")
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
     FileUtils.rm_rf(dir)
   end
 
-  test "a sudo refusal surfaces the agent bootstrap remediation" do
+  # dev#569: no host grants the agent a brew edge, so a refusal is the
+  # posture — the pin is the owner's to converge, the job reports a
+  # WANTED — and never a missing sudoers line register would write.
+  test "a sudo refusal names the WANTED posture, not a sudoers edge to re-converge" do
     Given "an unwritable prefix and a sudo -n that refuses (no sudoers edge)"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
@@ -1074,9 +1078,13 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       error = e
     end
 
-    Then "the failure names the missing sudoers edge and its remediation"
+    Then "the failure names the owner, says the agent writes no prefix, and spells the WANTED line"
     error.is_a?(Dev::Deps::Integration::PartialInstallError)
-    error.failures[0][1].message.include?("dev runner register")
+    message = error.failures[0][1].message
+    message.include?("brew install cmake needs the prefix owner (#{owner}) and sudo -n was refused")
+    message.include?("the agent writes no prefix")
+    message.include?("`WANTED: brew install cmake as #{owner} — <what needed it>`")
+    !message.include?("dev runner register")
 
     Cleanup
     FileUtils.chmod(0o755, prefix)
@@ -1129,13 +1137,13 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
 
     Then "the error names the tap and carries no escalation hint (we were not escalated)"
     error.message.include?("brew tap org/tap")
-    !error.message.include?("dev runner register")
+    !error.message.include?("WANTED:")
 
     Cleanup
     FileUtils.rm_rf(dir)
   end
 
-  test "an escalated tap failure carries the sudoers-edge remediation hint" do
+  test "an escalated tap failure carries the owner's name and the WANTED posture, never a register" do
     Given "a URL-less tap and an unwritable brew prefix, where the escalated brew tap fails"
     dir = Dir.mktmpdir("dev-brew-int-test-")
     prefix = File.join(dir, "homebrew")
@@ -1155,8 +1163,10 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
       integration.install_all([])
     end
 
-    Then "the error points at the sudoers brew edge remediation"
-    error.message.include?("dev runner register")
+    Then "the error names the owner the write was escalated to and the WANTED line to report"
+    error.message.include?("escalated to the brew prefix owner #{owner}")
+    error.message.include?("`WANTED: brew tap <tap> as #{owner} — <what needed it>`")
+    !error.message.include?("dev runner register")
 
     Cleanup
     FileUtils.chmod(0o755, prefix)

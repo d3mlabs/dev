@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev/agent_bootstrap/linux"
 require "support/recorded_bootstrap_executor"
-require "etc"
 require "fileutils"
 require "support/recording_ui"
 require "tmpdir"
@@ -189,29 +188,39 @@ class Dev::AgentBootstrap::LinuxTest < Minitest::Test
     executor.runs.fetch(4).include?("trust")
   end
 
-  # dev#337: the brew edge's grantee is whoever owns the prefix on this
-  # host, stat'd at bootstrap time — never a hardcoded `runner`.
-  test "the brew edge stats the prefix owner on the host when no lookup is injected" do
-    Given "a brew under a prefix this process owns, the adapter's own owner lookup, and an agent that is not this process's user"
-    prefix = Dir.mktmpdir
-    brew = File.join(prefix, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    # The suite may itself run as the default agent user (an ai-flow pass
-    # does), and an agent owning the prefix waives the edge — the point
-    # here is the stat, so the agent is someone else.
-    bs = Dev::AgentBootstrap::Linux.new(
-      agent_user: "ci", executor: RecordedBootstrapExecutor.new, tap: nil,
-      data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: brew,
+  # dev#569: the box's first register wrote `ai-agent ALL=(runner)
+  # NOPASSWD:SETENV: …/bin/brew` — brew as a docker-group user, root in two
+  # hops. A drop-in still carrying it differs from the desired content and
+  # is rewritten without it; nothing else on the host is touched.
+  test "converge! rewrites a drop-in still carrying the retired brew edge, with nothing else to do" do
+    Given "a converged host whose drop-in grants the agent the runner's Linuxbrew"
+    data_root = Dir.mktmpdir
+    stale = "runner ALL=(ai-agent) NOPASSWD:SETENV: ALL\n" \
+      "Defaults>ai-agent env_reset, umask=0002, umask_override\n" \
+      "ai-agent ALL=(runner) NOPASSWD:SETENV: #{LINUXBREW}\n"
+    executor = RecordedBootstrapExecutor.new(
+      probe_results: converged_probes,
+      capture_results: converged_captures(data_root, brew_executable: LINUXBREW).merge(SUDOERS_PROBE => stale),
     )
+    ui = RecordingUi.new
 
-    When "reading the edge"
-    edge = bs.brew_edge
+    When "converging"
+    bootstrap(executor, data_root: data_root, ui: ui, brew_executable: LINUXBREW).converge!
 
-    Then "the grantee is the prefix's actual owner"
-    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
-    edge.owner == Etc.getpwuid(Process.uid).name
-    edge.path == brew
+    Then "the drop-in is re-staged and re-installed — the only mutation"
+    ui.rows == [[:step, "Installing the sudoers edge (/etc/sudoers.d/ai-flow-agent)", 0]]
+    executor.runs.length == 2
+    executor.runs.fetch(0).first(4) == ["sudo", "visudo", "-c", "-f"]
+    executor.runs.fetch(1).last == "/etc/sudoers.d/ai-flow-agent"
+  end
+
+  # The lock dir is the agent's concern on any prefix it does not own —
+  # the fact the grant was always about, no longer read off the edge.
+  test "the runner's Linuxbrew is a shared prefix: its lock dir is the agent's concern, the agent's own prefix is not" do
+    Expect
+    bootstrap(RecordedBootstrapExecutor.new, brew_executable: LINUXBREW).shared_brew_prefix == "/home/linuxbrew/.linuxbrew"
+    bootstrap(RecordedBootstrapExecutor.new, brew_executable: LINUXBREW).brew_locks_dir == LINUXBREW_LOCKS
+    bootstrap(RecordedBootstrapExecutor.new, brew_executable: LINUXBREW, owner_of: ->(_path) { "ai-agent" }).brew_locks_dir.nil?
   end
 
   test "ensure_agent_engine! refuses — the agent for an image-built repo runs inside the container (plans#61)" do

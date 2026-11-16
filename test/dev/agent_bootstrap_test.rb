@@ -6,12 +6,11 @@ require "dev/agent_bootstrap"
 require "dev/agent_bootstrap/darwin"
 require "dev/agent_bootstrap/linux"
 require "support/recorded_bootstrap_executor"
-require "etc"
 require "stringio"
 require "tmpdir"
 
 # The contract's own facts — what both adapters share: the sudoers
-# drop-in, the brew edge, the service env, the executor boundary. The
+# drop-in, the brew edge's absence, the service env, the executor boundary. The
 # platform steps are each adapter's test (agent_bootstrap/*_test.rb).
 transform!(RSpock::AST::Transformation)
 class Dev::AgentBootstrapTest < Minitest::Test
@@ -50,96 +49,54 @@ class Dev::AgentBootstrapTest < Minitest::Test
     "linux"  | "runner" | linux.sudoers_content
   end
 
-  # The prefix owner is whoever runs the suite, so the agent is named
-  # explicitly: on an agent host the suite itself runs as `ai-agent`, and the
-  # default would make the owner the agent — a waived edge, not a granted one.
-  test "sudoers content grants the agent a brew edge to the stat'd prefix owner" do
-    Given "a host with brew at a known prefix owned by the human"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    content = self.class.darwin(agent_user: "ci", brew_executable: brew).sudoers_content
+  # dev#569: the agent writes no prefix, so no host grants it brew — not
+  # a Mac whose prefix is the operator's, not the box whose prefix is the
+  # runner user's (a docker-group user: brew as them is root). The agent
+  # is named explicitly because on an agent host the suite itself runs as
+  # `ai-agent`.
+  test "sudoers content grants the agent no brew edge on a prefix another user owns — #{platform}" do
+    Given "a host with brew at a prefix owned by #{owner}"
+    bootstrap = builder.call
 
-    Expect "the agent may run exactly brew as the prefix owner, NOPASSWD, with the assignments dev's escalation hands sudo (SETENV)"
-    content.include?("ci ALL=(#{owner}) NOPASSWD:SETENV: #{brew}")
-    !content.include?("NOPASSWD: #{brew}")
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  # plans#59: on the box the prefix is the runner user's (dev#337), so the
-  # brew edge is agent → runner, onto the Linuxbrew path by its realpath.
-  test "on Linux the brew edge targets the runner user's Linuxbrew prefix" do
-    Given "a Linux host whose Linuxbrew prefix stats as runner's"
-    bootstrap = self.class.linux(brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)
-
-    When "reading the edge"
-    edge = bootstrap.brew_edge
-
-    Then
-    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
-    edge.owner == "runner"
-    edge.path == "/home/linuxbrew/.linuxbrew/bin/brew"
-    bootstrap.sudoers_content.lines.last == "ai-agent ALL=(runner) NOPASSWD:SETENV: /home/linuxbrew/.linuxbrew/bin/brew\n"
-  end
-
-  # dev#365: status inspects the host against the same facts the drop-in
-  # is written from, so they are exposed once and the rule rendered from them.
-  test "the brew edge is exposed as facts — agent, stat'd owner, brew path — and the drop-in carries exactly their rule" do
-    Given "a host with brew at a known prefix owned by the human"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    bootstrap = self.class.darwin(agent_user: "ci", brew_executable: brew)
-
-    When "reading the edge"
-    edge = bootstrap.brew_edge
-
-    Then "the facts are the three the rule names, every tag on it, and the content is built from them"
-    edge.is_a?(Dev::AgentBootstrap::BrewEdge)
-    edge.agent == "ci"
-    edge.owner == owner
-    edge.path == brew
-    Dev::AgentBootstrap::EDGE_TAGS.all? { |tag| edge.sudoers_rule.include?(tag) }
-    bootstrap.sudoers_content.lines.last == "#{edge.sudoers_rule}\n"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
-  end
-
-  test "sudoers content omits the brew edge when brew is absent (#{what}), and says why" do
-    Expect "only the spawn edge and the umask defaults remain; the waiver names the missing brew"
+    Expect "only the spawn edge and the umask defaults; the edge's absence is a fact with the one reason"
     bootstrap.sudoers_content.lines.size == 2
+    !bootstrap.sudoers_content.include?("brew")
+    !bootstrap.sudoers_content.include?("ci ALL=")
     bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
-    bootstrap.brew_edge.reason == "no brew on this host"
+    bootstrap.brew_edge.reason == "the agent writes no prefix: pins are the dispatcher's, gems are the agent's own home — plans#26 G"
+
+    Where
+    platform | owner    | builder
+    "darwin" | "human"  | -> { Dev::AgentBootstrapTest.darwin(agent_user: "ci", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) }
+    "linux"  | "runner" | -> { Dev::AgentBootstrapTest.linux(agent_user: "ci", brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW) }
+  end
+
+  test "the no-brew-edge fact is the same whether the host has brew or not — #{what}" do
+    Expect "one reason, independent of the prefix: the posture, not a waiver"
+    bootstrap.brew_edge.equal?(Dev::AgentBootstrap::NO_BREW_EDGE)
+    bootstrap.sudoers_content.lines.size == 2
 
     Where
     what                        | bootstrap
     "no brew discovered"        | darwin(brew_executable: nil)
     "a prefix no longer there"  | darwin(brew_executable: "/dev-test-gone-#{Process.pid}/bin/brew")
+    "the agent owns the prefix" | darwin(agent_user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" })
   end
 
-  test "sudoers content omits the brew edge when the agent already owns the prefix, and says why" do
-    Given "a brew prefix owned by the agent user itself"
-    dir = Dir.mktmpdir
-    brew = File.join(dir, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    owner = Etc.getpwuid(File.stat(dir).uid).name
-    bootstrap = self.class.darwin(agent_user: owner, brew_executable: brew)
+  # dev#558: the lock-dir grant was keyed on the brew edge; with the edge
+  # retired it is keyed on what it was always about — a prefix the agent
+  # reads but does not own.
+  test "the shared brew prefix is the one another user owns — #{what}" do
+    Expect "the prefix and its lock dir, or neither"
+    [bootstrap.shared_brew_prefix, bootstrap.brew_locks_dir] == [prefix, prefix && File.join(prefix, "var", "homebrew", "locks")]
 
-    Expect "no self-edge is emitted; the waiver names the owner"
-    !bootstrap.sudoers_content.include?(brew)
-    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
-    bootstrap.brew_edge.reason == "#{owner} owns the brew prefix #{dir}"
-
-    Cleanup
-    FileUtils.rm_rf(dir)
+    Where
+    what                             | bootstrap                                                                                               | prefix
+    "the runner user's Linuxbrew"    | linux(brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)          | "/home/linuxbrew/.linuxbrew"
+    "the operator's Mac prefix"      | darwin(brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" })                      | "/opt/homebrew"
+    "a prefix the agent owns itself" | darwin(agent_user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) | nil
+    "a prefix no longer there"       | linux(brew_executable: "/dev-test-gone-#{Process.pid}/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)       | nil
+    "no brew"                        | linux(brew_executable: nil)                                                                             | nil
   end
 
   # plans#59: one record of the env both services carry — the agent user,

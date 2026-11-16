@@ -120,6 +120,26 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor.runs.fetch(1).last == "/etc/sudoers.d/ai-flow-agent"
   end
 
+  # dev#569: the Mac's drop-in granted the agent brew as the operator — an
+  # admin. The edge is retired on this platform too: a drop-in carrying
+  # it is rewritten without it on the next register.
+  test "converge! rewrites a drop-in still carrying the retired brew edge to the operator" do
+    Given "a converged host whose drop-in grants the agent the operator's brew"
+    brew = brew_in(Dir.mktmpdir)
+    stale = "#{sudoers_content(brew_executable: brew)}ai-agent ALL=(human) NOPASSWD:SETENV: #{brew}\n"
+    executor = converged_identity_executor(brew_executable: brew, capture_results: { SUDOERS_PROBE => stale }.merge(cooperative_locks(brew)))
+    ui = RecordingUi.new
+
+    When "converging"
+    bootstrap(executor, ui: ui, brew_executable: brew).converge!
+
+    Then "re-staged, visudo-checked, re-installed — and nothing else ran"
+    ui.rows == [[:step, "Installing the sudoers edge (/etc/sudoers.d/ai-flow-agent)", 0]]
+    executor.runs.length == 2
+    executor.runs.fetch(0).first(4) == ["sudo", "visudo", "-c", "-f"]
+    executor.runs.fetch(1).last == "/etc/sudoers.d/ai-flow-agent"
+  end
+
   test "converge! raises and never installs when visudo rejects the drop-in" do
     Given "visudo failing"
     executor = RecordedBootstrapExecutor.new(fail_matching: "visudo", probe_results: identity_probes)
@@ -320,7 +340,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor.runs.include?(["sudo", "chmod", "-R", "g+rwX", locks])
   end
 
-  test "no lock dir step without a brew edge — the agent owning the prefix takes its own locks" do
+  test "no lock dir step when the agent owns the prefix — it takes its own locks" do
     Given "a converged host whose brew prefix the agent owns"
     brew = brew_in(Dir.mktmpdir)
     executor = converged_identity_executor(brew_executable: brew, owner_of: ->(_prefix) { "ai-agent" })
@@ -426,7 +446,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   # An executor whose identity probes (user, group, memberships, sudoers) all
   # answer converged, so shared-root and trust tests isolate their own step.
   # The sudoers drop-in on "disk" is the one a bootstrap with the same brew
-  # would write, so the brew edge never drifts between probe and desire.
+  # would write, so the drop-in never drifts between probe and desire.
   #
   # @param fail_matching [String, nil] run() fails when the argv mentions this token
   # @param capture_results [Hash] further canned captures (a root's stat)

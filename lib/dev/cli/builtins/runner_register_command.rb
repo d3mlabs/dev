@@ -339,7 +339,9 @@ module Dev
             same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
             renames it) in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
             sudoers edge from the runner user to the agent (NOPASSWD, SETENV — the operator on a
-            Mac, `#{Dev::RunnerUser::DEFAULT_NAME}` on Linux) with the brew edge onto the prefix owner's brew; the tap
+            Mac, `#{Dev::RunnerUser::DEFAULT_NAME}` on Linux) and no edge back — the agent writes no brew prefix
+            (pins are the dispatcher's, gems the agent's own home), so a brew edge an earlier
+            register wrote is retired; the tap
             trusted as the agent; the `_work` tree group-writable; and the service env naming
             the agent user, the group and the slot (#{AgentBootstrap::AGENT_USER_ENV}, #{AgentBootstrap::AGENT_GROUP_ENV},
             #{AgentBootstrap::RUNNER_SLOT_ENV}) under a 002 umask — a LaunchAgent plist on a Mac, a systemd unit

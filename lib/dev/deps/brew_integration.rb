@@ -28,11 +28,16 @@ module Dev
     #
     # Homebrew assumes one non-root owner of one prefix. When the prefix is
     # not writable by the current user, brew writes (tap, install) escalate
-    # to the prefix owner via `sudo -n`; the owner is stat'd at runtime. The
-    # sudoers edge grants one command, `<prefix>/bin/brew` by path, so an
-    # escalated argv keeps brew in sudo's command position and passes the
-    # environment a write needs as sudo's own `VAR=value` assignments. On a
-    # single-user machine the prefix is writable and nothing changes.
+    # to the prefix owner via `sudo -n`; the owner is stat'd at runtime. An
+    # escalated argv keeps brew in sudo's command position — a sudoers rule
+    # for `<prefix>/bin/brew` by path matches it — and passes the
+    # environment a write needs as sudo's own `VAR=value` assignments. No
+    # host dev converges grants the agent user such a rule: the agent
+    # writes no prefix (pins are the dispatcher's to converge before the
+    # job, gems the agent's own home), so for it a refusal is the posture,
+    # and the failure says to report the gap as a `WANTED:` rather than
+    # escalate. On a single-user machine the prefix is writable and nothing
+    # changes.
     #
     # Brew links one keg per formula and deletes the rest on `brew
     # upgrade`/`brew cleanup`, while a lock names one exact version. After
@@ -808,13 +813,26 @@ module Dev
         return if success
 
         command = "brew #{args.join(" ")}"
-        if sudo_refused?(err)
-          raise InstallError,
-            "#{command} needs the prefix owner and sudo -n was refused — " \
-            "the brew sudoers edge is missing or stale on this host; run `dev runner register` to re-converge it"
-        end
+        raise InstallError, refused_escalation_message(command) if sudo_refused?(err)
 
         raise InstallError, "#{command} failed: #{err}"
+      end
+
+      # What a refused escalation means: this user holds no rule to run
+      # the owner's brew, and dev converges none — the agent writes no
+      # prefix, so the pin is the prefix owner's to converge (the
+      # dispatcher's `dev deps install` before the job) and the job reports
+      # the gap in `WANTED:` posture instead of escalating. Never a
+      # register remedy: register retires such a rule, it does not write one.
+      #
+      # @param command [String] the brew write, e.g. "brew install cmake"
+      # @return [String]
+      sig { params(command: String).returns(String) }
+      def refused_escalation_message(command)
+        owner = escalation.last
+        "#{command} needs the prefix owner (#{owner}) and sudo -n was refused — this user holds no brew edge, by " \
+          "design: the agent writes no prefix (pins are the dispatcher's to converge before the job, gems are the " \
+          "agent's own home). Report the gap rather than escalate: `WANTED: #{command} as #{owner} — <what needed it>`"
       end
 
       # Run a brew write — install, upgrade, update — escalated to the
@@ -845,8 +863,8 @@ module Dev
       # survive sudo's `env_reset`. Unescalated: `env VAR=… brew args`.
       # Escalated: `sudo -n -u <owner> VAR=… <prefix>/bin/brew args` — the
       # assignments are sudo's own (sudoers matches the command, and an
-      # `env` in that position would never match the brew edge), and the
-      # executable is the one the edge names.
+      # `env` in that position would never match a rule for brew), and the
+      # executable is the prefix's own brew by path.
       #
       # @param args [Array<String>] brew's argv
       # @param pinned [Boolean] whether to add the pinned-taps variables
@@ -860,9 +878,9 @@ module Dev
         [*sudo, *assignments, brew_executable, *args]
       end
 
-      # The brew an escalated write runs: the prefix's own, by path — the
-      # agent host bootstrap grants exactly that path, and the agent's PATH
-      # is nobody's promise. Bare `brew` when not escalated.
+      # The brew an escalated write runs: the prefix's own, by path — a
+      # sudoers rule for brew names that path, and the caller's PATH is
+      # nobody's promise. Bare `brew` when not escalated.
       #
       # @return [String]
       sig { returns(String) }
@@ -927,16 +945,20 @@ module Dev
         ["sudo", "-n", "-u", T.must(Etc.getpwuid(File.stat(prefix).uid)).name]
       end
 
-      # Remediation appended to escalated-write failures: the two host facts
-      # that break them (missing sudoers edge, a path the owner cannot read).
+      # Remediation appended to escalated tap failures: the two facts that
+      # break them — a path the owner cannot read, and a user with no rule
+      # to run the owner's brew, which for the agent is the posture
+      # (#refused_escalation_message), reported as a `WANTED:`.
       #
       # @return [String] "" when not escalated
       sig { returns(String) }
       def escalation_hint
-        return "" if escalation.empty?
+        owner = escalation.last
+        return "" unless owner
 
-        " (escalated to the brew prefix owner: ensure any local tap path is readable " \
-          "by them and the sudoers brew edge exists — run `dev runner register` to re-converge it)"
+        " (escalated to the brew prefix owner #{owner}: any local tap path must be readable by them; a sudo " \
+          "refusal means this user holds no brew edge, by design — the agent writes no prefix, so report the gap " \
+          "as `WANTED: brew tap <tap> as #{owner} — <what needed it>` rather than escalate)"
       end
 
       # The Homebrew prefix. nil when the machine has no brew — writes then
@@ -948,8 +970,8 @@ module Dev
 
       # @param err [String] a brew invocation's stderr
       # @return [Boolean] whether sudo -n refused: no NOPASSWD rule for the
-      #   command, or a rule without SETENV for the assignments; both are
-      #   re-converged by `dev runner register`
+      #   command, or a rule without SETENV for the assignments — either
+      #   way this user may not write the owner's prefix
       sig { params(err: String).returns(T::Boolean) }
       def sudo_refused?(err)
         err.include?("a password is required") || err.include?("not allowed to set the following environment variables")

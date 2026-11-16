@@ -245,10 +245,14 @@ prompts:
 - a non-admin **agent user**, `ai-agent` (`--agent-user` renames it), with
   its own home and no sudo;
 - the **`dev` group** with both the runner identity and the agent in it;
-- two **sudoers edges**: runner user → agent (`NOPASSWD:SETENV`), so the
-  service spawns the agent; and agent → the brew prefix owner for exactly
-  `<prefix>/bin/brew`, so the agent's `dev deps install` can install
-  formulae;
+- one **sudoers edge**: runner user → agent (`NOPASSWD:SETENV`), so the
+  service spawns the agent. There is no edge back: the agent writes no
+  brew prefix — pins are converged dispatcher-side before the agent
+  spawns, gems land in a home the agent owns — and a brew write as the
+  prefix owner would be arbitrary code as that user (on Linux, a
+  docker-group user). A drop-in still carrying the older agent → owner
+  brew edge is rewritten without it, and `dev runner status` reports such
+  an edge as drift;
 - the shared **data root** (provisioned on a Mac, asserted on Linux),
   brew's lock directory as a group space, and the deployment tap trusted
   by the agent user;
@@ -280,7 +284,8 @@ slots: the runner user and its gh login with the token's expiry, who owns
 the toolchain, whether that identity can read this checkout's lock
 (every `gh` pin's repo, every image's floor package), the agent host's
 contract when an agent family is enrolled (agent user, group memberships,
-sudoers edges, data root, brew locks, engine), the WSL keepalive and
+the sudoers edge and the absence of a brew edge, data root, brew locks,
+engine), the WSL keepalive and
 systemd facts inside a distro, and host tooling against the org Brewfile.
 
 Each family frame opens with its **reach** — what GitHub lets this
