@@ -10,9 +10,10 @@ gets warm.
 ```bash
 dev runner register                       # this repo's build host: repo scope, label = the repo name
 dev runner register --labels ue-engine    # a build host with custom labels
-dev runner register --role agent          # the org agent host (--ai-flow is the same)
-dev runner register --role agent --slots 3              # three jobs at once
-dev runner register --role orchestrator --slots 8       # the orchestrator pool
+dev runner register --org --role agent    # the org agent host (--ai-flow is the same)
+dev runner register --org --role agent --slots 3        # three jobs at once
+dev runner register --ai-flow --slots 2   # this repo's own agent slots
+dev runner register --org --role orchestrator --slots 8 # the orchestrator pool
 dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
@@ -53,23 +54,40 @@ is `--role x --labels y` (the role's labels are its declaration) and
 
 ### Scope
 
-A role whose group is pinned to workflows is **org-scoped**: every repo the
-group admits may send jobs, and `--org` is implied. A **build host** is
-its repo's: only that repo's jobs land on it. Use one when a repo needs its
-own hardware or its own concurrency cap — a repo whose jobs hold the one
-Unreal editor enrolls one build host and has concurrency 1 by
-construction. `--org --labels <set>` makes a custom set an org pool
-instead.
+Scope follows the checkout. Without `--org`, the slots are the repo's:
+only that repo's jobs land on them, for every role — a build host, or a
+repo that wants agent slots of its own. `--org` registers at the repo's
+org: an agent or orchestrator joins its pinned runner group there, and
+every repo the group admits may send jobs; `--org --labels <set>` makes a
+custom set an org pool. A **build host** is the repo-scoped default: use
+one when a repo needs its own hardware or its own concurrency cap — a
+repo whose jobs hold the one Unreal editor enrolls one build host and has
+concurrency 1 by construction.
+
+A repo owned by a **user account** is registered at the repo whatever the
+role. A user account has no runner groups, so there is no org to register
+at; `--org` is refused there.
 
 Scope fixes the first clause of a family's reach. A registration at the
 org lets a group fix which repos and which workflows reach the slots; a
 registration at a repo fixes the repos to that one and leaves the
-workflows open, whatever the role — a build host always, an agent family
-when one repo keeps slots of its own (cellbound-3d's on the Mac).
+workflows open, whatever the role.
 
-Any role registered at a **public** repo is refused: any of the repo's
-workflows, an approved fork PR's included, could otherwise run on the
-host. Enroll for a private repo, or put the runners in a pinned group.
+Any role registered at a **public** repo is refused. A repo-scoped
+runner takes jobs from any of the repo's workflows, and on a public repo
+that includes an approved fork PR's — a workflow file the fork's author
+wrote. Only an org runner group can pin which workflows reach a runner,
+so a public repo's runners must be org-scoped, in a pinned group.
+
+What a registration gets, by the repo's owner and visibility:
+
+| | Private repo | Public repo |
+|---|---|---|
+| **Organization** | Any role at the repo (the default); a pinned role at the org, in its group (`--org`) | A pinned role at the org, in its group (`--org`). Repo scope refused |
+| **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners |
+
+ai-flow adopters: its README's *Choosing your runner setup* says which
+runners ai-flow needs in each case and what else the public case requires.
 
 GitHub routes a job to any online runner visible to the repo whose labels
 cover the job's `runs-on`. There is no repo-beats-org priority, so an org
@@ -303,8 +321,8 @@ orchestrator · 2 slots
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
 printed only under a ✗, as the `cause:` line, with the remedy when a
-clause drifted (`re-run dev runner register --role agent from a checkout
-at d3mlabs`). A build host sitting in the unpinned `Default` group and an
+clause drifted (`re-run dev runner register --org --role agent from a
+checkout at d3mlabs`). A build host sitting in the unpinned `Default` group and an
 agent family whose group lost the ai-flow pin each render that way; a
 registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,

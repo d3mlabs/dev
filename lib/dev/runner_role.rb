@@ -41,6 +41,11 @@ module Dev
 
     # GitHub's default runner group, where a registration naming no group
     # lands; every repo-scoped registration records it.
+    # Where docs/runners.md lays out which scope a registration gets for
+    # which owner and visibility, and why a public repo at repo scope is
+    # refused.
+    SCOPE_DOC_URL = "https://github.com/d3mlabs/dev/blob/main/docs/runners.md#scope"
+
     DEFAULT_POOL = "Default"
 
     sig { returns(String) }
@@ -165,9 +170,10 @@ module Dev
       @builtin
     end
 
-    # Whether the role's runners live at the org by construction: only a
-    # group can carry the workflow pin, so a pinned role is org-scoped
-    # because of the pin, not as an input.
+    # Whether the role has a pinned runner group of its own: registered at
+    # the org (`--org`), its runners join that group and the group's pin
+    # fixes which workflows reach them. Registered at a repo, the role is
+    # that repo's like any other.
     sig { returns(T::Boolean) }
     def org_scoped?
       group = @group
@@ -249,7 +255,7 @@ module Dev
         raise Reach::ExposedError,
           "#{target.repo} is public and its #{@name} runners would take jobs from any of its workflows — an approved fork PR's " \
             "YAML could land on this host. Enroll for a private repo, or put the runners in a group " \
-            "pinned to the workflows that may use them."
+            "pinned to the workflows that may use them (#{SCOPE_DOC_URL})."
       end
 
       Reach.new(repos: Set[target.repo], workflows: Reach::ANY, labels: labels)

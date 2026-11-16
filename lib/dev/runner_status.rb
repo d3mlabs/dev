@@ -428,20 +428,22 @@ module Dev
       labels.empty? ? "no label" : labels.to_a.join(" | ")
     end
 
-    # The register run that converges the family's reach: at the org for a
-    # pinned role's org family, at the repo for everything else — a build
-    # host found at the org included, since the role's reach is the repo
-    # registration's.
+    # The register run that converges the family's reach: `--org` from a
+    # checkout at the org for a pinned role's org family, the repo's
+    # checkout for everything else — a build host found at the org
+    # included, since the role's reach is the repo registration's.
     #
     # @param family [Dev::RunnerFamily]
     # @return [String]
     sig { params(family: RunnerFamily).returns(String) }
     def remedy(family)
       role = family.role
-      flag = role.build_host? ? "" : " --role #{role.name}"
-      at_org = family.org_scoped? && role.org_scoped?
-      where = at_org ? "a checkout at #{family.org}" : "the repo's checkout"
-      "re-run `dev runner register#{flag}` from #{where}"
+      flags = []
+      flags << "--org" if family.org_scoped? && role.org_scoped?
+      flags << "--role #{role.name}" unless role.build_host?
+      argv = (["dev runner register"] + flags).join(" ")
+      where = family.org_scoped? && role.org_scoped? ? "a checkout at #{family.org}" : "the repo's checkout"
+      "re-run `#{argv}` from #{where}"
     end
 
     # --- slots ---------------------------------------------------------------

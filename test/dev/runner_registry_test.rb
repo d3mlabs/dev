@@ -331,7 +331,7 @@ class Dev::RunnerRegistryTest < Minitest::Test
 
   test "place_in_group! PUTs the runner into the group; repository reads a repo's id and visibility" do
     Given
-    record = JSON.generate({ "id" => 300, "full_name" => "d3mlabs/ai-flow", "visibility" => "public" })
+    record = JSON.generate({ "id" => 300, "full_name" => "d3mlabs/ai-flow", "visibility" => "public", "owner" => { "login" => "d3mlabs", "type" => "Organization" } })
     responder = ->(argv) { argv.include?("repos/d3mlabs/ai-flow") ? [record, "", true] : ["", "", true] }
     exec = RecordingExecutor.new(&responder)
     registry = Dev::RunnerRegistry.new(executor: exec)
@@ -343,7 +343,20 @@ class Dev::RunnerRegistryTest < Minitest::Test
     Then
     exec.captures.first == ["gh", "api", "-X", "PUT", "orgs/d3mlabs/actions/runner-groups/1/runners/42"]
     exec.captures.last == ["gh", "api", "repos/d3mlabs/ai-flow"]
-    [repo.id, repo.full_name, repo.visibility, repo.public?] == [300, "d3mlabs/ai-flow", "public", true]
+    [repo.id, repo.full_name, repo.visibility, repo.public?, repo.user_owned?] == [300, "d3mlabs/ai-flow", "public", true, false]
+  end
+
+  test "repository reads the owner's kind: a user account owns no runner groups" do
+    Given
+    record = JSON.generate({ "id" => 301, "full_name" => "JPDuchesne/snappy", "visibility" => "private", "owner" => { "login" => "JPDuchesne", "type" => "User" } })
+    registry = Dev::RunnerRegistry.new(executor: RecordingExecutor.new { [record, "", true] })
+
+    When
+    repo = registry.repository("JPDuchesne/snappy")
+
+    Then
+    repo.owner_type == "User"
+    repo.user_owned?
   end
 
   test "group reads raise QueryError and group writes raise AmendError when gh refuses — never a silent nothing" do
