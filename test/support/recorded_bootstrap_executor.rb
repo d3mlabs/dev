@@ -34,4 +34,13 @@ class RecordedBootstrapExecutor
   def capture(*cmd)
     @capture_results.fetch(cmd, "")
   end
+
+  # Can one more capture after construction — for a fixture a test makes
+  # once it holds the executor (a tmp root whose stat must read a shape).
+  #
+  # @param cmd [Array<String>] the argv to answer
+  # @param result [String] what capture returns for it
+  def answer_capture(cmd, result)
+    @capture_results = @capture_results.merge(cmd => result)
+  end
 end

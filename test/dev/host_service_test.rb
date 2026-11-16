@@ -5,6 +5,7 @@ require "test_helper"
 require "dev/host_service"
 require "dev/settings"
 require "dev/shell_rc_hook"
+require "etc"
 require "fileutils"
 require "pathname"
 require "rbconfig"
@@ -51,10 +52,11 @@ class Dev::HostServiceTest < Minitest::Test
     service.instance_variable_get(:@settings).stubs(:system_config_path).returns(nil)
 
     When "converging the tooling"
-    service.converge_tooling
+    outcome = service.converge_tooling
 
-    Then "brew is never invoked"
+    Then "brew is never invoked; an empty layer is converged, nothing was left undone"
     executor.commands.empty?
+    outcome == Dev::HostService::TOOLING_CONVERGED
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -62,21 +64,76 @@ class Dev::HostServiceTest < Minitest::Test
 
   # dev#337: on a Linux build host the brew prefix belongs to the runner
   # user; the operator's own `dev up` there must not warn about a brew it
-  # was never meant to write.
-  test "a brew prefix the caller cannot write is skipped silently — no self-update, no Brewfile, nothing on stderr" do
-    Given "a deployment and a Brewfile, on a host whose prefix is someone else's"
+  # was never meant to write. dev#622: what it did is returned, so the one
+  # summary that reports the host layer (the projectless `dev up`) can
+  # say the layer was skipped and whose it is.
+  test "a brew prefix the caller cannot write is skipped silently — no self-update, no Brewfile, nothing on stderr — and the outcome names the owner" do
+    Given "a deployment and a Brewfile, on a host whose prefix is runner's"
     dir = Dir.mktmpdir("dev-host-service-test-")
     write_system_config(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
     File.write(File.join(dir, "etc", "Brewfile"), "brew \"zstd\"\n")
     executor = RecordingExecutor.new
-    service = build_service(dir, brew_executor: executor, prefix_writable: -> { false })
+    service = build_service(dir, brew_executor: executor, prefix_writable: -> { false }, prefix_owner: -> { "runner" })
 
     When "converging the tooling"
-    stderr = capture_stderr { service.converge_tooling }
+    outcome = nil
+    stderr = capture_stderr { outcome = service.converge_tooling }
 
-    Then "brew is never invoked and nothing is said"
+    Then "brew is never invoked and nothing is said; the outcome is the skip, with the owner"
     executor.commands.empty?
     stderr.empty?
+    outcome.skipped
+    outcome.prefix_owner == "runner"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a skipped layer whose prefix owner cannot be read is still a skip, owner unknown" do
+    Given "an unwritable prefix nobody's name comes back for"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    service = build_service(dir, prefix_writable: -> { false }, prefix_owner: -> {})
+
+    When "converging the tooling"
+    outcome = service.converge_tooling
+
+    Then
+    outcome.skipped
+    outcome.prefix_owner.nil?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a writable prefix converges the layer and says so" do
+    Given "a named deployment on a prefix the caller owns"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    write_system_config(dir, "deployment_formula: d3mlabs/d3mlabs/dev\n")
+    executor = RecordingExecutor.new
+    service = build_service(dir, brew_executor: executor)
+
+    When "converging the tooling"
+    outcome = service.converge_tooling
+
+    Then "brew ran and the outcome is converged"
+    !executor.commands.empty?
+    outcome == Dev::HostService::TOOLING_CONVERGED
+    !outcome.skipped
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the default owner probe names who owns the machine's brew prefix, nil without one" do
+    Given "a prefix this process made, and settings that know it — then no prefix at all"
+    dir = Dir.mktmpdir("dev-host-service-test-")
+    Dev::Settings.stubs(:brew_prefix).returns(dir)
+    owned_by = Dev::HostService.default_prefix_owner.call
+    Dev::Settings.stubs(:brew_prefix).returns(nil)
+
+    Expect
+    owned_by == Etc.getpwuid(Process.uid).name
+    Dev::HostService.default_prefix_owner.call.nil?
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -529,7 +586,7 @@ class Dev::HostServiceTest < Minitest::Test
                     materializer: Dev::Skills::Materializer.new,
                     own_skills: Dev::Skills::OwnSkills.new(root: File.join(dir, "global")),
                     gem_skills_factory: ->(root) { Dev::Deps::GemSkills.new(project_root: root) },
-                    synchronizer: nil, prefix_writable: -> { true })
+                    synchronizer: nil, prefix_writable: -> { true }, prefix_owner: -> { "human" })
     settings = Dev::Settings.new(
       config_path: File.join(dir, "user", "config.yml"),
       system_config_path: File.join(dir, "etc", "config.yml"),
@@ -543,6 +600,7 @@ class Dev::HostServiceTest < Minitest::Test
       gem_skills_factory: gem_skills_factory,
       synchronizer: synchronizer || Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer),
       prefix_writable: prefix_writable,
+      prefix_owner: prefix_owner,
     )
   end
 

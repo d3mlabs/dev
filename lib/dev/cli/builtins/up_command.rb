@@ -117,7 +117,7 @@ module Dev
           # brew). Warn-only — never blocks the project. Shipped skills link
           # here too: `up` is the fresh-box bootstrap, so the machine's skill
           # links must exist after it, not after the first `dev plan`.
-          @host_service.converge_tooling
+          tooling = @host_service.converge_tooling
           @host_service.install_rc_hook
           @host_service.sync_skills(project_root: nil)
           # The data root is the machine's, so it is the host half's: it must
@@ -129,7 +129,7 @@ module Dev
             # (project-linked); the projectless bootstrap syncs the machine
             # artifacts here or a fresh box would have none.
             @host_service.sync_learnings(project_root: nil)
-            puts "dev: host layer converged."
+            puts host_layer_summary(tooling)
             puts "dev: no dev.yml here — run dev up inside a project to provision it too."
             return
           end
@@ -143,6 +143,28 @@ module Dev
         end
 
         private
+
+        # The projectless bootstrap's one-line sum of the host layer. It has
+        # to be true: when the brew tooling (dev's self-update, the org
+        # Brewfile) was skipped because the prefix is another user's, the
+        # operator who ran `dev up` to upgrade dev reads that here, with
+        # whose it is and the by-hand converge — jobs converge it otherwise.
+        # In a checkout the skip stays silent (HostService#converge_tooling).
+        #
+        # @param tooling [Dev::HostService::ToolingOutcome] what the brew layer's converge did
+        # @return [String]
+        sig { params(tooling: Dev::HostService::ToolingOutcome).returns(String) }
+        def host_layer_summary(tooling)
+          return "dev: host layer converged." unless tooling.skipped
+
+          owner = tooling.prefix_owner
+          whose, by_hand = if owner
+            ["#{owner}'s", "sudo -iu #{owner} dev up"]
+          else
+            ["another user's", "dev up as the brew prefix's owner"]
+          end
+          "dev: host layer converged — brew tooling is #{whose} and was skipped (jobs converge it; by hand: #{by_hand})"
+        end
 
         # The cold shape of `up` (`--no-cache`): the project half alone, run
         # from nothing — a throwaway data root stands in for the warm one for
