@@ -210,6 +210,13 @@ identity, and the `gh` login jobs fetch private dependencies with; you
 mint the registration token and install the service unit. A job never runs
 with your credentials.
 
+Nothing records the name. Register hands brew's prefix to the runner
+user, so a host whose prefix belongs to a user other than you is a host
+whose runner user is that user: register, `dev runner status` and
+`register --help` read the name from the prefix's owner, and every
+by-hand command they print spells it. The examples below say `runner`;
+on a host registered `--as ci` they read `ci`.
+
 Before enrolling, register converges in one sudo session: the shared
 [data root](data-root.md#the-linux-root-is-shared), the runner user (in
 groups `docker` and `dev`), Homebrew's shellenv in
@@ -239,10 +246,10 @@ runner's and was skipped (jobs converge it; by hand: sudo -iu runner dev
 up)`), so a `dev up` run to upgrade dev never reads as success over a
 self-update that did not run. To converge it by hand — to test a
 release before the next job, or to repair the box — run `dev up` as the
-prefix's owner, outside any checkout: `sudo -iu runner dev up` (`runner`
-unless register ran with `--as`). `dev up` is the upgrade — brew's
-update and the scoped upgrade of dev itself — so there is no `brew
-upgrade` to type. The
+prefix's owner, outside any checkout: `sudo -iu runner dev up`, the
+command `dev runner status` prints on its host tooling line when the
+host is behind. `dev up` is the upgrade — brew's update and the scoped
+upgrade of dev itself — so there is no `brew upgrade` to type. The
 checkout's pins (`dependencies.rb`) are project state nobody converges
 for you, so your own `dev up` installs them through the runner user's
 brew, asking your password once (`sudo -u runner <prefix>/bin/brew …`);
@@ -388,7 +395,10 @@ as the job's own identity, facts that identity cannot probe read `?`, not
 `✗` — the runner user's gh login from a job that cannot sudo, the
 keepalive from a service without interop — and only a `✗` fails the
 check. Each red line names its remedy; most are `re-run dev runner
-register`, the tooling line's is `dev up`.
+register`; the tooling line's is `dev up` as the prefix's owner —
+`sudo -iu runner dev up` (outside a checkout) when that is the runner
+user and the reader is not, `dev up` when the reader owns the prefix (a
+Mac, a job running as the runner user).
 
 A job nobody picks up sits at *Waiting for a runner to pick up this job…*
 under a `Requested labels:` line, the same whether the runners are busy,

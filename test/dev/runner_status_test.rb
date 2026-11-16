@@ -1314,7 +1314,60 @@ class Dev::RunnerStatusTest < Minitest::Test
     Where
     what        | converged | expected
     "converged" | true      | ->(path) { "✓ host tooling matches #{path} (dev #{Dev::Version.current})" }
-    "drifted"   | false     | ->(path) { "✗ host tooling drifted from #{path} (dev #{Dev::Version.current}) — run `dev up`" }
+    "behind"    | false     | ->(path) { "✗ host tooling behind #{path} (dev #{Dev::Version.current}) — run `dev up`" }
+  end
+
+  # dev#613: the host half is the prefix owner's to converge (HostService
+  # skips the layer for anyone else), so on a Linux host handed over the
+  # remedy is `dev up` as the runner user — spelled with the name the host
+  # resolves, outside a checkout — and the reader's own `dev up` when the
+  # reader owns the prefix (a job as the runner user, a host not handed
+  # over).
+  test "a tooling line behind on a Linux host names the by-hand `dev up` as the prefix's owner — #{what}" do
+    Given "a Brewfile the host is behind, and #{what}"
+    out = StringIO.new
+    brewfile = existing_file
+    executor = CannedStatusExecutor.new(probe_results: { ["brew", "bundle", "check", "--file=#{brewfile}"] => false, ["id", "-u", name] => true })
+    identity = host_identity(name, brew: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { owner })
+    status = build_status(out: out, executor: executor, brewfile_path: brewfile, host_identity: identity, operator: operator, host: "box", host_os: "linux")
+
+    When
+    status.report
+
+    Then
+    out.string.include?("✗ host tooling behind #{brewfile} (dev #{Dev::Version.current}) — #{remedy}")
+
+    Where
+    what                                                | name     | owner        | operator     | remedy
+    "the prefix ci's, read by the operator"             | "ci"     | "ci"         | "jpduchesne" | "`sudo -iu ci dev up` (outside a checkout)"
+    "the prefix runner's, read by the operator"         | "runner" | "runner"     | "jpduchesne" | "`sudo -iu runner dev up` (outside a checkout)"
+    "the prefix ci's, read by ci itself (a job)"        | "ci"     | "ci"         | "ci"         | "run `dev up`"
+    "the prefix the operator's own (not handed over)"   | "runner" | "jpduchesne" | "jpduchesne" | "run `dev up`"
+  end
+
+  # dev#613: on a host registered `--as ci`, status used to build its host
+  # identity on the rule's default and report `runner user runner missing`
+  # while probing the wrong user's login. The identity's name now comes
+  # from the prefix's owner (RunnerUser.for_host), and every host fact and
+  # remedy is spelled with it.
+  test "on a host handed to ci, the host frame reads ci throughout: the user, its toolchain, its login's probes and remedies" do
+    Given "the identity the host resolves on a prefix owned by ci (the rule's default user is nowhere on it), with no gh login"
+    out = StringIO.new
+    executor = CannedStatusExecutor.new(probe_results: {
+      ["id", "-u", "ci"] => true, as_runner("true", user: "ci") => true, as_runner("gh", "auth", "status", user: "ci") => false,
+    })
+    identity = host_identity("ci", brew: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { "ci" })
+    status = build_status(out: out, executor: executor, host_identity: identity, host: "box", host_os: "linux")
+
+    When
+    status.report
+
+    Then
+    out.string.include?("✓ runner user ci exists")
+    out.string.include?("✓ toolchain: /home/linuxbrew/.linuxbrew owned by ci")
+    out.string.include?("✗ no gh login — `sudo -iu ci gh auth login --with-token`")
+    !out.string.include?("user runner")
+    !out.string.include?("sudo -iu runner")
   end
 
   test "the default Brewfile location sits beside the system config, when one exists" do
@@ -1413,7 +1466,7 @@ class Dev::RunnerStatusTest < Minitest::Test
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil, runner_user: ME,
                    bootstrap: darwin_bootstrap(executor, shared_root: shared_root, brew: brew, runner_user: runner_user), brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach },
-                   wsl_runner_host: nil, host: "mac1", host_os: "darwin")
+                   wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: "human")
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     Dev::RunnerStatus.new(
@@ -1426,7 +1479,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       registry: registry,
       ui: ui,
       executor: executor,
-      operator: "human",
+      operator: operator,
       host: host,
       host_os: host_os,
       host_identity: host_identity,

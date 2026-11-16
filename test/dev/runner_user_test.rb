@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/privileged_steps"
 require "dev/runner_user"
+require "etc"
 require "stringio"
 require "support/recording_ui"
 
@@ -62,10 +63,86 @@ class Dev::RunnerUserTest < Minitest::Test
 
   test "for_host is the host rule: a runner user on Linux (runner by default, --as overrides the name), none elsewhere" do
     Expect
-    Dev::RunnerUser.for_host(host_os: "linux")&.name == "runner"
-    Dev::RunnerUser.for_host(host_os: "linux", name: "ci")&.name == "ci"
-    Dev::RunnerUser.for_host(host_os: "darwin").nil?
-    Dev::RunnerUser.for_host(host_os: "darwin", name: "ci").nil?
+    Dev::RunnerUser.for_host(host_os: "linux", prefix: nil, owner_of: nobody, operator: "jpduchesne")&.name == "runner"
+    Dev::RunnerUser.for_host(host_os: "linux", name: "ci", prefix: nil, owner_of: nobody, operator: "jpduchesne")&.name == "ci"
+    Dev::RunnerUser.for_host(host_os: "darwin", prefix: nil, owner_of: nobody, operator: "jpduchesne").nil?
+    Dev::RunnerUser.for_host(host_os: "darwin", name: "ci", prefix: nil, owner_of: nobody, operator: "jpduchesne").nil?
+  end
+
+  # dev#613: nothing records what `--as` named — the prefix's owner is the
+  # record. Register hands brew's prefix to the runner user, so a host
+  # whose prefix belongs to someone other than the operator is a host
+  # handed over to that user, and status on it must name that user, not
+  # the rule's default.
+  test "the host rule's name is read from the prefix's owner — #{what}" do
+    Given "a host whose brew prefix is #{what}, the operator jpduchesne"
+    owner_of = ->(path) { path == "/home/linuxbrew/.linuxbrew" ? owner : nil }
+
+    Expect "the resolved name, and the same through for_host"
+    Dev::RunnerUser.host_name(prefix: prefix, owner_of: owner_of, operator: "jpduchesne") == resolved
+    Dev::RunnerUser.for_host(host_os: "linux", prefix: prefix, owner_of: owner_of, operator: "jpduchesne")&.name == resolved
+
+    Where
+    what                                       | prefix                       | owner        | resolved
+    "handed to ci (register --as ci)"          | "/home/linuxbrew/.linuxbrew" | "ci"         | "ci"
+    "handed to runner (a bare register)"       | "/home/linuxbrew/.linuxbrew" | "runner"     | "runner"
+    "the operator's own (not yet handed over)" | "/home/linuxbrew/.linuxbrew" | "jpduchesne" | "runner"
+    "root's (a sudo'd install, nobody's brew)" | "/home/linuxbrew/.linuxbrew" | "root"       | "runner"
+    "resolved but not there"                   | "/home/linuxbrew/.linuxbrew" | nil          | "runner"
+    "absent (a machine without brew)"          | nil                          | nil          | "runner"
+  end
+
+  test "--as overrides what the prefix says, and for_host hands the user the prefix's brew and owner lookup so its toolchain facts agree with its name" do
+    Given "a Linuxbrew prefix handed to ci, with brew in its bin"
+    dir = Dir.mktmpdir
+    prefix = File.join(dir, ".linuxbrew")
+    executable(File.join(prefix, "bin", "brew"))
+    owner_of = ->(_path) { "ci" }
+    resolved = Dev::RunnerUser.for_host(host_os: "linux", prefix: prefix, owner_of: owner_of, operator: "jpduchesne")
+    overridden = Dev::RunnerUser.for_host(host_os: "linux", name: "svc", prefix: prefix, owner_of: owner_of, operator: "jpduchesne")
+
+    Expect
+    resolved.name == "ci"
+    resolved.toolchain_roots == [prefix, dir]
+    resolved.toolchain_owner == "ci"
+    resolved.owns_toolchain?
+    resolved.operator == "jpduchesne"
+    resolved.path.start_with?("#{prefix}/bin:#{prefix}/sbin:")
+    overridden.name == "svc"
+    !overridden.owns_toolchain?
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "for_host's owner lookup is a host probe: under the harness it refuses unless injected, naming the seam" do
+    When
+    error = assert_raises(Dev::HostProbeGuard::ProbedError) { Dev::RunnerUser.for_host(host_os: "linux", prefix: nil, operator: "jpduchesne") }
+
+    Then
+    error.message.include?("owner_of:")
+  end
+
+  # The default lookup reads the filesystem; a prefix this process just made
+  # is the operator's own, so the host rule's default stands on every host
+  # (CI's own user may be named `runner` — the facts below hold either way).
+  test "for_host's default owner lookup reads the prefix's owner from the filesystem: the operator's own prefix is a host not yet handed over" do
+    Given "a brew prefix owned by the process running dev, the guard lifted"
+    guard = allow_host_probes
+    dir = Dir.mktmpdir
+    executable(File.join(dir, "bin", "brew"))
+    operator = Etc.getpwuid(Process.uid).name
+
+    When
+    user = Dev::RunnerUser.for_host(host_os: "linux", prefix: dir, operator: operator)
+
+    Then
+    user.name == "runner"
+    user.toolchain_owner == operator
+
+    Cleanup
+    restore_host_probe_guard(guard)
+    FileUtils.rm_rf(dir)
   end
 
   test "an absent runner user is created in one sudo session: the groups it needs, a login user with a home the operator can read, no password" do
@@ -369,6 +446,19 @@ class Dev::RunnerUserTest < Minitest::Test
     runner_user(homes: {}).status_command == "sudo -iu runner gh auth status"
   end
 
+  # dev#613: every by-hand command spells the user's resolved name, so a
+  # host registered `--as ci` reads `sudo -iu ci …`, never the default.
+  test "the by-hand commands — login, status, the host half's `dev up` — are spelled with the user's own name" do
+    Given
+    ci = runner_user(homes: {}, name: "ci")
+
+    Expect
+    ci.login_command == "sudo -iu ci gh auth login --with-token"
+    ci.status_command == "sudo -iu ci gh auth status"
+    ci.host_up_command == "sudo -iu ci dev up"
+    runner_user(homes: {}).host_up_command == "sudo -iu runner dev up"
+  end
+
   test "the default runner user is runner, in docker and the data root's group" do
     Expect
     Dev::RunnerUser::DEFAULT_NAME == "runner"
@@ -436,6 +526,11 @@ class Dev::RunnerUserTest < Minitest::Test
 
   def org_tap
     Dev::TapTrust::Tap.new(user: "d3mlabs", repo: "d3mlabs")
+  end
+
+  # An ownership lookup on a host with no prefix to own.
+  def nobody
+    ->(_path) { nil }
   end
 
   def runner_user(homes:, gh: GhExecutor.new(logged_in: true), name: "runner", brew: nil, owner_of: ->(_path) { name }, tap: nil,

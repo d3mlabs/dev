@@ -938,8 +938,24 @@ module Dev
       if @executor.quiet?("brew", "bundle", "check", "--file=#{brewfile}")
         line(true, "host tooling matches #{brewfile} (dev #{version})")
       else
-        line(false, "host tooling drifted from #{brewfile} (dev #{version}) — run `dev up`")
+        line(false, "host tooling behind #{brewfile} (dev #{version}) — #{host_tooling_remedy}")
       end
+    end
+
+    # The `dev up` that converges the host half: brew is single-owner, so
+    # it is the prefix owner's (HostService skips the layer for anyone
+    # else). The reader's own on a Mac, on a host not handed over, or in a
+    # job that runs as the runner user; as the runner user, outside any
+    # checkout, once the prefix is its — spelled with the name the host
+    # resolves, not the rule's default.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def host_tooling_remedy
+      identity = @host_identity
+      return "run `dev up`" unless identity && identity.toolchain_owner == identity.name && identity.name != @operator
+
+      "`#{identity.host_up_command}` (outside a checkout)"
     end
   end
 end

@@ -45,6 +45,12 @@ module Dev
   # trust is per brew user, so converging the runner user converges both
   # trusts (TapTrust).
   #
+  # The runner user's name is read from the host, never recorded: register
+  # hands brew's prefix to the runner user, so on a host handed over the
+  # prefix's owner *is* the runner user, whatever `--as` named it
+  # (`host_name`). Before a hand-over — no prefix, or the operator's own
+  # — the rule's default stands.
+  #
   # macOS has no runner user: the service is a per-user LaunchAgent and the
   # agent user is its own identity there (AgentBootstrap). `for_host`
   # answers nil and register runs as it always has.
@@ -54,7 +60,8 @@ module Dev
     # The runner user has no gh login; the message carries the command.
     class GhLoginRequiredError < RuntimeError; end
 
-    # The host rule's name; `--as` overrides it.
+    # The host rule's name before a hand-over; `--as` overrides it, and a
+    # prefix handed to another user names that user (`host_name`).
     DEFAULT_NAME = "runner"
 
     # What the machine user's token must carry, and why each: `repo` for
@@ -104,19 +111,61 @@ module Dev
       extend T::Sig
 
       # The runner user for this host, or nil when the host rule does not
-      # apply (not Linux).
+      # apply (not Linux). Named by `--as` when it says so, else as the
+      # host resolves it (host_name).
       #
       # @param name [String, nil] `--as` override
       # @param ui [Ui] the terminal the user's convergence speaks on
       # @param host_os [String, nil] "darwin" / "linux" / "windows"; nil reads
       #   this host's (a host probe — refused under the test harness, HostProbeGuard)
+      # @param prefix [String, nil] the machine's brew prefix (Settings.brew_prefix;
+      #   injectable for tests)
+      # @param owner_of [Proc, nil] who owns a path; nil reads this host's
+      #   filesystem (a host probe — refused under the test harness, likewise)
+      # @param operator [String] the user running dev (this process's;
+      #   injectable for tests)
       # @return [RunnerUser, nil]
-      sig { params(name: T.nilable(String), ui: Ui, host_os: T.nilable(String)).returns(T.nilable(RunnerUser)) }
-      def for_host(name: nil, ui: NoUi.new, host_os: nil)
+      sig do
+        params(
+          name: T.nilable(String),
+          ui: Ui,
+          host_os: T.nilable(String),
+          prefix: T.nilable(String),
+          owner_of: T.nilable(OwnerOf),
+          operator: String,
+        ).returns(T.nilable(RunnerUser))
+      end
+      def for_host(name: nil, ui: NoUi.new, host_os: nil, prefix: Settings.brew_prefix, owner_of: nil,
+                   operator: T.must(Etc.getpwuid(Process.uid)).name)
         host_os ||= HostProbeGuard.probe("Platform.os", inject: "host_os:") { Platform.os }
         return nil unless host_os == "linux"
 
-        new(name: name || DEFAULT_NAME, ui: ui)
+        owner_of ||= HostProbeGuard.probe("the brew prefix's owner", inject: "owner_of:") do
+          ->(path_to_own) { RunnerUser.owner_of(path_to_own) }
+        end
+        resolved = name || host_name(prefix: prefix, owner_of: owner_of, operator: operator)
+        new(name: resolved, ui: ui, brew: brew_path(prefix: prefix), owner_of: owner_of, operator: operator)
+      end
+
+      # The runner user's name as the host tells it. Nothing records what
+      # `--as` named — the prefix's owner is the record: register hands
+      # brew's prefix to the runner user, so a prefix owned by someone
+      # other than the operator is a host handed over to that user. No
+      # prefix, or the operator's own, is a host not yet handed over, and
+      # DEFAULT_NAME is what register will make there. root is never the
+      # runner user: brew refuses to run as root, so a root-owned prefix
+      # is an install to hand over, not a hand-over.
+      #
+      # @param prefix [String, nil] the machine's brew prefix
+      # @param owner_of [Proc] who owns a path
+      # @param operator [String] the user running dev
+      # @return [String]
+      sig { params(prefix: T.nilable(String), owner_of: OwnerOf, operator: String).returns(String) }
+      def host_name(prefix:, owner_of:, operator:)
+        owner = prefix && owner_of.call(prefix)
+        return DEFAULT_NAME if owner.nil? || owner == operator || owner == "root"
+
+        owner
       end
 
       # The home of a user in passwd, or nil when there is no such user.
@@ -407,6 +456,18 @@ module Dev
     sig { returns(String) }
     def status_command
       "sudo -iu #{@name} gh auth status"
+    end
+
+    # The one command that converges the host half of the tooling by hand
+    # — dev's self-update and the org Brewfile, which brew lets only the
+    # prefix's owner write (HostService skips the layer for anyone else):
+    # `dev up` as the runner user, from its own home so no checkout's pins
+    # ride along.
+    #
+    # @return [String]
+    sig { returns(String) }
+    def host_up_command
+      "sudo -iu #{@name} dev up"
     end
 
     # What register says when it cannot ask: the command, and what to

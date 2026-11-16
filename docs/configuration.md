@@ -113,11 +113,11 @@ is the runner user, so the operator's `dev up` there skips it: the jobs
 converge it on their next run. In a checkout the skip is silent; outside
 one, the summary line says the layer was skipped and whose it is. By
 hand, when a job cannot wait, it is `dev up` as the prefix's owner
-outside any checkout — `sudo -iu runner dev up` (`runner` unless
-register ran with `--as`); `dev up` is the upgrade, so there is no `brew
-upgrade` to type. A checkout's own pins are
-the other half: the operator's `dev up` there installs them through the
-runner user's brew with one password prompt. See
+outside any checkout — `sudo -iu runner dev up`, with the owner's name
+(`dev runner status` prints the command when the host is behind); `dev
+up` is the upgrade, so there is no `brew upgrade` to type. A checkout's
+own pins are the other half: the operator's `dev up` there installs them
+through the runner user's brew with one password prompt. See
 [Runners](runners.md#linux-the-runner-user).
 
 ## dev is live infrastructure
