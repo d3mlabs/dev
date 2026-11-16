@@ -73,6 +73,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  a second probe of HOMEBREW_PREFIX, PATH, `brew --prefix`, or a directory
  that merely exists — a runner service has no login shell.
  → .cursor/skills/learnings/one-brew-prefix-resolution/
+- [architecture/service-session-has-no-login-env] A job's session is a
+ service's: anything a login session exports (WSL_DISTRO_NAME, interop,
+ HOMEBREW_PREFIX, PATH) is absent there — read the host, or demand it
+ lazily after the probe that shows the session can ask; what the job's
+ identity cannot read is `?`, never `✗` or a crash.
+ → .cursor/skills/learnings/service-session-has-no-login-env/
 - [architecture/edge-is-as-wide-as-its-target] A sudoers rule or socket
  grant is as wide as what its target can do (brew as a user is ALL as
  that user): dev converges no edge out of the agent identity — a missing
