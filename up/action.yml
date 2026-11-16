@@ -6,7 +6,9 @@
 #     - uses: d3mlabs/dev/up@main
 #
 # A stock GitHub-hosted image gets Homebrew (when the image carries none)
-# and dev installed. A hosted runner on its checkpoint and a self-hosted box
+# and dev installed — d3mlabs's deployment formula, `d3mlabs/d3mlabs/dev`,
+# from the d3mlabs tap: this action is the d3mlabs deployment's, not the
+# generic tool's. A hosted runner on its checkpoint and a self-hosted box
 # already carry both, so the install is skipped and dev is upgraded to the
 # tap's latest instead. Then `dev up` provisions the host — the data root,
 # the org tooling — and installs the lock of the checkout the calling job
@@ -72,6 +74,18 @@ runs:
     # a long-lived box, no wait for the next checkpoint. The formula is the
     # deployment's, named in full so no core formula of the same name is
     # meant. A no-op when dev is current, the just-installed host included.
+    #
+    # `dev up` runs this same update + upgrade itself, but a process cannot
+    # replace its own code: the dev that self-updates finishes its run on
+    # the version it started with, and the upgrade shows on the *next*
+    # invocation. Upgrading here, before it, makes the dev that provisions
+    # the host the new one — a release that fixes provisioning fixes it on
+    # this job, not the one after.
+    #
+    # Two slots of one box can reach this step at once: brew serializes
+    # them on its own locks (`brew update` on the git checkouts, `brew
+    # upgrade` on the formula), so the later one waits and then sees dev
+    # current.
     - name: Upgrade dev
       shell: bash
       run: |
