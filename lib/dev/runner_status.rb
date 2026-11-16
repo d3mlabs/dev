@@ -748,8 +748,9 @@ module Dev
     end
 
     # The agent host's facts, the bootstrap's inspection asked one by one:
-    # the user, the group memberships, the sudoers edges, the data root's
-    # cooperative shape, brew's lock dir, and the engine where required.
+    # the user, the group memberships, the sudoers edge (and that no brew
+    # edge sits beside it), the data root's cooperative shape, brew's lock
+    # dir, and the engine where required.
     # The `_work` trees are the agent slots' own facts, in their family.
     sig { void }
     def agent_host_facts
@@ -772,18 +773,19 @@ module Dev
       line(@bootstrap.engine_converged?, @bootstrap.engine_fact)
     end
 
-    # The two edges the sudoers drop-in grants, read the way a job exercises
-    # them rather than stat'd: the drop-in is root-owned 0440, but the
-    # runner → agent edge is itself the privilege that lists the agent's
-    # rules without a prompt (`-n`, list-only — sudo's listpw is satisfied
-    # by any NOPASSWD rule). A refusal of the first probe is the finding,
-    # never a prompt, and without that edge the brew edge cannot be read.
+    # The sudoers edge and the agent's own rules, read the way a job
+    # exercises them rather than stat'd: the drop-in is root-owned 0440,
+    # but the runner → agent edge is itself the privilege that lists the
+    # agent's rules without a prompt (`-n`, list-only — sudo's listpw is
+    # satisfied by any NOPASSWD rule). A refusal of the first probe is the
+    # finding, never a prompt, and without that edge the agent's rules
+    # cannot be read.
     sig { void }
     def report_sudoers_edges
       agent = @bootstrap.agent_user
       edge = "#{@bootstrap.runner_user} → #{agent}, #{AgentBootstrap::EDGE_TAGS.join(":")}"
       unless @executor.quiet?("sudo", "-n", "-u", agent, "true")
-        line(false, "runner → agent sudoers edge missing (#{edge}) — the brew edge cannot be read without it " \
+        line(false, "runner → agent sudoers edge missing (#{edge}) — the agent's rules cannot be read without it " \
                     "(run `dev runner register`)")
         return
       end
@@ -792,44 +794,32 @@ module Dev
       report_brew_edge
     end
 
-    # The brew edge against the rules the agent's own `sudo -l` lists: the
-    # rule naming the owner and ending in the brew path, carrying every tag.
+    # No brew edge is the converged state (AgentBootstrap::NO_BREW_EDGE);
+    # a rule in the agent's own `sudo -l` that runs brew as anyone is
+    # drift — a drop-in from before the edge was retired — which the next
+    # register rewrites away.
     sig { void }
     def report_brew_edge
-      edge = @bootstrap.brew_edge
-      case edge
-      when AgentBootstrap::NoBrewEdge
-        line(true, "no brew edge needed (#{edge.reason})")
-      when AgentBootstrap::BrewEdge
-        grant = "#{edge.agent} may run #{edge.path} as #{edge.owner}"
-        rule = brew_rule(edge)
-        if rule.nil?
-          line(false, "brew edge missing: #{grant} is not granted (run `dev runner register`)")
-          return
-        end
-
-        missing_tags = AgentBootstrap::EDGE_TAGS.reject { |tag| rule.include?(tag) }
-        if missing_tags.empty?
-          line(true, "brew edge: #{grant} (#{AgentBootstrap::EDGE_TAGS.join(", ")})")
-        else
-          line(false, "brew edge without #{missing_tags.join(", ")}: #{grant}, but not as dev's escalation " \
-                      "runs it (run `dev runner register`)")
-        end
+      reason = @bootstrap.brew_edge.reason
+      granted = brew_rules
+      if granted.empty?
+        line(true, "no brew edge (#{reason})")
       else
-        T.absurd(edge)
+        line(false, "brew edge present — #{@bootstrap.agent_user} may run brew as another user (#{granted.join("; ")}): " \
+                    "#{reason} (run `dev runner register` to retire it)")
       end
     end
 
-    # The agent's sudo rule granting the edge's path as its owner, if any —
-    # `sudo -l` prints one as `(<owner>) <tags>: <path>`, tags in its own
-    # order, so the match is on the owner and the path alone.
+    # The agent's sudo rules that run brew, if any — `sudo -l` prints one
+    # as `(<owner>) <tags>: <path>`, so a rule is matched on its command's
+    # name alone: the owner and the path are whatever the drop-in that
+    # wrote it said, a symlink's realpath included.
     #
-    # @param edge [AgentBootstrap::BrewEdge]
-    # @return [String, nil]
-    sig { params(edge: AgentBootstrap::BrewEdge).returns(T.nilable(String)) }
-    def brew_rule(edge)
+    # @return [Array<String>]
+    sig { returns(T::Array[String]) }
+    def brew_rules
       rules = @executor.capture("sudo", "-n", "-u", @bootstrap.agent_user, "sudo", "-n", "-l")
-      rules.lines.map(&:strip).find { |rule| rule.include?("(#{edge.owner})") && rule.end_with?(edge.path) }
+      rules.lines.map(&:strip).select { |rule| File.basename(rule.split.last.to_s) == "brew" }
     end
 
     # `brew bundle check` against the org Brewfile — the same list `dev up`

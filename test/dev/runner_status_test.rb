@@ -127,6 +127,26 @@ class Dev::RunnerStatusTest < Minitest::Test
   # `sudo -l` as the agent, in sudo 1.9's layout (tags in its order, not ours).
   AGENT_RULES_HEADER = "User ai-agent may run the following commands on mac:\n"
 
+  # The one reason the drop-in grants the agent no brew (dev#569).
+  NO_BREW_EDGE_REASON = Dev::AgentBootstrap::NO_BREW_EDGE.reason
+
+  # The box's brew by realpath — the path a dev#330-era drop-in named.
+  LINUXBREW_REALPATH = "/home/linuxbrew/.linuxbrew/Homebrew/bin/brew"
+
+  # Class methods, defined ahead of the tests: Where tables are evaluated
+  # in class scope as the file loads.
+  class << self
+    # `sudo -l` as the agent listing one rule under the header.
+    def agent_rule(rule)
+      "#{AGENT_RULES_HEADER}    #{rule}\n"
+    end
+
+    # The drift line status prints for a brew rule in the agent's own rules.
+    def brew_edge_drift(rule)
+      "✗ brew edge present — ai-agent may run brew as another user (#{rule}): #{NO_BREW_EDGE_REASON} (run `dev runner register` to retire it)"
+    end
+  end
+
   # The PATH the test's host identities run commands on.
   HOST_PATH = "/opt/brew/bin:/usr/bin"
 
@@ -881,7 +901,7 @@ class Dev::RunnerStatusTest < Minitest::Test
         ["stat", "-f", "%Sg %Sp", File.join(runner_dir, "_work")] => "dev drwxrwsr-x\n",
         ["stat", "-f", "%Sg %Sp", shared_root] => "dev drwxrwsr-x\n",
         ["stat", "-f", "%Sg %Sp", "/opt/homebrew/var/homebrew/locks"] => "dev drwxrwsr-x\n",
-        AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n",
+        AGENT_SUDO_LIST => AGENT_RULES_HEADER,
       },
     )
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"], status: "online") }
@@ -901,7 +921,7 @@ class Dev::RunnerStatusTest < Minitest::Test
       [:note, "{{v}} human in the dev group", 1],
       [:note, "{{v}} ai-agent in the dev group", 1],
       [:note, "{{v}} runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)", 1],
-      [:note, "{{v}} brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)", 1],
+      [:note, "{{v}} no brew edge (#{NO_BREW_EDGE_REASON})", 1],
       [:note, "{{v}} data root #{shared_root} shared with group dev (setgid)", 1],
       [:note, "{{v}} brew lock dir /opt/homebrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)", 1],
       [:note, "{{v}} colima installed (container engine)", 1],
@@ -933,7 +953,7 @@ class Dev::RunnerStatusTest < Minitest::Test
         ["stat", "-c", "%G %A", File.join(runner_dir, "_work")] => "dev drwxrwsr-x\n",
         ["stat", "-c", "%G %A", data_root] => "dev drwxrwsr-x\n",
         ["stat", "-c", "%G %A", "/home/linuxbrew/.linuxbrew/var/homebrew/locks"] => "dev drwxrwsr-x\n",
-        AGENT_SUDO_LIST => "#{AGENT_RULES_HEADER}    (runner) SETENV: NOPASSWD: /home/linuxbrew/.linuxbrew/bin/brew\n",
+        AGENT_SUDO_LIST => AGENT_RULES_HEADER,
       },
     )
     bootstrap = Dev::AgentBootstrap::Linux.new(
@@ -952,7 +972,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("✓ runner in the dev group")
     out.string.include?("✓ ai-agent in the dev group")
     out.string.include?("✓ runner → agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)")
-    out.string.include?("✓ brew edge: ai-agent may run /home/linuxbrew/.linuxbrew/bin/brew as runner (NOPASSWD, SETENV)")
+    out.string.include?("✓ no brew edge (#{NO_BREW_EDGE_REASON})")
     out.string.include?("✓ data root #{data_root} shared with group dev (setgid)")
     out.string.include?("✓ brew lock dir /home/linuxbrew/.linuxbrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)")
     out.string.include?("✗ agent engine: ")
@@ -961,10 +981,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.scan("✗ agent engine").length == 1
   end
 
-  # dev#365: the drop-in is root-owned 0440, so the edges are read the way a
-  # job exercises them — through the runner → agent edge, `-n`, list-only —
-  # and matched on the facts register writes, not on the file's presence.
-  test "the brew edge is read from the agent's own sudo rules — #{what}" do
+  # dev#365 / dev#569: the drop-in is root-owned 0440, so the agent's rules
+  # are read the way a job exercises them — through the runner → agent
+  # edge, `-n`, list-only. No brew rule is the converged state; one that
+  # runs brew as anyone, whatever its tags or path (a drop-in from before
+  # the edge was retired, or a realpath one), is drift register rewrites.
+  test "the agent's own sudo rules decide the brew edge fact — #{what}" do
     Given "an agent-labeled enrollment on a host where the agent's rules list #{what}"
     out = StringIO.new
     home = Dir.mktmpdir
@@ -984,14 +1006,16 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?(expected)
 
     Where
-    what                                    | rules                                                                         | expected
-    "the edge, tags in sudo's own order"    | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /opt/homebrew/bin/brew\n" | "✓ brew edge: ai-agent may run /opt/homebrew/bin/brew as human (NOPASSWD, SETENV)"
-    "the edge without SETENV (pre-dev#361)" | "#{AGENT_RULES_HEADER}    (human) NOPASSWD: /opt/homebrew/bin/brew\n"         | "✗ brew edge without SETENV: ai-agent may run /opt/homebrew/bin/brew as human, but not as dev's escalation runs it (run `dev runner register`)"
-    "another path as the owner, not brew"   | "#{AGENT_RULES_HEADER}    (human) SETENV: NOPASSWD: /usr/local/bin/brew\n"    | "✗ brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
-    "no rules at all (sudo -l refused)"     | ""                                                                            | "✗ brew edge missing: ai-agent may run /opt/homebrew/bin/brew as human is not granted (run `dev runner register`)"
+    what                                     | rules                                                          | expected
+    "no rules (the retired edge's absence)"  | AGENT_RULES_HEADER                                             | "✓ no brew edge (#{NO_BREW_EDGE_REASON})"
+    "nothing at all (sudo -l refused)"       | ""                                                             | "✓ no brew edge (#{NO_BREW_EDGE_REASON})"
+    "the retired edge, tags in sudo's order" | agent_rule("(human) SETENV: NOPASSWD: /opt/homebrew/bin/brew") | brew_edge_drift("(human) SETENV: NOPASSWD: /opt/homebrew/bin/brew")
+    "a pre-dev#361 edge without SETENV"      | agent_rule("(human) NOPASSWD: /opt/homebrew/bin/brew")         | brew_edge_drift("(human) NOPASSWD: /opt/homebrew/bin/brew")
+    "a realpath brew, as the runner user"    | agent_rule("(runner) SETENV: NOPASSWD: #{LINUXBREW_REALPATH}") | brew_edge_drift("(runner) SETENV: NOPASSWD: #{LINUXBREW_REALPATH}")
+    "a rule for something other than brew"   | agent_rule("(human) NOPASSWD: /usr/bin/true")                  | "✓ no brew edge (#{NO_BREW_EDGE_REASON})"
   end
 
-  test "a refused runner → agent probe is the finding: one red line, no prompt, and the brew edge is not read" do
+  test "a refused runner → agent probe is the finding: one red line, no prompt, and the agent's rules are not read" do
     Given "an agent-labeled enrollment on a host whose drop-in grants the operator nothing"
     out = StringIO.new
     home = Dir.mktmpdir
@@ -1004,11 +1028,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("✗ runner → agent sudoers edge missing (#{ME} → ai-agent, NOPASSWD:SETENV) — the brew edge cannot be read without it (run `dev runner register`)")
-    !out.string.include?("brew edge:")
+    out.string.include?("✗ runner → agent sudoers edge missing (#{ME} → ai-agent, NOPASSWD:SETENV) — the agent's rules cannot be read without it (run `dev runner register`)")
+    !out.string.include?("brew edge (")
+    !out.string.include?("brew edge present")
   end
 
-  test "a host register writes no brew edge for reads ok and says why, without listing the agent's rules" do
+  test "a brewless host reads the same no-brew-edge fact: the posture does not depend on the prefix" do
     Given "an agent-labeled enrollment on a brewless host"
     out = StringIO.new
     home = Dir.mktmpdir
@@ -1021,7 +1046,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    out.string.include?("✓ no brew edge needed (no brew on this host)")
+    out.string.include?("✓ no brew edge (#{NO_BREW_EDGE_REASON})")
+    !out.string.include?("brew lock dir")
   end
 
   test "flags every missing agent host fact, the slot's _work tree among the slot's own" do

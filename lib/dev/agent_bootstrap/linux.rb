@@ -17,8 +17,11 @@ module Dev
     # a systemd unit drop-in for the service env. Three identities meet
     # here: the operator registers, the *runner user* owns the
     # enrollment and its service — so the spawn edge is `runner → agent`,
-    # and the brew edge targets the runner user's Linuxbrew prefix. The
-    # agent holds nothing on the host.
+    # and it is the only edge: the runner user is in the docker group,
+    # root-equivalent on the host, so a brew write as that user (formulae
+    # are Ruby) would be the two-hop path to the socket the agent user
+    # exists to close. The agent reads the runner user's Linuxbrew prefix
+    # and holds nothing on the host.
     #
     # Nothing is provisioned for the data root: `/var/lib/dev` and its
     # group exist from LinuxDataRootProvisioner (the `dev up` and
@@ -71,7 +74,7 @@ module Dev
       # @param data_root [String] the host's data root (DataRoot::LINUX_ROOT)
       # @param systemd_dir [String] where unit drop-ins land
       # @param brew_executable [String, nil] the host's brew binary
-      #   (RunnerUser.brew_path; nil = no brew edge, no tap to trust)
+      #   (RunnerUser.brew_path; nil = no lock dir to share, no tap to trust)
       # @param owner_of [Proc] who owns a path (injectable for tests)
       # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap; nil for none
       sig do

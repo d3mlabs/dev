@@ -25,13 +25,14 @@ module Dev
   # cooperative group both identities join — the data root's
   # (DataRoot::GROUP), one name across hosts; the one-way sudoers edge
   # (runner user → agent, SETENV, with the agent-side umask defaults that
-  # keep agent-created dirs group-writable) and the brew edge beside it;
-  # the data root the agent reads through the group; brew's lock dir as a
-  # group space, so the agent's brew reads can take the API download lock
-  # in a prefix it does not own; the agent's trust of the
-  # deployment's tap (TapTrust — the agent is a different brew user);
-  # and after enrollment, the `_work` tree as a group space and
-  # the service env naming the agent user, the group and the slot.
+  # keep agent-created dirs group-writable) — and no edge back: the agent
+  # writes no brew prefix (#brew_edge); the data root the agent reads
+  # through the group; brew's lock dir as a group space, so the agent's
+  # brew reads can take the API download lock in a prefix it does not
+  # own; the agent's trust of the deployment's tap (TapTrust — the agent
+  # is a different brew user); and after enrollment, the `_work` tree as
+  # a group space and the service env naming the agent user, the group
+  # and the slot.
   #
   # One contract, two adapters: the facts are the same on a Mac
   # and on a Linux dev host; the CLIs that establish them are not, and the
@@ -77,37 +78,29 @@ module Dev
     # not overridable, so the agent's locks go where the owner's do.
     BREW_LOCKS = "var/homebrew/locks"
 
-    # The tags every edge in the drop-in carries: no prompt (jobs run
-    # unattended) and SETENV (the caller's `VAR=value` assignments ride
-    # through). Matched by name, since `sudo -l` prints them in its own order.
+    # The tags the spawn edge carries: no prompt (jobs run unattended) and
+    # SETENV (the caller's `VAR=value` assignments ride through). Matched
+    # by name, since `sudo -l` prints them in its own order.
     EDGE_TAGS = T.let(%w[NOPASSWD SETENV].freeze, T::Array[String])
 
-    # The brew escalation edge as facts — who may run which brew as whom —
-    # the single description the drop-in's rule is rendered from and the
-    # host is inspected against.
-    class BrewEdge < T::Struct
-      extend T::Sig
-
-      const :agent, String
-      const :owner, String
-      const :path, String
-
-      # The sudoers rule granting the edge.
-      #
-      # @return [String]
-      sig { returns(String) }
-      def sudoers_rule
-        "#{agent} ALL=(#{owner}) #{EDGE_TAGS.join(":")}: #{path}"
-      end
-    end
-
-    # Why the drop-in carries no brew edge: nothing for the agent to escalate.
+    # Why the drop-in carries no brew edge — the fact `dev runner status`
+    # reports and the reason register gives for retiring one it finds.
     class NoBrewEdge < T::Struct
       const :reason, String
     end
 
-    # What the drop-in does about brew: the edge it grants, or why none.
-    BrewEdgeDecision = T.type_alias { T.any(BrewEdge, NoBrewEdge) }
+    # The one reason, on every platform: nothing the agent does writes a
+    # brew prefix. Pins are converged dispatcher-side, by the job's own
+    # user, before the agent spawns; gems land in a home the agent owns.
+    # A brew *write* as the prefix owner is arbitrary code as that user —
+    # on a Linux box a docker-group user, root-equivalent — so the edge
+    # was a path across the one line the agent user exists to draw
+    # (plans#26 scenario G: the agent runs zero setup commands; anything
+    # missing is a `WANTED:`).
+    NO_BREW_EDGE = T.let(
+      NoBrewEdge.new(reason: "the agent writes no prefix: pins are the dispatcher's, gems are the agent's own home — plans#26 G"),
+      NoBrewEdge,
+    )
 
     # Runs the admin CLIs. `run` streams (sudo password prompts must reach
     # the terminal), `quiet?` probes success silently, `capture` returns
@@ -207,9 +200,10 @@ module Dev
     #   sequence (sudo owns the terminal), a note per fact
     # @param data_root [String] the data root the agent joins
     # @param brew_executable [String, nil] the host's brew binary (nil = no
-    #   brew edge, no tap to trust)
-    # @param owner_of [Proc] who owns a path — the brew prefix's owner is
-    #   the brew edge's grantee (RunnerUser::OwnerOf; injectable for tests)
+    #   lock dir to share, no tap to trust)
+    # @param owner_of [Proc] who owns a path — whether the brew prefix is
+    #   another user's decides the lock dir grant (RunnerUser::OwnerOf;
+    #   injectable for tests)
     # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap, which the
     #   agent user must trust before brew will load its formulae for it
     #   (TapTrust); nil for none
@@ -316,8 +310,10 @@ module Dev
     # The sudoers drop-in content: the one-way NOPASSWD SETENV edge (env is
     # allowlisted by the caller's --preserve-env, which is why SETENV is
     # safe here), plus the agent-side umask defaults that keep agent-created
-    # dirs group-accessible for the dispatcher's cleanup and `git add`,
-    # plus the brew escalation edge (when the host has brew).
+    # dirs group-accessible for the dispatcher's cleanup and `git add`.
+    # Nothing grants the agent anything: a drop-in carrying a brew edge
+    # from an earlier register differs from this and is rewritten without
+    # it (#ensure_sudoers!).
     #
     # @return [String]
     sig { returns(String) }
@@ -326,52 +322,46 @@ module Dev
         "#{@runner_user} ALL=(#{@agent_user}) #{EDGE_TAGS.join(":")}: ALL",
         "Defaults>#{@agent_user} env_reset, umask=0002, umask_override",
       ]
-      edge = brew_edge
-      lines << edge.sudoers_rule if edge.is_a?(BrewEdge)
       "#{lines.join("\n")}\n"
     end
 
-    # The brew escalation edge (the Homebrew single-user gap on cooperative
-    # machines): the agent may run exactly brew as the prefix owner,
-    # NOPASSWD, so `dev deps install` converges formulae without a human
-    # even though the prefix belongs to another user — the operator on a
-    # Mac, the runner user on a Linux box. The owner is stat'd
-    # here at bootstrap time — never hardcoded — and re-running register
-    # re-converges the edge. Waived when the host has no brew or the agent
-    # owns the prefix itself (nothing to escalate). Consumed by
-    # Dev::Deps::BrewIntegration's `sudo -n` escalation, which runs this
-    # exact path with the brew environment a write needs (its download
-    # cache in the store, the pinned-taps variables) as sudo's own
-    # `VAR=value` assignments — sudoers matches the command, so nothing
-    # may stand in front of brew — and sudo admits those assignments only
-    # under SETENV. SETENV widens nothing material: a grant to
-    # run brew as the owner already runs arbitrary code as the owner
-    # (`brew ruby`, `brew sh`, a formula from a local tap).
+    # Inspection: what the drop-in does about brew — nothing, and why
+    # (NO_BREW_EDGE). Dev::Deps::BrewIntegration's `sudo -n` escalation
+    # still exists for a caller whose host grants one by other means; for
+    # the agent its refusal is the posture, reported as a `WANTED:`.
     #
-    # @return [BrewEdge, NoBrewEdge] the edge, or why none is written
-    sig { returns(BrewEdgeDecision) }
+    # @return [NoBrewEdge]
+    sig { returns(NoBrewEdge) }
     def brew_edge
+      NO_BREW_EDGE
+    end
+
+    # Inspection: the brew prefix the agent reads but does not own — the
+    # operator's on a Mac, the runner user's on a Linux box — whose lock
+    # dir is therefore the agent's concern. nil without brew (or a prefix
+    # no longer there), or when the agent owns the prefix itself.
+    #
+    # @return [String, nil]
+    sig { returns(T.nilable(String)) }
+    def shared_brew_prefix
       brew = @brew_executable
-      return NoBrewEdge.new(reason: "no brew on this host") unless brew
+      return nil unless brew
 
       prefix = prefix_of(brew)
       owner = @owner_of.call(prefix)
-      return NoBrewEdge.new(reason: "no brew on this host") unless owner
-      return NoBrewEdge.new(reason: "#{@agent_user} owns the brew prefix #{prefix}") if owner == @agent_user
-
-      BrewEdge.new(agent: @agent_user, owner: owner, path: brew)
+      owner && owner != @agent_user ? prefix : nil
     end
 
     # Inspection: brew's lock dir on a host whose brew the agent uses but
-    # does not own (the #brew_edge hosts) — `<prefix>/var/homebrew/locks`,
+    # does not own (#shared_brew_prefix) — `<prefix>/var/homebrew/locks`,
     # where brew.sh pins HOMEBREW_LOCKS (not overridable). nil without
     # brew, or when the agent owns the prefix and takes its own locks.
     #
     # @return [String, nil]
     sig { returns(T.nilable(String)) }
     def brew_locks_dir
-      edge = brew_edge
-      edge.is_a?(BrewEdge) ? File.join(prefix_of(edge.path), BREW_LOCKS) : nil
+      prefix = shared_brew_prefix
+      prefix && File.join(prefix, BREW_LOCKS)
     end
 
     # Inspection: whether the agent can take brew's locks — the dir a
@@ -474,6 +464,8 @@ module Dev
     # Step 3: the sudoers drop-in, staged and visudo-validated before it
     # lands (a bad sudoers file can lock sudo out of the whole box), then
     # installed root-owned 0440 so the agent can never rewrite its own edge.
+    # Compared whole, so a drop-in still carrying the brew edge an earlier
+    # register wrote is replaced by one without it — the drift repair.
     sig { void }
     def ensure_sudoers!
       desired = sudoers_content
@@ -496,10 +488,11 @@ module Dev
     # `<prefix>/var/homebrew/locks`, which the prefix owner alone could
     # write — so on the box `brew trust` as the agent died on
     # `packages.x86_64_linux.jws.json.download.lock`. The dir holds no code
-    # and no trust state (trust is per user, under the agent's home), so
-    # the grant widens nothing the brew edge has not. Re-granted whenever a
-    # lock in it is closed to the group — the owner's interactive brew
-    # leaves 0644 locks behind.
+    # and no trust state (trust is per user, under the agent's home): a
+    # lock file is the one thing in the prefix the agent writes, and it
+    # changes nothing brew installs or runs. Re-granted whenever a lock in
+    # it is closed to the group — the owner's interactive brew leaves 0644
+    # locks behind.
     sig { void }
     def ensure_brew_locks!
       dir = brew_locks_dir

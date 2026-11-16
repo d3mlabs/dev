@@ -52,8 +52,8 @@ module Dev
       # @param home_dev [String] the per-user data dir migrated out of
       # @param launch_agents_dir [String] where svc.sh installs runner plists
       # @param brew_executable [String, nil] the host's brew binary
-      #   (RunnerUser.brew_path; injectable for tests; nil = no brew
-      #   edge, no tap to trust)
+      #   (RunnerUser.brew_path; injectable for tests; nil = no lock dir
+      #   to share, no tap to trust)
       # @param owner_of [Proc] who owns a path (injectable for tests)
       # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap; nil for none
       sig do
