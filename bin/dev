@@ -51,26 +51,27 @@ root = (File.basename(script_dir) == "bin") ? File.dirname(script_dir) : script_
 lib = File.join(root, "lib")
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
-# An installed dev's runtime gems (sorbet-runtime, cli-ui) are vendored by
-# the formula into the libexec that holds this tree — libexec/dev/bin/dev
-# beside libexec/specifications. Select them here, in-process, before the
-# first gem require: Gem.use_paths sets this process's gem home and path
-# and touches ENV not at all, so nothing is exported for children to
-# inherit (an exported GEM_HOME would send a project's bundler install
-# into dev-core's Cellar) and nothing the caller exported can misdirect
-# dev (a GEM_PATH-less brew Ruby falls back to the prefix-wide gem dir
-# shared by every brew Ruby, where another Ruby's native extensions
-# live). The vendored dir goes in FRONT of the path dev would otherwise
-# have (the caller's GEM_PATH, or the Ruby's defaults when none) — never
-# instead of it: default gems (json, open3) resolve from the Ruby's stdlib
-# regardless of Gem.path, but *bundled* gems (reline, and readline on it —
-# what CLI::UI::Prompt requires on every tty or CI run) live in the Ruby's
-# gem dir and are only reachable through the path. A source checkout has
-# no specifications dir beside it and keeps the shell's gem env untouched.
-# Guarded by test/dev/bin_dev_test.rb against a synthetic libexec, both
-# ways.
+# An installed dev's gem path is exactly two directories: the libexec the
+# formula vendored its runtime gems into (sorbet-runtime, cli-ui — found by
+# position, libexec/dev/bin/dev beside libexec/specifications) and the
+# running Ruby's own gem dir, where its *bundled* gems live (reline, and
+# readline on it — what CLI::UI::Prompt requires on every tty or CI run;
+# default gems such as json resolve from the stdlib regardless). Nothing
+# from the environment: not GEM_PATH, and not the Ruby's default path,
+# which is wider than the Ruby — RubyGems puts the user's ~/.gem/ruby/X.Y.0
+# first and a brew Ruby adds the prefix-wide dir shared by every brew Ruby,
+# both written by other interpreters and able to hold a native extension
+# linked against another libruby at the same version as this Ruby's own.
+# Gem.use_paths touches ENV not at all, so children inherit the caller's
+# activation unchanged and nothing of dev-core's is exported to them. A
+# source checkout has no specifications dir beside it and keeps the
+# shell's gem env, which is how its own test suite runs it. Guarded by
+# test/dev/bin_dev_test.rb against a synthetic libexec.
 vendored = File.dirname(root)
-Gem.use_paths(vendored, [vendored, *Gem.path]) if File.directory?(File.join(vendored, "specifications"))
+if File.directory?(File.join(vendored, "specifications"))
+  ruby_own_gems = File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version"])
+  Gem.use_paths(vendored, [vendored, ruby_own_gems])
+end
 
 require "dev"
 require "dev/cli/global_dispatch"

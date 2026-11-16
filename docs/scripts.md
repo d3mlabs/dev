@@ -64,9 +64,11 @@ dev strips a caller's bundler activation (`RUBYOPT`, `RUBYLIB`,
 `BUNDLE_*`, `BUNDLER_*`) once, at its entrypoint, so running dev under
 `bundle exec` does not boot it inside that bundle. Nothing else is
 scrubbed: `GEM_HOME` and `GEM_PATH` pass through to children, and in a
-project shell the project's shadowenv sets them. dev's own vendored gems
-are added to its process's gem path, not exported, so they never leak into
-a child.
+project shell the project's shadowenv sets them. An installed dev's own
+process reads neither: its gem path is its vendored gems plus the running
+Ruby's own gem directory, set in-process and never exported, so the
+caller's gem environment cannot misdirect dev and dev's gems never leak
+into a child.
 
 Scripts under `build:`, `package:` and a channel's `run:` read their
 parameters from `DEV_*` variables; see [dev.yml](dev-yml.md#the-build-scripts-environment).

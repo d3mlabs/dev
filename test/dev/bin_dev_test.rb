@@ -120,6 +120,37 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # The Ruby's default gem path is wider than the Ruby: RubyGems puts the
+  # user's ~/.gem/ruby/X.Y.0 first, and a brew Ruby adds the prefix-wide
+  # dir shared by every brew Ruby. Both are written by other interpreters
+  # and can hold a native extension linked against another libruby at the
+  # same version as this Ruby's own — which is what reline's io-console
+  # dependency resolved to on the Mac runner. An installed dev's gem path
+  # is its vendored gems plus the running Ruby's own dir, nothing from the
+  # environment, so such a user dir is never consulted.
+  test "installed under a libexec, a CI run never consults the user's gem dir — an io-console planted there, newer than the Ruby's, is not loaded" do
+    Given "a libexec with the vendored gems, no GEM_HOME/GEM_PATH, and a HOME whose user gem dir holds an io-console that raises on load"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    libexec = build_libexec(dir)
+    home = File.join(dir, "home")
+    plant_poisoned_user_gem(home, "io-console")
+    env = {
+      "CI" => "1", "HOME" => home, "GEM_HOME" => nil, "GEM_PATH" => nil,
+      "PATH" => "#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}",
+    }
+
+    When "running the installed shim bare, from a directory that is not a project"
+    out, err, status = Open3.capture3(env, "sh", File.join(libexec, "dev", "bin", "dev"), chdir: dir)
+
+    Then "the UI came up on the Ruby's own io-console and dev answered"
+    status.success?
+    out.include?("outside a project")
+    !err.include?(POISONED_GEM_MESSAGE)
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "from a source checkout, with nothing vendored beside it, the shell's gem env governs as before" do
     Given "the repo's own shim, and a gem env pointing at nothing"
     dir = Dir.mktmpdir("dev-bin-test-")
@@ -303,6 +334,31 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.cp(BIN_DEV, File.join(libexec, "dev", "bin", "dev"))
     %w[lib VERSION].each { |entry| File.symlink(File.join(DEV_ROOT, entry), File.join(libexec, "dev", entry)) }
     libexec
+  end
+
+  POISONED_GEM_MESSAGE = "poisoned gem loaded from the user gem dir"
+  POISONED_GEM_VERSION = "0.99.0"
+
+  # A gem in the user gem dir under `home` (~/.gem/ruby/X.Y.0, what
+  # RubyGems puts first on a Ruby's default path) whose entry file raises.
+  # Its version is above any the Ruby ships and inside reline's `~> 0.5`
+  # on io-console, so RubyGems must pick it over the Ruby's own copy
+  # wherever that dir is on the path — loading it is the proof the dir was
+  # consulted.
+  def plant_poisoned_user_gem(home, name)
+    gem_dir = File.join(home, ".gem", "ruby", RbConfig::CONFIG["ruby_version"])
+    full_name = "#{name}-#{POISONED_GEM_VERSION}"
+    lib = File.join(gem_dir, "gems", full_name, "lib", *name.split("-")[0..-2])
+    FileUtils.mkdir_p([File.join(gem_dir, "specifications"), lib])
+    File.write(File.join(lib, "#{name.split("-").last}.rb"), "raise LoadError, #{POISONED_GEM_MESSAGE.inspect}\n")
+    spec = Gem::Specification.new do |s|
+      s.name = name
+      s.version = POISONED_GEM_VERSION
+      s.summary = "poisoned"
+      s.authors = ["bin_dev_test"]
+      s.require_paths = ["lib"]
+    end
+    File.write(File.join(gem_dir, "specifications", "#{full_name}.gemspec"), spec.to_ruby)
   end
 
   # A gem env that resolves nothing, with the suite's own Ruby first on
