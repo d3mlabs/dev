@@ -78,6 +78,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  that user): dev converges no edge out of the agent identity — a missing
  resource is a `WANTED:`, never an escalation.
  → .cursor/skills/learnings/edge-is-as-wide-as-its-target/
+- [architecture/state-kind-before-identity-rule] Before a rule keyed on
+ who owns a prefix (skip, escalate, refuse), name the kind of state: host
+ state is the owner's (the jobs converge it; a non-owner's `dev up`
+ skips), a checkout's pins and gems are whoever runs `dev up` there
+ (a human through the owner with their password, the agent never).
+ → .cursor/skills/learnings/state-kind-before-identity-rule/
 
 ## toolchain
 
