@@ -84,7 +84,7 @@ What a registration gets, by the repo's owner and visibility:
 | | Private repo | Public repo |
 |---|---|---|
 | **Organization** | Any role at the repo (the default); a pinned role at the org, in its group (`--org`) | A pinned role at the org, in its group (`--org`). Repo scope refused |
-| **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners |
+| **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners (ai-flow's hosted-runner mode, [ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142)) |
 
 ai-flow adopters: its README's *Choosing your runner setup* says which
 runners ai-flow needs in each case and what else the public case requires.
