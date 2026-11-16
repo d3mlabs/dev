@@ -232,19 +232,27 @@ reconstructing the store layout.
 
 ### ruby
 
-Installs the locked Ruby as a brew bottle and writes two files at the repo
-root:
+Installs the locked Ruby as a brew bottle, creates the project's gem home
+under the data root, and writes two files at the repo root:
 
 - `.shadowenv.d/510_ruby.lisp` — puts the Ruby on `PATH` and sets
-  `GEM_HOME` to the keg's own gem directory. Machine-specific; gitignore it.
+  `GEM_HOME` to the project's gem home,
+  `<data root>/gems/<name>/<host|container>/<keg version>`, where `<name>`
+  is dev.yml's `name`. `GEM_PATH` is that gem home followed by the keg's
+  own gem directory, so the Ruby's default gems stay loadable.
+  Machine-specific; gitignore it.
 - `.ruby-version` — the bare version string, for tools that are not
   shadowenv-aware (RubyMine, Bundler's `ruby file:`, setup-ruby). **Commit
   it.** `dev up` rewrites it from the lock every run, so edit
   `dependencies.rb` to change the Ruby, not this file.
 
-Two projects locking two patches each run their own; the kegs coexist. A
-project that declares no `ruby` runs its commands under whatever Ruby the
-shell has.
+Two projects locking two patches each run their own; the kegs coexist. Two
+projects locking one patch share the keg and nothing else: each has its own
+gem home, so `bundle install` in one never touches the other and `bundle
+clean` reclaims only its own. The gem home is the user's, not the brew
+prefix owner's, so a user who does not own the prefix installs gems without
+writing the keg. A project that declares no `ruby` runs its commands under
+whatever Ruby the shell has.
 
 ### python
 

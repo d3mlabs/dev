@@ -323,8 +323,11 @@ a published tree's `bin/` when it has one (`515_gh.lisp`);
 `XcodeIntegration` sets `DEVELOPER_DIR` (`520_xcode.lisp`); a locked
 interpreter gets its language activation right after its keg's PATH
 activation — `BrewIntegration` hands the `:ruby` keg to
-`ShadowenvRuby.activate!` (`510_ruby.lisp`: `RUBY_ROOT`, `GEM_HOME`;
-`.ruby-version`) and the `:python` keg to `ShadowenvPython.activate!`
+`ShadowenvRuby.activate!` (`510_ruby.lisp`: `RUBY_ROOT`; `GEM_HOME` is
+the project's gem home, a store workdir keyed by project, side and keg —
+`ShadowenvRuby.gem_home_key` being the one place that is decided — with
+the keg's own gem dir behind it on `GEM_PATH`; `.ruby-version`) and the
+`:python` keg to `ShadowenvPython.activate!`
 (this side's venv in the store, keyed by project, side and keg —
 `ShadowenvPython.venv_key` being the one place that is decided, presence
 its proof — built on the keg and pinned to it: its interpreter links and
