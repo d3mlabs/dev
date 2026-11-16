@@ -31,4 +31,22 @@ class Dev::ReachTest < Minitest::Test
     "workflows" | Dev::Reach.new(repos: Set["d3mlabs/snappy"], workflows: Dev::Reach::ANY, labels: Set["ai-build"])
     "labels"    | Dev::Reach.new(repos: Set["d3mlabs/snappy"], workflows: Set["ai-flow"], labels: Set["snappy"])
   end
+
+  test "open when every repo may send jobs, else a selection" do
+    Expect
+    Dev::Reach.new(repos: Dev::Reach::ALL, workflows: Dev::Reach::ANY, labels: Set["x"]).open?
+    !Dev::Reach.new(repos: Set["d3mlabs/snappy"], workflows: Dev::Reach::ANY, labels: Set["x"]).open?
+  end
+
+  test "admits a repo's jobs when open or when the selection names it, as GitHub names repos — #{repos.inspect} admits #{repo}: #{admitted}" do
+    Expect
+    Dev::Reach.new(repos: repos, workflows: Dev::Reach::ANY, labels: Set["x"]).admits?(repo) == admitted
+
+    Where
+    repos                    | repo                   | admitted
+    Dev::Reach::ALL          | "d3mlabs/anything"     | true
+    Set["d3mlabs/Dev"]       | "d3mlabs/dev"          | true
+    Set["d3mlabs/dev"]       | "d3mlabs/cellbound-3d" | false
+    Set[]                    | "d3mlabs/dev"          | false
+  end
 end
