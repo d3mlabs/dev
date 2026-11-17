@@ -38,9 +38,17 @@ module Dev
           Command::Category::Workflow
         end
 
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("query", desc: "a checkout's name, matched fuzzily against the checkouts under the root")]
+        end
+
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(RESOLVE_FLAG), Cli::Flag.new(CANDIDATES_FLAG)]
+          [
+            Cli::Flag.new(RESOLVE_FLAG, desc: "print the one resolved path instead of changing directory (the shell wrapper's plumbing)"),
+            Cli::Flag.new(CANDIDATES_FLAG, desc: "print the ranked candidates for the query, for completion (plumbing)"),
+          ]
         end
 
         # A bare `dev cd` reaching this process means the shell wrapper is not

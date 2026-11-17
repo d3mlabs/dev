@@ -48,12 +48,22 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Resolve dependency constraints and write lockfiles, keeping unchanged pins (<name>… or --all to float)"
+          "Resolve dependency constraints and write lockfiles, keeping unchanged pins"
         end
 
         sig { override.returns(Command::Category) }
         def category
           Command::Category::Environment
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new(
+              "declaration", optional: true, repeated: true,
+              desc: "a dependencies.rb declaration to float to its registry's current version, with what it needs (default: none)",
+            ),
+          ]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }

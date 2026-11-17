@@ -146,7 +146,7 @@ class EnvironmentIntegrationTest < Minitest::Test
     lines.include?("  build        Build the game   snappy-linux (container)")
     lines.include?("  test-server  Test the server  snappy-server (container)")
     lines.include?("  editor       Open the editor  host")
-    lines.grep(/^  deps /).first == "  deps …       Manage dependencies (update | install | check | path)"
+    lines.grep(/^  deps /).first == "  deps …       Manage dependencies"
   end
 
   test "dev help <cmd> says the environment in a sentence" do

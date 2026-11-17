@@ -12,7 +12,9 @@ module Dev
     module Builtins
       # `dev deps path <integration> …`: print a locked artifact's absolute
       # path, read from the lockfile + artifact store (e.g. `dev deps path
-      # ficsit <mod> <platform>`). A leaf of the `deps` group.
+      # ficsit <mod> <platform>`). The grammar is one form per integration,
+      # so the usage spells a synopsis rather than positionals in a row. A
+      # leaf of the `deps` group.
       class DepsPathCommand < BuiltinCommand
         extend T::Sig
 
@@ -37,12 +39,27 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Print a locked artifact's path (path ficsit <mod> <platform> | path xcode | path gh <name> | path wwise <name>)"
+          "Print a locked artifact's path"
         end
 
         sig { override.returns(Command::Category) }
         def category
           Command::Category::Environment
+        end
+
+        # One form per integration: the accessor's grammar (Dev::Deps::Accessor#path).
+        sig { override.returns(T.nilable(String)) }
+        def synopsis
+          "ficsit <mod> <platform> | xcode | gh <name> | steam <name> | egs <name> | wwise <name>"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new("mod", desc: "a Satisfactory mod the lock pins (ficsit)"),
+            Cli::Positional.new("platform", desc: "one of the mod's locked platforms, e.g. Windows or LinuxServer"),
+            Cli::Positional.new("name", desc: "a locked artifact's name as dependencies.rb declares it (gh, steam, egs, wwise)"),
+          ]
         end
 
         # A lockfile query, not a dependency consumer: it reads where the

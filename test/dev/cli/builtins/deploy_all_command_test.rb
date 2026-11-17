@@ -242,7 +242,9 @@ class Dev::Cli::Builtins::DeployAllCommandTest < Minitest::Test
     verb.children.values.map(&:class) == [Dev::Cli::Builtins::DeployCommand, Dev::Cli::Builtins::DeployCommand, Dev::Cli::Builtins::DeployStatusCommand]
     verb.flags.map(&:name) == ["--release", "--dry-run", "--runner", "--container"]
     verb.category == Dev::Cli::Command::Category::Lifecycle
-    verb.desc.include?("`deploy --release V` with no channel ships the release to every channel in turn")
+    verb.desc.lines.first.chomp == "Ship archives to a channel, or a release to every channel"
+    verb.desc.include?("`deploy --release` with no channel ships the release to every channel in turn")
+    verb.positionals.empty?
     verb.listing.nil?
     verb.placement.nil?
   end

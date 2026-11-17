@@ -10,7 +10,7 @@ require "dev/runner_teardown"
 module Dev
   module Cli
     module Builtins
-      # `dev runner unregister [<scope> | <dir>] [--yes]` — the exit of the
+      # `dev runner unregister [<scope>|<dir>] [--yes]` — the exit of the
       # enrollment lifecycle register enters and status inspects: remove
       # one of this host's runner enrollments (service, GitHub registration,
       # enrollment files; binaries stay — see Dev::RunnerTeardown).
@@ -57,8 +57,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Remove one of this host's runner enrollments — or every slot it has at a scope — named by scope or dir, " \
-            "or picked from the list the bare form shows (--yes skips the confirmation; it needs the enrollment named)"
+          "Remove one of this host's runner enrollments, or every slot it has at a scope"
         end
 
         sig { override.returns(Command::Category) }
@@ -66,9 +65,27 @@ module Dev
           Command::Category::Environment
         end
 
+        # The enrollment is named one of two ways, or picked from the list
+        # the bare form shows.
+        sig { override.returns(T.nilable(String)) }
+        def synopsis
+          "[<scope>|<dir>]"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new(
+              "scope", optional: true,
+              desc: "an owner or owner/repo, as a family's frame in `dev runner status` ends: every slot this host has there",
+            ),
+            Cli::Positional.new("dir", optional: true, desc: "a runner directory, e.g. ~/actions-runner-2: that one slot"),
+          ]
+        end
+
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(YES_FLAG)]
+          [Cli::Flag.new(YES_FLAG, desc: "skip the confirmation; needs the enrollment named")]
         end
 
         # What the enrollment argument can be, from discovery alone (offline;

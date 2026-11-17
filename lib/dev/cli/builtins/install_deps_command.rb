@@ -79,7 +79,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Install locked dependencies on this machine (--group/--except/--integration narrow; --pinned-taps pins brew's taps)"
+          "Install locked dependencies on this machine"
         end
 
         sig { override.returns(Command::Category) }
@@ -90,10 +90,10 @@ module Dev
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
           [
-            Cli::Flag.new(GROUP_FLAG, takes_value: true),
-            Cli::Flag.new(EXCEPT_FLAG, takes_value: true),
-            Cli::Flag.new(INTEGRATION_FLAG, takes_value: true),
-            Cli::Flag.new(PINNED_TAPS_FLAG),
+            Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "install only this dependency group (repeatable)"),
+            Cli::Flag.new(EXCEPT_FLAG, takes_value: true, desc: "skip this dependency group (repeatable)"),
+            Cli::Flag.new(INTEGRATION_FLAG, takes_value: true, desc: "install only this integration's pins, e.g. brew (repeatable)"),
+            Cli::Flag.new(PINNED_TAPS_FLAG, desc: "brew installs from taps checked out at the commits the lock names, not its moving API"),
           ]
         end
 

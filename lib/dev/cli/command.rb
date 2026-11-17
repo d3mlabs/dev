@@ -3,6 +3,7 @@
 
 require "dev/environment_ref"
 require_relative "flag"
+require_relative "positional"
 require_relative "parsed_args"
 require_relative "dispatch"
 require_relative "execution_context"
@@ -118,6 +119,28 @@ module Dev
       sig { overridable.returns(T::Array[Cli::Flag]) }
       def flags
         []
+      end
+
+      # The positional arguments this command reads from its argv, in the
+      # order it reads them (Cli::Positional) — what its usage line spells
+      # after the invocation and its Arguments block describes. Help renders
+      # them; the command itself reads and checks its positionals. Nothing
+      # by default: groups and most leaves take none, and a project command's
+      # arguments are its script's to describe.
+      sig { overridable.returns(T::Array[Cli::Positional]) }
+      def positionals
+        []
+      end
+
+      # The usage line's argument grammar when it is not the positionals in
+      # a row — alternatives of different shapes, as `deps path` takes
+      # (`ficsit <mod> <platform> | xcode | gh <name>`). Spelled as the
+      # usage line prints it after the invocation; the positionals it names
+      # still describe themselves in the Arguments block. Nil by default:
+      # the usage line spells the positionals.
+      sig { overridable.returns(T.nilable(String)) }
+      def synopsis
+        nil
       end
 
       # Whether this command's argv is forwarded verbatim — no help-flag

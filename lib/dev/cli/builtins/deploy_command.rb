@@ -14,7 +14,7 @@ require "dev/cli/placement"
 module Dev
   module Cli
     module Builtins
-      # `dev deploy <channel> [BUILD] [--config C] [--release V]
+      # `dev deploy <channel> [<build>] [--config C] [--release V]
       # [--allow-stale] [--force] [--dry-run]`: ship archives to one
       # channel. One instance per channel, each a child of `deploy`
       # (DeployAllCommand), so a channel is a subcommand with its own help,
@@ -178,6 +178,11 @@ module Dev
         sig { override.returns(String) }
         def desc
           @channel.desc
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [DeploySelector::POSITIONAL]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }

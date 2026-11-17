@@ -26,8 +26,9 @@ module Dev
         AccessorFactory = T.type_alias { T.proc.params(ui: Dev::Ui).returns(Dev::Plan::Accessor) }
 
         # Target the org plans repo instead of the enclosing project's. Shared
-        # by every verb that resolves a repo.
+        # by every verb that resolves a repo, as the one flag they all list.
         ORG_FLAG = "--org"
+        ORG = T.let(Cli::Flag.new(ORG_FLAG, desc: "target the org plans repo instead of this project's").freeze, Cli::Flag)
 
         # The production factory; a constant so its wiring is testable apart
         # from any verb.

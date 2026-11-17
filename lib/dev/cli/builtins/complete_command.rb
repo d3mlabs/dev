@@ -46,6 +46,11 @@ module Dev
           true
         end
 
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("word", optional: true, repeated: true, desc: "the words typed after dev so far, the one under the cursor excluded")]
+        end
+
         # Completion must keep working while the dependency state is stale.
         sig { override.returns(T::Boolean) }
         def staleness_exempt?

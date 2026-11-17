@@ -16,7 +16,7 @@ require "dev/lifecycle"
 module Dev
   module Cli
     module Builtins
-      # `dev package [BUILD] [--target T] [--platform P] [--config C]
+      # `dev package [<build>] [--target T] [--platform P] [--config C]
       # [--no-build]`: turn one build into its artifact in the store — the
       # archive its target's packager makes of the install, stamped with
       # `build-id.json`. `package` implies `build`,
@@ -157,9 +157,14 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Package a build into its artifact (package [BUILD] | --target T [--platform P] [--config C] [--no-build] [--runner L | --container] [--fetch])\n" \
+          "Package a build into its artifact\n" \
             "Builds first unless the artifact is current with the tree; the archive and build-id.json land in the store " \
             "of the host that packaged (--fetch brings them back from a remote one)."
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [@selector.positional]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }

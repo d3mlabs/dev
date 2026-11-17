@@ -4,6 +4,7 @@
 require "dev/lifecycle"
 require_relative "flag"
 require_relative "parsed_args"
+require_relative "positional"
 
 module Dev
   module Cli
@@ -26,10 +27,13 @@ module Dev
       PLATFORM_FLAG = "--platform"
       CONFIG_FLAG = "--config"
 
+      # The positional's word, as every verb that names a build spells it.
+      BUILD_POSITIONAL = "build"
+
       # The flags of every verb that names a build; a verb appends its own.
       FLAGS = T.let(
         [
-          Cli::Flag.new(TARGET_FLAG, takes_value: true, desc: "the target (the long form of the BUILD positional)"),
+          Cli::Flag.new(TARGET_FLAG, takes_value: true, desc: "the target (the long form of the <#{BUILD_POSITIONAL}> positional)"),
           Cli::Flag.new(PLATFORM_FLAG, takes_value: true, desc: "one of the target's platforms (default: its first)"),
           Cli::Flag.new(CONFIG_FLAG, takes_value: true, desc: "one of the target's configs (default: its first)"),
         ].freeze,
@@ -52,6 +56,20 @@ module Dev
       sig { params(targets: T::Array[Lifecycle::Target]).void }
       def initialize(targets:)
         @targets = targets
+      end
+
+      # The positional every verb that names a build declares: the grammar,
+      # and what the bare verb means — the first declared target's default
+      # build, as #select resolves it.
+      #
+      # @return [Cli::Positional]
+      sig { returns(Cli::Positional) }
+      def positional
+        Cli::Positional.new(
+          BUILD_POSITIONAL, optional: true,
+          desc: "the build, as `<target>[-<platform>[-<config>]]`; an omitted axis takes the target's first " \
+            "(default: #{T.must(@targets.first).default_build.name})",
+        )
       end
 
       # The build the args name.

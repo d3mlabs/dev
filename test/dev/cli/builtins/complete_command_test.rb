@@ -124,6 +124,8 @@ class Dev::Cli::Builtins::CompleteCommandTest < Minitest::Test
     command.staleness_exempt? == true
     command.stamps? == false
     command.category == Dev::Cli::Command::Category::Workflow
+    command.opaque_args? == true
+    command.positionals.map(&:usage) == ["[<word>…]"]
   end
 
   test "given #{words.inspect}, the candidates are #{expected.inspect}" do

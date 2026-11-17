@@ -50,7 +50,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Stop the container engine, stopping dev's build containers first (--force: the rest too)"
+          "Stop the container engine, stopping dev's build containers first"
         end
 
         sig { override.returns(Command::Category) }
@@ -60,7 +60,7 @@ module Dev
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(FORCE_FLAG)]
+          [Cli::Flag.new(FORCE_FLAG, desc: "also stop the containers dev does not manage, without asking")]
         end
 
         sig { override.returns(T::Boolean) }

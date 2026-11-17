@@ -233,8 +233,9 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     verb.category == Dev::Cli::Command::Category::Lifecycle
     verb.flags == Dev::Cli::BuildSelector::FLAGS + Dev::Cli::DispatchResolver::FLAGS
     verb.flags.map(&:name) == ["--target", "--platform", "--config", "--runner", "--container"]
-    verb.desc.lines.first.chomp == "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L | --container])"
-    verb.desc.include?("Bare `dev build` is `cellbound-3d-linux64-dev`.")
+    verb.desc == "Build a target's install"
+    verb.positionals.map(&:usage) == ["[<build>]"]
+    verb.positionals.fetch(0).desc.end_with?("(default: cellbound-3d-linux64-dev)")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "opencell", "rspock"]
     verb.listing.subjects.map(&:desc) == ["Client", "Client", "Sim", "The gem"]

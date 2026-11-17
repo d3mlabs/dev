@@ -87,11 +87,11 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Ship archives to a channel (deploy <channel> [BUILD] [--config C] [--release V] [--allow-stale] [--force] [--dry-run] [--runner L])\n" \
-            "Selects from the store of the host it runs on (testing track), or with --release V from that release's verified archives " \
-            "(live track); never builds. Each channel lists the builds it accepts and its protocol. " \
-            "`deploy --release V` with no channel ships the release to every channel in turn; " \
-            "`deploy status [--release V]` reads what each channel carries."
+          "Ship archives to a channel, or a release to every channel\n" \
+            "Each channel below selects from the store of the host it runs on (testing track), or with --release from that " \
+            "release's verified archives (live track); never builds, and lists the builds it accepts and its protocol. " \
+            "`deploy --release` with no channel ships the release to every channel in turn; " \
+            "`deploy status` reads what each channel carries."
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }

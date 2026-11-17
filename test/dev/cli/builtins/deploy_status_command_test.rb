@@ -135,6 +135,7 @@ class Dev::Cli::Builtins::DeployStatusCommandTest < Minitest::Test
     Dev::Cli::Builtins::DeployStatusCommand::NAME == "status"
     command.category == Dev::Cli::Command::Category::Lifecycle
     command.flags.map(&:name) == ["--release"]
-    command.desc.include?("status [--release V]")
+    command.desc == "What each channel carries and from where"
+    command.positionals.empty?
   end
 end

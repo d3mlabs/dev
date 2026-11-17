@@ -15,8 +15,7 @@ module Dev
 
         # Shared with the global usage listing (GlobalDispatch), which reads
         # descriptions without instantiating the builtin.
-        DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src); " \
-          "bare names expand under the default_org setting"
+        DESC = "Clone a GitHub repo (via gh auth) into $DEV_CD_ROOT (default ~/src) and land there"
 
         # The shell wrapper's plumbing mode (hidden from users): print the
         # destination path so the wrapper can land in it.
@@ -38,9 +37,14 @@ module Dev
           Command::Category::Workflow
         end
 
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("repo", desc: "owner/repo, or a bare name expanded under the default_org setting")]
+        end
+
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(PATH_FLAG)]
+          [Cli::Flag.new(PATH_FLAG, desc: "print the destination path instead of landing in it (the shell wrapper's plumbing)")]
         end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }

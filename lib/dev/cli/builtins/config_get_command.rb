@@ -23,12 +23,17 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Print a setting's resolved value (get <key>)"
+          "Print a setting's resolved value"
         end
 
         sig { override.returns(Command::Category) }
         def category
           Command::Category::Workflow
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("key", desc: "the setting's name (dev config list names them all)")]
         end
 
         # Host-global: a project's dependency staleness is irrelevant.

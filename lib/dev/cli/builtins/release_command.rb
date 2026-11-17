@@ -160,8 +160,24 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Cut a release: tag, package the release builds at the tag, attach them to the GitHub release (release [<version>|major|minor|patch])\n" \
+          "Cut a release: tag, package the release builds at the tag, attach them to the GitHub release\n" \
             "Bumps VERSION when the project keeps one — the patch when no version is given; a retry resumes a cut that landed. Deploys nothing."
+        end
+
+        # One word: a version, or the part of VERSION to bump.
+        sig { override.returns(T.nilable(String)) }
+        def synopsis
+          "[<version>|major|minor|patch]"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new(
+              "version", optional: true,
+              desc: "the version to cut, or the part of VERSION to bump — major, minor or patch (default: patch)",
+            ),
+          ]
         end
 
         sig { override.returns(T.nilable(Listing)) }

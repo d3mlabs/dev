@@ -41,7 +41,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Archive a directory in one of dev's forms (pack DIR [--out STEM] [--format zip|tar] [--split SIZE])"
+          "Archive a directory in one of dev's forms"
         end
 
         sig { override.returns(Command::Category) }
@@ -54,12 +54,17 @@ module Dev
           true
         end
 
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("dir", desc: "the directory whose contents to archive")]
+        end
+
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
           [
-            Cli::Flag.new(OUT_FLAG, takes_value: true, desc: "the archive path without its extension (default: ./<DIR's name>)"),
+            Cli::Flag.new(OUT_FLAG, takes_value: true, desc: "the archive path without its extension (default: ./<dir>'s own name)"),
             Cli::Flag.new(FORMAT_FLAG, takes_value: true, desc: "zip (default) or tar"),
-            Cli::Flag.new(SPLIT_FLAG, takes_value: true, desc: "cut the tar form into parts of at most SIZE (2GiB, 500MiB)"),
+            Cli::Flag.new(SPLIT_FLAG, takes_value: true, desc: "cut the tar form into parts of at most this size, e.g. 2GiB or 500MiB"),
           ]
         end
 

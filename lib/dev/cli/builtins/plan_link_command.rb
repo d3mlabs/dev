@@ -15,12 +15,26 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Attach a plan file to issue #n, or create an issue from a plan file (link <n> [<file>] | link <file>)"
+          "Attach a plan file to an existing issue, or create an issue from a plan file"
+        end
+
+        # Two forms: an issue to attach to, or a file to create from.
+        sig { override.returns(T.nilable(String)) }
+        def synopsis
+          "<n> [<file>] | <file>"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new("n", desc: "the number of the issue to attach the plan to; its local content is kept until push"),
+            Cli::Positional.new("file", desc: "the plan file (default, with an issue: the workspace's sole unlinked plan)"),
+          ]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(ORG_FLAG)]
+          [ORG]
         end
 
         private

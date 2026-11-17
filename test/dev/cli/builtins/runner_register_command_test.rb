@@ -1712,7 +1712,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     desc = usage_command.desc
 
     Expect "a one-line summary first, then the detail"
-    desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner in a role (--role; --ai-flow, --labels), converging its contracts"
+    desc.lines.fetch(0).chomp == "Enroll this host as a self-hosted runner in a role, converging its contracts"
     desc.include?("Runner names are <hostname>-<role>[-n]")
     desc.include?("runner_roles:")
     desc.include?("mints the registration token")
