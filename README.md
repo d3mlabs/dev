@@ -126,7 +126,8 @@ error messages: [CLI conventions](docs/cli.md).
 
 In the order a new user needs them:
 
-1. [CLI conventions](docs/cli.md) — command resolution, flags, errors.
+1. [CLI conventions](docs/cli.md) — command resolution, the noun–verb
+   vocabulary, flags, errors.
 2. [dev.yml reference](docs/dev-yml.md) — commands, targets, deploy
    channels, releases.
 3. [Dependencies](docs/dependencies.md) — `dependencies.rb`, the lock,
