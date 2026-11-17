@@ -75,6 +75,7 @@ class Dev::ContainerDevProvisionerTest < Minitest::Test
     script.start_with?("#!/bin/sh")
     script.include?("version=\"$1\"")
     script.include?("Formula/dev-core.rb")
+    script.include?("dev-core-${version}.zip")
     script.include?("brew install")
     SCRIPT.executable?
   end

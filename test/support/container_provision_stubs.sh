@@ -14,7 +14,8 @@
 #                        test can see the mode at the first brew call
 #
 # The whole file is a provision of dev-core 0.2.98: git's history holds one
-# commit whose formula ships v0.2.98, no dev-core is installed yet, and the
+# commit whose formula points at the release's dev-core-0.2.98.zip (the
+# asset `dev deploy brew` writes), no dev-core is installed yet, and the
 # installed dev reports 0.2.98.
 brew() {
   echo "$* $(ls -ld "$HOME/.homebrew" | cut -c1-10)" >> "$DEV_TEST_BREW_CALLS"
@@ -29,7 +30,7 @@ brew() {
 git() {
   case "$5" in
     log) echo "0123456789abcdef0123456789abcdef01234567" ;;
-    show) echo 'url "https://github.com/d3mlabs/dev/archive/refs/tags/v0.2.98.tar.gz"' ;;
+    show) echo 'url "https://github.com/d3mlabs/dev/releases/download/v0.2.98/dev-core-0.2.98.zip"' ;;
     *) : ;;
   esac
 }
