@@ -15,6 +15,7 @@ class Dev::Deps::WwiseRepositoryTest < Minitest::Test
 
     Then "the version is the address; the SDK package is self-contained"
     version.version == "2023.1.14.8770"
+    version.source == "2023.1.14.8770"
     version.digest.nil?
     version.declarations == Dev::Deps::Declarations::Resolved.new([])
   end

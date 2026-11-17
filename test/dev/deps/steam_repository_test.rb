@@ -211,6 +211,7 @@ class Dev::Deps::SteamRepositoryTest < Minitest::Test
     package.versions.map(&:version).sort == ["15321746", "15400000"]
     public_tip = package.version("15321746")
     public_tip.digest.nil?
+    public_tip.source.nil?
     public_tip.metadata == { "app" => "1690800", "branch" => "public" }
     package.version("15400000").metadata["branch"] == "experimental"
   end

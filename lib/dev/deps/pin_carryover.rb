@@ -14,55 +14,70 @@ module Dev
   module Deps
     # The lock-writing rule that decides, pin by pin, whether the lock being
     # written takes the pin the Resolver just minted or carries the one the
-    # lock on disk already has.
+    # lock on disk already has. One rule for every channel.
     #
-    # Brew is a moving registry, so re-resolving every formula on each `dev
-    # deps update` would move pins whose declarations did not change. A
-    # brew pin (a formula or an interpreter; casks pin no version) keeps the
-    # lock's version when its declaration is unchanged (same tap, same
-    # scope, and the locked version still satisfies its constraint) and the
-    # lock records the `tap_commit` at which the formula is that version.
-    # It floats when the author asked (`dev deps update <name>`, `--all`),
-    # when the declaration changed, or when the lock records no tap commit;
-    # that last move is reported with its reason.
+    # A bare `dev deps update` floats everything: every pin is the
+    # resolution's, at the newest version its declaration admits. Nothing
+    # is kept.
     #
-    # A kept pin keeps the commit it was resolved at; a re-resolved pin
-    # takes today's HEAD unless nothing about it changed. The unit is the
-    # pin, not the tap: a tap whose pins moved at different times carries
-    # several commits, which a pinned install refuses with `--all` as the
-    # remediation.
+    # `dev deps update <name>…` floats the named declarations and what they
+    # pull in through integration needs, and decides the rest: a pin the
+    # lock did not have is new; a pin whose declaration changed — another
+    # group, scope or source, or a constraint the locked version no longer
+    # satisfies — is re-resolved; an unchanged pin the lock records a
+    # `source` for is kept, byte for byte; an unchanged pin without one
+    # cannot be kept (nothing says what exactly it was) and is re-resolved,
+    # with that said once. Every move is reported with its reason.
     #
-    # A subset re-lock carries every pin it did not float verbatim from the
-    # lock on disk, whatever its channel. Such a pin needs nothing from
-    # today's universe, so when the universe did not answer for its
-    # declaration the lock's pin stands, reported as kept for want of an
-    # answer, provided it was resolved from the source the declaration
-    # names. Every other shape needs today's answer, and the repository's
-    # failure propagates.
+    # Provenance — a pin's `source`, and metadata that records where it was
+    # resolved from rather than what it is (brew's `tap_commit`) — moves
+    # only when the pin does: a re-resolved pin whose facts are the lock's
+    # keeps the lock's provenance, so a re-lock that changes no version
+    # changes no lock line.
+    #
+    # A subset re-lock needs nothing from today's universe for a pin it
+    # keeps, so when the universe did not answer for such a declaration the
+    # lock's pin stands, reported as kept for want of an answer. Every other
+    # shape needs today's answer, and the repository's failure propagates.
     #
     # Pure over the declarations, the previous lock and the resolution; the
     # Resolver never sees the previous lock.
     class PinCarryover
       extend T::Sig
 
-      # The pins brew installs with a version: formulae and the interpreters
-      # that are formulae (Registry's `install_alias: :brew` rows).
-      BREW_INTEGRATIONS = T.let(%i[brew ruby python].freeze, T::Array[Symbol])
-      TAP_COMMIT = "tap_commit"
+      # Per channel, the metadata key under which a pin records the source
+      # its declaration named (PackageId#source): brew's tap, a git or
+      # GitHub repository, an image's floor, a Steam app, a URL. A channel
+      # absent here has no declared source — the name is the whole
+      # coordinate (pip, gems, rocks, mods, casks, the addressable ones).
+      DECLARED_SOURCE_KEYS = T.let(
+        {
+          brew: "tap", ruby: "tap", python: "tap",
+          cmake: "repo", gh: "repo",
+          image: "from",
+          steam: "app",
+          url: "url", egs: "url",
+        }.freeze,
+        T::Hash[Symbol, String],
+      )
 
-      # The image channel, and the metadata key under which its pin records
-      # the floor it was resolved from (OciRepository#find: the reference
-      # less its tag, which is the pin's version).
+      # The image channel, whose declared source carries the tag too
+      # (`<floor>:<tag>`): the pin's version is the tag.
       IMAGE_INTEGRATION = :image
-      FLOOR = "from"
+
+      # Metadata that records where a pin was resolved from rather than
+      # what it is. It rides with the pin's source, and a re-resolved pin
+      # whose facts did not change keeps the lock's.
+      PROVENANCE_KEYS = T.let([BrewRepository::TAP_COMMIT].freeze, T::Array[String])
 
       # A pin the lock takes from the resolution at another version than it
-      # had (`from` nil when the lock had none), and why.
+      # had (`from` nil when the lock had none), and why — nil when the
+      # bare verb asked for every pin to move.
       class Move < T::Struct
         const :name, String
         const :from, T.nilable(String)
         const :to, T.nilable(String)
-        const :reason, String
+        const :reason, T.nilable(String), default: nil
       end
 
       # A pin the lock keeps for want of an answer: the declaration's
@@ -166,86 +181,9 @@ module Dev
         unlock.floats?(name) || (needed_by & floated_integrations).any?
       end
 
-      # The rule for a resolved pin: brew has its own; every other channel
-      # takes the resolution, except in a subset re-lock, where an unfloated
-      # pin the lock has is the lock's, verbatim.
-      #
-      # @param dep [Dependency] the resolved pin
-      # @param prior [Dependency, nil] the lock's pin of the same identity
-      # @param ask [ScopedDeclaration, nil] the declaration it answers
-      # @param floats [Boolean] whether the author asked for it to float
-      # @param unlock [UnlockSet]
-      # @return [Decision]
-      sig do
-        params(
-          dep: Dependency,
-          prior: T.nilable(Dependency),
-          ask: T.nilable(ScopedDeclaration),
-          floats: T::Boolean,
-          unlock: UnlockSet,
-        ).returns(Decision)
-      end
-      def decide(dep, prior, ask, floats:, unlock:)
-        if BREW_INTEGRATIONS.include?(dep.integration)
-          decide_brew(dep, prior, ask, floats:, unlock:)
-        elsif unlock.subset? && prior && !floats
-          Decision.new(pin: prior, kept: true)
-        else
-          Decision.new(pin: dep)
-        end
-      end
-
-      # The rule for a declaration whose universe did not answer. A subset
-      # re-lock would carry an unfloated pin the lock has verbatim, whatever
-      # today's answer — so none is needed, and the lock's pin stands, kept
-      # for want of an answer, as long as it still answers the declaration's
-      # source. Everything else needs the answer that never came, and the
-      # repository's failure is the re-lock's.
-      #
-      # @param unresolved [Resolver::Unresolved] the declaration and the failure
-      # @param prior [Dependency, nil] the lock's pin of the same identity
-      # @param floats [Boolean] whether the author asked for it to float
-      # @param unlock [UnlockSet]
-      # @return [Decision]
-      # @raise [StandardError] the repository's failure, when the pin cannot be carried
-      sig do
-        params(
-          unresolved: Resolver::Unresolved,
-          prior: T.nilable(Dependency),
-          floats: T::Boolean,
-          unlock: UnlockSet,
-        ).returns(Decision)
-      end
-      def decide_unresolved(unresolved, prior, floats:, unlock:)
-        carried = unlock.subset? && prior && !floats && resolved_from?(prior, unresolved.declaration.source)
-        raise unresolved.error unless carried
-
-        Decision.new(pin: prior, unreachable: unresolved.error)
-      end
-
-      # Whether the lock's pin was resolved from the source the declaration
-      # names. With no answer from the universe this is the one judgment
-      # the carry-over can still make, and it keeps an edited floor from
-      # hiding behind the registry's failure: `from: "ghcr.io/typo/…"` is a
-      # parse error dressed as a refusal, and the old digest must not be
-      # kept under it. An image pin records its floor and the tag it
-      # resolved; the other channels' pins record no source this rule can
-      # hold a declaration against, and carry as the subset rule carries
-      # them when they do resolve.
-      #
-      # @param prior [Dependency] the lock's pin
-      # @param source [String, nil] the declaration's source
-      # @return [Boolean]
-      sig { params(prior: Dependency, source: T.nilable(String)).returns(T::Boolean) }
-      def resolved_from?(prior, source)
-        return true unless prior.integration == IMAGE_INTEGRATION
-
-        "#{prior.metadata[FLOOR]}:#{prior.version}" == source
-      end
-
-      # The brew rule: new pins and floated pins are the resolution's; a
-      # changed declaration re-resolves; an unchanged one keeps the lock's
-      # version when the lock can converge a host to it, else floats with
+      # The rule for a resolved pin: new pins and floated pins are the
+      # resolution's; a changed declaration re-resolves; an unchanged one is
+      # kept when the lock records what exactly it was, else floats with
       # the reason.
       #
       # @param dep [Dependency] the resolved pin
@@ -263,33 +201,71 @@ module Dev
           unlock: UnlockSet,
         ).returns(Decision)
       end
-      def decide_brew(dep, prior, ask, floats:, unlock:)
+      def decide(dep, prior, ask, floats:, unlock:)
         return Decision.new(pin: dep, move: Move.new(name: dep.name, from: nil, to: dep.version, reason: "new")) if prior.nil?
-        return re_resolved(dep, prior, reason: unlock.all? ? "--all" : "named") if floats
-        return re_resolved(dep, prior, reason: "declaration changed") unless ask && declaration_unchanged?(dep, prior, ask)
-        return Decision.new(pin: carried(dep, prior), kept: true) if convergeable?(prior)
+        return re_resolved(dep, prior, reason: unlock.subset? ? "named" : nil) if floats
+        return re_resolved(dep, prior, reason: "declaration changed") unless ask && declaration_unchanged?(prior, ask)
+        return Decision.new(pin: carried(dep, prior), kept: true) if prior.source
 
-        re_resolved(
-          dep, prior,
-          reason: "the lock records no tap commit for #{prior.version}, so no host could converge to it",
-        )
+        re_resolved(dep, prior, reason: "the lock records no source for #{prior.version}, so it cannot be kept")
+      end
+
+      # The rule for a declaration whose universe did not answer. A subset
+      # re-lock would carry an unfloated, unchanged pin the lock has
+      # whatever today's answer — so none is needed, and the lock's pin
+      # stands, kept for want of an answer. Everything else needs the
+      # answer that never came, and the repository's failure is the
+      # re-lock's.
+      #
+      # @param unresolved [Resolver::Unresolved] the declaration and the failure
+      # @param prior [Dependency, nil] the lock's pin of the same identity
+      # @param floats [Boolean] whether the author asked for it to float
+      # @param unlock [UnlockSet]
+      # @return [Decision]
+      # @raise [StandardError] the repository's failure, when the pin cannot be carried
+      sig do
+        params(
+          unresolved: Resolver::Unresolved,
+          prior: T.nilable(Dependency),
+          floats: T::Boolean,
+          unlock: UnlockSet,
+        ).returns(Decision)
+      end
+      def decide_unresolved(unresolved, prior, floats:, unlock:)
+        carried = unlock.subset? && prior && !floats && declaration_unchanged?(prior, unresolved.declaration)
+        raise unresolved.error unless carried
+
+        Decision.new(pin: prior, unreachable: unresolved.error)
       end
 
       # The resolution's pin, moved when its version differs from the
-      # lock's, and carrying the lock's `tap_commit` when nothing else about
-      # it changed (a commit at which the formula was what the lock says is
-      # as good as today's, and does not move the lock).
+      # lock's, and carrying the lock's provenance when nothing else about
+      # it changed (a source at which the pin was what the lock says is as
+      # good as today's, and does not move the lock).
       #
       # @param dep [Dependency] the resolved pin
       # @param prior [Dependency] the lock's pin
-      # @param reason [String] why it floated
+      # @param reason [String, nil] why it floated; nil when the bare verb asked
       # @return [Decision]
-      sig { params(dep: Dependency, prior: Dependency, reason: String).returns(Decision) }
+      sig { params(dep: Dependency, prior: Dependency, reason: T.nilable(String)).returns(Decision) }
       def re_resolved(dep, prior, reason:)
-        commit = prior.metadata[TAP_COMMIT]
-        pin = commit && facts(dep) == facts(prior) ? dep.with(metadata: dep.metadata.merge(TAP_COMMIT => commit)) : dep
+        pin = facts(dep) == facts(prior) ? with_provenance(dep, prior) : dep
         move = dep.version == prior.version ? nil : Move.new(name: dep.name, from: prior.version, to: dep.version, reason:)
         Decision.new(pin:, move:)
+      end
+
+      # The resolution's pin with the lock's provenance, where the lock has
+      # any: its source, and its provenance metadata.
+      #
+      # @param dep [Dependency] the resolved pin
+      # @param prior [Dependency] the lock's pin, whose facts are dep's
+      # @return [Dependency]
+      sig { params(dep: Dependency, prior: Dependency).returns(Dependency) }
+      def with_provenance(dep, prior)
+        dep.with(
+          source: prior.source || dep.source,
+          metadata: dep.metadata.merge(prior.metadata.slice(*PROVENANCE_KEYS)),
+        )
       end
 
       # The lock's pin, with the resolution's provenance: who needs it is a
@@ -303,22 +279,61 @@ module Dev
         dep.with(
           version: prior.version,
           hash: prior.hash,
+          source: prior.source,
           metadata: prior.metadata.except(Dependency::NEEDED_BY).merge(dep.metadata.slice(Dependency::NEEDED_BY)),
         )
       end
 
       # Whether the declaration still asks what the lock's pin answered:
-      # same tap, same scope (group, host, env), and a constraint the locked
-      # version satisfies under the integration's scheme.
+      # same group, same scope (host, env), the same declared source, and
+      # an ask the locked version still satisfies — the declaration's
+      # revision, or its constraint under the integration's scheme.
       #
-      # @param dep [Dependency] the resolved pin (its tap and scope are the declaration's)
       # @param prior [Dependency] the lock's pin
       # @param ask [ScopedDeclaration] the declaration
       # @return [Boolean]
-      sig { params(dep: Dependency, prior: Dependency, ask: ScopedDeclaration).returns(T::Boolean) }
-      def declaration_unchanged?(dep, prior, ask)
-        same_shape = [dep.group == prior.group, scope_of(dep) == scope_of(prior), tap_of(dep) == tap_of(prior)].all?
-        same_shape && satisfies?(ask, prior)
+      sig { params(prior: Dependency, ask: ScopedDeclaration).returns(T::Boolean) }
+      def declaration_unchanged?(prior, ask)
+        [
+          prior.group == ask.scope.group,
+          scope_of(prior) == ask.scope.to_metadata,
+          resolved_from?(prior, ask),
+          still_asked?(prior, ask),
+        ].all?
+      end
+
+      # Whether the lock's pin was resolved from the source the declaration
+      # names, read from the metadata the pin's channel records it under.
+      # An image pin records its floor and resolved its tag, so the two
+      # together are the declared reference; a channel with no declared
+      # source has nothing to compare, and the name's agreement is the
+      # identity's.
+      #
+      # @param prior [Dependency] the lock's pin
+      # @param ask [ScopedDeclaration] the declaration
+      # @return [Boolean]
+      sig { params(prior: Dependency, ask: ScopedDeclaration).returns(T::Boolean) }
+      def resolved_from?(prior, ask)
+        key = DECLARED_SOURCE_KEYS[prior.integration]
+        return true if key.nil?
+
+        declared = prior.metadata[key]
+        declared = "#{declared}:#{prior.version}" if prior.integration == IMAGE_INTEGRATION
+        declared == ask.source
+      end
+
+      # Whether the locked version is what the declaration asks for: the
+      # revision it addresses, or a version its constraint admits.
+      #
+      # @param prior [Dependency] the lock's pin
+      # @param ask [ScopedDeclaration] the declaration
+      # @return [Boolean]
+      sig { params(prior: Dependency, ask: ScopedDeclaration).returns(T::Boolean) }
+      def still_asked?(prior, ask)
+        revision = ask.revision
+        return prior.version == revision if revision
+
+        satisfies?(ask, prior)
       end
 
       # @param ask [ScopedDeclaration]
@@ -337,19 +352,6 @@ module Dev
         false
       end
 
-      # Whether a host can be converged to the lock's version: the lock
-      # records the tap commit at which the formula is that version, and
-      # `dev up` installs it from the tap checked out there. A pin with no
-      # tap commit leaves a host only `brew upgrade`, which reaches today's
-      # version and no other.
-      #
-      # @param prior [Dependency] the lock's pin
-      # @return [Boolean]
-      sig { params(prior: Dependency).returns(T::Boolean) }
-      def convergeable?(prior)
-        !prior.metadata[TAP_COMMIT].to_s.empty?
-      end
-
       # Everything the lock says about a pin but where it came from and
       # who needs it.
       #
@@ -357,7 +359,7 @@ module Dev
       # @return [Array] the pin's fact tuple
       sig { params(dep: Dependency).returns(T::Array[T.untyped]) }
       def facts(dep)
-        [dep.version, dep.hash, dep.group, dep.metadata.except(TAP_COMMIT, Dependency::NEEDED_BY)]
+        [dep.version, dep.hash, dep.group, dep.metadata.except(*PROVENANCE_KEYS, Dependency::NEEDED_BY)]
       end
 
       # @param dep [Dependency]
@@ -365,13 +367,6 @@ module Dev
       sig { params(dep: Dependency).returns(T::Hash[String, T.untyped]) }
       def scope_of(dep)
         dep.metadata.slice("host", "env")
-      end
-
-      # @param dep [Dependency]
-      # @return [String] the formula's tap, core when untapped
-      sig { params(dep: Dependency).returns(String) }
-      def tap_of(dep)
-        dep.metadata["tap"] || BrewRepository::CORE_TAP
       end
 
       # @param dep [Dependency]

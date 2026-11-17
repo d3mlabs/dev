@@ -15,6 +15,7 @@ class Dev::Deps::XcodeRepositoryTest < Minitest::Test
 
     Then "the version is the address; Apple ships the whole toolchain"
     version.version == "26.1.1"
+    version.source == "26.1.1"
     version.digest.nil?
     version.declarations == Dev::Deps::Declarations::Resolved.new([])
   end

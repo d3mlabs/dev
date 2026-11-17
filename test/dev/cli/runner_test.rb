@@ -973,9 +973,12 @@ class RunnerTest < Minitest::Test
 
     Then
     root.include?("  deps …       Manage dependencies\n")
-    update.start_with?("Usage: dev deps update [<declaration>…]\n\nResolve dependency constraints and write lockfiles, keeping unchanged pins\n")
-    update.include?("Arguments:\n  <declaration>  a dependencies.rb declaration to float")
-    update.include?("Flags:\n  --all  float every pin")
+    update.start_with?(
+      "Usage: dev deps update [<declaration>…]\n\n" \
+        "Resolve dependency constraints and write lockfiles: every pin moves, or only the named declarations and what they need\n",
+    )
+    update.include?("Arguments:\n  <declaration>  a dependencies.rb declaration to move to the newest version it admits")
+    !update.include?("Flags:")
   end
 
   test "an unknown child of a pure project group is reported with its full path" do

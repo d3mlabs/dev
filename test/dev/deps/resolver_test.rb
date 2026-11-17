@@ -50,10 +50,10 @@ transform!(RSpock::AST::Transformation)
 class Dev::Deps::ResolverTest < Minitest::Test
   # Shorthand: a PackageVersion universe entry. dependencies: takes the
   # Declaration list of a Resolved claim; pass declarations: for ToolOwned.
-  def version(v, digest: nil, platforms: [], dependencies: [], metadata: {},
+  def version(v, digest: nil, source: nil, platforms: [], dependencies: [], metadata: {},
               artifacts: {}, declarations: nil)
     Dev::Deps::PackageVersion.new(
-      version: v, digest: digest, platforms: platforms, artifacts: artifacts,
+      version: v, digest: digest, source: source, platforms: platforms, artifacts: artifacts,
       declarations: declarations || Dev::Deps::Declarations::Resolved.new(dependencies),
       metadata: metadata,
     )
@@ -87,7 +87,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Given "two independent single-version universes"
     repo = StubRepository.new(universes: {
       "boost" => [version("sha1")],
-      "gtest" => [version("sha2", digest: "SHA256=abc")],
+      "gtest" => [version("sha2", digest: "SHA256=abc", source: "sha2-full")],
     })
     declarations = [
       declaration(name: "boost", integration: :cmake, group: :app),
@@ -104,6 +104,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
     boost.integration == :cmake
     boost.group == :app
     result.find { |d| d.name == "gtest" }.hash == "SHA256=abc"
+    result.find { |d| d.name == "gtest" }.source == "sha2-full"
+    boost.source.nil?
   end
 
   test "picks the highest satisfying version per the integration's scheme" do

@@ -268,6 +268,9 @@ module Dev
 
         PackageVersion.new(
           version: version_data["version"],
+          # SMR serves a published version's files unchanged, so the version
+          # is the exact reference a download takes.
+          source: version_data["version"],
           platforms: targets.map { |t| t["targetName"] },
           artifacts: targets.to_h do |t|
             [t["targetName"], Artifact.new(uri: download_url(version_data, t), digest: "SHA256=#{t["hash"]}")]

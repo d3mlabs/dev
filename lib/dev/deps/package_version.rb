@@ -45,6 +45,15 @@ module Dev
       sig { returns(T.nilable(String)) }
       attr_reader :digest
 
+      # @return [String, nil] the fully qualified reference the backing
+      #   service takes to return exactly this version — a commit SHA, an
+      #   image digest, `name==version`, `tap@commit`. The pin the Resolver
+      #   mints carries it as its `source`, which is what a later re-lock
+      #   keeps the pin by. nil when the service offers no such reference
+      #   (a cask, a Steam branch tip).
+      sig { returns(T.nilable(String)) }
+      attr_reader :source
+
       # @return [Hash{String => Artifact}] bytes dev can fetch, keyed by
       #   platform; empty for tool-mediated ecosystems
       sig { returns(T::Hash[String, Artifact]) }
@@ -66,6 +75,8 @@ module Dev
       # @param version [String] the version string
       # @param platforms [Array<String>] published targets
       # @param digest [String, nil] tool-fetched integrity digest, if published
+      # @param source [String, nil] the service's exact reference for this
+      #   version, if it offers one
       # @param artifacts [Hash{String => Artifact}] dev-fetchable bytes by platform
       # @param declarations [Declarations] declared-deps claim; defaults to
       #   the affirmative Resolved([]) — ToolOwned must be stated explicitly
@@ -75,16 +86,18 @@ module Dev
           version: String,
           platforms: T::Array[String],
           digest: T.nilable(String),
+          source: T.nilable(String),
           artifacts: T::Hash[String, Artifact],
           declarations: Declarations,
           metadata: T::Hash[String, T.untyped],
         ).void
       end
-      def initialize(version:, platforms: [], digest: nil, artifacts: {},
+      def initialize(version:, platforms: [], digest: nil, source: nil, artifacts: {},
                      declarations: Declarations::Resolved.new([]), metadata: {})
         @version = version
         @platforms = T.let(platforms.dup.freeze, T::Array[String])
         @digest = digest
+        @source = source
         @artifacts = T.let(artifacts.dup.freeze, T::Hash[String, Artifact])
         @declarations = declarations
         @metadata = T.let(metadata.dup.freeze, T::Hash[String, T.untyped])
@@ -94,7 +107,7 @@ module Dev
       # @return [Array] the members that constitute identity
       sig { override.returns(T::Array[T.anything]) }
       def equality_members
-        [version, platforms, digest, artifacts, declarations, metadata]
+        [version, platforms, digest, source, artifacts, declarations, metadata]
       end
     end
   end

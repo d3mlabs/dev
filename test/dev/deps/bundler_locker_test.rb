@@ -57,19 +57,19 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "lock runs bundle lock through the project's shadowenv, against the generated Gemfile" do
+  test "lock runs bundle lock through the project's shadowenv, against the generated Gemfile, floating every gem by default" do
     Given "a locker over the spawn seam"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
     shadowenv_exec.expects(:capture3)
-      .with("bundle", "lock", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
+      .with("bundle", "lock", "--update", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
       .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
 
-    When "locking"
+    When "locking with no unlock given — the bare verb's shape"
     locker.lock(bundler_declarations { gem "ffi" })
 
-    Then "bundle lock was sent to the seam, not spawned bare (asserted on the mock)"
+    Then "bundle lock --update was sent to the seam, not spawned bare (asserted on the mock)"
     true
 
     Cleanup
@@ -127,7 +127,7 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
       .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
 
-    When "dev deps update --all"
+    When "dev deps update, bare"
     locker.lock(bundler_declarations { gem "ffi" }, unlock: Dev::Deps::UnlockSet.all)
 
     Then "bundle lock --update was sent (asserted on the mock)"

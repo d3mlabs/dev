@@ -41,8 +41,9 @@ module Dev
       # @return [PackageVersion]
       sig { override.params(id: PackageId, revision: String).returns(PackageVersion) }
       def at(id, revision)
-        # An Xcode install is self-contained: Apple ships the whole toolchain.
-        PackageVersion.new(version: revision, declarations: Declarations::Resolved.new([]))
+        # An Xcode install is self-contained: Apple ships the whole toolchain,
+        # and the exact version is what `xcodes install` takes.
+        PackageVersion.new(version: revision, source: revision, declarations: Declarations::Resolved.new([]))
       end
     end
   end

@@ -17,7 +17,8 @@ module Dev
     #
     # Two paginated list calls cover everything: the releases list carries
     # each release's assets (names, sizes, API-reported SHA256 digests) and
-    # the tags list carries each tag's commit SHA — so enumeration is
+    # the tags list carries each tag's commit SHA — each version's source,
+    # since a tag can be moved and its commit cannot — so enumeration is
     # facts-complete with no per-version calls (an empty releases list costs
     # one more: a /releases/latest cross-check, see #confirmed_releases).
     # Resolution is metadata only,
@@ -117,6 +118,7 @@ module Dev
       def at(id, revision)
         PackageVersion.new(
           version: revision,
+          source: revision,
           metadata: { "repo" => T.must(id.source) },
           declarations: Declarations::Resolved.new([]),
         )
@@ -147,6 +149,10 @@ module Dev
 
         PackageVersion.new(
           version: tag,
+          # A tag moves; the commit it points at is what the tag's tree
+          # and release are of. A release whose tag the tags list did not
+          # carry has no commit, and so no source.
+          source: commit,
           metadata: metadata,
           # Usage contract, not a guarantee: prebuilt assets baked their needs
           # in at build time, and a source build's transitive needs are

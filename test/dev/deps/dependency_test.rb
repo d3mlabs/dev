@@ -27,6 +27,26 @@ class Dev::Deps::DependencyTest < Minitest::Test
     dep.dependencies == []
   end
 
+  test "source defaults to none: a pin the lock cannot hold by reference" do
+    When "no source is given"
+    dep = Dev::Deps::Dependency.new(name: "boost", integration: :cmake, group: :app, version: "1.90.0", hash: nil, metadata: {})
+
+    Then
+    dep.source.nil?
+    dep.unkeepable?
+  end
+
+  test "unkeepable? is a versioned pin without a source: #{description}" do
+    Expect
+    Dev::Deps::Dependency.new(name: "x", integration: :pip, group: :app, version:, hash: nil, source:, metadata: {}).unkeepable? == unkeepable
+
+    Where
+    description                        | version    | source       | unkeepable
+    "a sourced pin is keepable"        | "5.9.0"    | "x==5.9.0"   | false
+    "a sourceless pin is not"          | "15400000" | nil          | true
+    "an unversioned pin has no keep"   | nil        | nil          | false
+  end
+
   test "dependency is frozen (immutable)" do
     Given "a dependency"
     dep = Dev::Deps::Dependency.new(

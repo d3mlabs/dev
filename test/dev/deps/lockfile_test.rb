@@ -173,6 +173,76 @@ class Dev::Deps::LockfileTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "a pin's source round-trips as an attribute of its own, beside the hash" do
+    Given "pins whose services gave them a fully qualified reference"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    deps = [
+      Dev::Deps::Dependency.new(name: "zlib", integration: :brew, group: :app, version: "1.3", hash: nil,
+        source: "homebrew/core@0f1ba9ea", metadata: { "tap_commit" => "0f1ba9ea" }),
+      Dev::Deps::Dependency.new(name: "kimimaro", integration: :pip, group: :app, version: "5.9.0", hash: "SHA256=k",
+        source: "kimimaro==5.9.0", metadata: {}),
+    ]
+
+    When "locking and reading back"
+    lockfile.lock(deps)
+    read_deps = lockfile.read
+    entry = YAML.safe_load_file(File.join(dir, "deps.lock")).fetch("pip").fetch("kimimaro")
+
+    Then "the source is its own key, not metadata, and comes back on the pin"
+    read_deps.map(&:source) == ["homebrew/core@0f1ba9ea", "kimimaro==5.9.0"]
+    entry == { "group" => "app", "version" => "5.9.0", "hash" => "SHA256=k", "source" => "kimimaro==5.9.0" }
+    read_deps[0].metadata == { "tap_commit" => "0f1ba9ea" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "read lifts a brew pin's source from the tap commit a lock written before sources recorded" do
+    Given "a lock as an older dev wrote it: tap commits in metadata, no source anywhere"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    File.write(File.join(dir, "deps.lock"), <<~YAML)
+      brew:
+        cmake: { group: build, version: 4.4.4, tap_commit: 0f1ba9ea }
+        xcodes: { group: app, version: 1.6.1, tap: xcodesorg/made, tap_commit: 0f1ba9ea }
+        docker: { group: app, version: 4.4.4 }
+      pip:
+        kimimaro: { group: app, version: 5.8.5 }
+    YAML
+
+    When "reading"
+    read_deps = Dev::Deps::Lockfile.new(dir: dir).read.to_h { |dep| [dep.name, dep.source] }
+
+    Then "a core formula's source is core at its commit, a tapped one its tap's; a pin without a commit, and a pip pin, have none"
+    read_deps == { "cmake" => "homebrew/core@0f1ba9ea", "xcodes" => "xcodesorg/made@0f1ba9ea", "docker" => nil, "kimimaro" => nil }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "lock names the pins no re-lock can keep in the header, and only then" do
+    Given "a steam branch tip beside a sourced formula"
+    dir = Dir.mktmpdir("dev-lockfile-test-")
+    lockfile = Dev::Deps::Lockfile.new(dir: dir)
+    sourced = Dev::Deps::Dependency.new(name: "zlib", integration: :brew, group: :app, version: "1.3", hash: nil,
+      source: "homebrew/core@0f1ba9ea", metadata: {})
+    tip = Dev::Deps::Dependency.new(name: "SatisfactoryServer", integration: :steam, group: :app, version: "15400000", hash: nil,
+      metadata: { "app" => "1690800", "branch" => "public" })
+
+    When "locking with and without the tip"
+    lockfile.lock([sourced, tip])
+    with_tip = File.read(File.join(dir, "deps.lock"))
+    lockfile.lock([sourced])
+    without_tip = File.read(File.join(dir, "deps.lock"))
+
+    Then
+    with_tip.include?("# re-resolved on every dev deps update (no source the lock can hold): steam/SatisfactoryServer\n")
+    !without_tip.include?("re-resolved on every")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "lock produces readable YAML with header comment" do
     Given "a single dependency"
     dir = Dir.mktmpdir("dev-lockfile-test-")

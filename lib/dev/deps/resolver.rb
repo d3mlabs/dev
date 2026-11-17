@@ -358,8 +358,9 @@ module Dev
       # Mint the pin: the chosen version's facts become the Dependency, the
       # declaration contributes name/integration/group, its materialization
       # (install instructions the repository never saw), the post-install
-      # hook, and the install-scoping axes. The version digest becomes the
-      # pin's integrity hash uniformly; an empty version string (ecosystems
+      # hook, and the install-scoping axes. The version's source — the
+      # service's exact reference for it — becomes the pin's `source`, and
+      # the version digest becomes the pin's integrity hash uniformly; an empty version string (ecosystems
       # that expose no version — brew casks, url artifacts) becomes a nil pin
       # version, unless the author named a display label (a url tag:), which
       # is promoted out of the materialization into the version slot.
@@ -391,6 +392,7 @@ module Dev
           group: decl.scope.group,
           version: pin_version,
           hash: hash,
+          source: chosen.source,
           metadata: metadata,
         )
         dependency = dependency.with(post_install: decl.post_install) if decl.post_install

@@ -46,6 +46,9 @@ module Dev
             PackageVersion.new(
               version: "",
               digest: digest,
+              # The URL is the only reference the server takes; the digest
+              # beside it is what makes the pin exact, checked at install.
+              source: url,
               artifacts: { "default" => Artifact.new(uri: url, digest: digest) },
               metadata: { "url" => url },
               # A downloaded archive is self-contained: its contents are the

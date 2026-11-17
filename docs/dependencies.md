@@ -3,6 +3,17 @@
 `dependencies.rb` declares what a project needs; `deps.lock` pins every
 declaration to an exact version; `dev up` installs what the lock names.
 
+## The contract
+
+`dev up` and `dev deps install` read the lock and never resolve: they
+install what it names, or refuse. `dev deps update` is the one verb that
+writes the lock; bare, it moves every pin to the newest version its
+declaration admits, and `dev deps update <name>` moves one declaration
+while every other pin stays. `dev deps check` reports the state of the
+three (manifest, lock, installed) and changes nothing. Whatever is stale
+is a message naming the verb that fixes it, never an action taken on the
+reader's behalf.
+
 ## The cycle
 
 1. Declare in `dependencies.rb`.
@@ -167,7 +178,10 @@ update` writes it; commit it; never edit it by hand.
 A lock records what a dependency publishes, not the machine that wrote it.
 A pin with one published file carries that file's hash; a pin with several
 platform builds carries a `platforms:` block with every published target
-(brew bottle tags, ficsit targets). The same `dev deps update` on a Mac and
+(brew bottle tags, ficsit targets). A pin also carries its `source`: the
+fully qualified reference its service installs exactly this version from
+(a commit, a digest, `tap@commit`, `name==version`), which is what lets
+`dev deps update <name>` keep it. The same `dev deps update` on a Mac and
 a Linux box writes the same bytes.
 
 An `image` pin carries the floor's tag and digest, the platform, the sorted
@@ -183,17 +197,31 @@ is dev's build set (`win64`, `linux64`, `macos`).
 
 ## Commands
 
-### `dev deps update [<name>…] [--all]`
+### `dev deps update [<declaration>…]`
 
-Resolves `dependencies.rb` and writes `deps.lock`. The re-lock is
-conservative, like `bundle install` against an existing `Gemfile.lock`: a
-pin whose declaration did not change keeps its locked version. Naming
-declarations re-resolves only those and what they pull in (`bundle update
-<gem>`); `--all` takes the registries' current version for every pin.
+Resolves `dependencies.rb` and writes `deps.lock`. Bare, it is `bundle
+lock --update`: after `brew update`, every pin moves to the newest version
+its declaration admits, so the lock is today's for every channel at once.
+Naming declarations is `bundle update <gem>`: the named declarations and
+what they pull in re-resolve, and every other pin is copied from the lock —
+provided its declaration still asks the same thing (group, scope, tap or
+floor, constraint) and the lock records a `source` for it.
 
-The output names every pin that moved and why (`named`, `--all`,
-`declaration changed`), and warns per brew formula the image build would
-compile from source because its tap ships no `x86_64_linux` bottle.
+A pin's `source` is the fully qualified reference its service gave it: a
+git or gh commit, an image digest, `name==version` for pip, `tap@commit`
+for brew. A pin without one cannot be kept — nothing could install exactly
+it again — so `update <name>` re-resolves it and says so once; from then on
+the lock has its source. A steam pin never has one (SteamCMD installs a
+branch tip and publishes no way to install a past build), so the lock's
+header names it as re-resolved on every update, as does `dev deps check`.
+
+The output names every pin that moved; under `update <name>` each move
+beyond the names given carries its cause (`declaration changed`, or that
+the lock records no source for the old pin). It also warns per brew
+formula the image build would compile from source because its tap ships
+no `x86_64_linux` bottle. When `brew update` fails (offline, a prefix this
+user cannot write) the update warns and resolves against the index brew
+has.
 
 ### `dev deps install [--group G]… [--except G]… [--integration I]… [--pinned-taps]`
 
@@ -219,7 +247,9 @@ project half from an empty data root ([Containers](containers.md#the-cold-run)).
 
 Exits non-zero when `dependencies.rb` and `deps.lock` disagree, or when
 `deps.lock` differs from what this machine last installed. The same checks
-run at every command start.
+run at every command start. It also names each pin the lock cannot keep
+across updates (a steam branch tip), so a lock that moves on every
+`dev deps update` is no surprise.
 
 ### `dev deps path <integration> <name> [<platform>]`
 
@@ -310,6 +340,12 @@ see [Data root](data-root.md). Projects reach them through `dev deps path`
 or, for `cmake`, the `build/_deps/<name>-src` link `dev up` maintains. A
 `gh` tree that ships a `bin/` is also put on the project `PATH` through
 `.shadowenv.d/515_gh.lisp`.
+
+A steam pin is the branch's build id at lock time, with no `source`:
+SteamCMD's `app_update` installs the branch tip, and its `download_depot`
+writes one depot's files without the app manifest and refuses large
+depots, so no past build is installable by reference. `dev deps update`
+re-resolves it every time, and the lock's header says so.
 
 ## What the checkout carries
 

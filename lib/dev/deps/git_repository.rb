@@ -20,7 +20,9 @@ module Dev
     # never reachable commits), so a commit pin arrives as the declaration's
     # revision and is lifted by at — pure, no network: a full SHA is
     # self-certifying as an address, and existence surfaces at fetch time.
-    # Git SHAs are identifiers, not integrity hashes — digest is nil.
+    # Git SHAs are identifiers, not integrity hashes — digest is nil; the
+    # SHA is each version's source, the one reference a checkout of exactly
+    # that tree takes.
     class GitRepository < Repository
       extend T::Sig
 
@@ -43,6 +45,7 @@ module Dev
           versions: refs.map do |ref, sha|
             PackageVersion.new(
               version: sha,
+              source: sha,
               metadata: { "repo" => repo_url, "ref" => ref },
               # A checked-out source tree carries no manifest dev reads;
               # consumers declare what they need alongside it.
@@ -63,6 +66,7 @@ module Dev
       def at(id, revision)
         PackageVersion.new(
           version: revision,
+          source: revision,
           metadata: { "repo" => T.must(id.source) },
           declarations: Declarations::Resolved.new([]),
         )

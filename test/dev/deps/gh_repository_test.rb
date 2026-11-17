@@ -80,6 +80,7 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     released.digest.nil?
     released.metadata["repo"] == SLUG
     released.metadata["commit"] == "css83sha"
+    released.source == "css83sha"
     released.metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222", "cccc3333"]
     source_only = package.version("5.6.1-release")
     source_only.metadata["commit"] == "relsha"

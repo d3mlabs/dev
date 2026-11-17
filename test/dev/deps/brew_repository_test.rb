@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/deps/brew_repository"
+require "dev/provisioning_guard"
 require "json"
 
 transform!(RSpock::AST::Transformation)
@@ -77,6 +78,7 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
       ),
     }
     package.version("3.31.4").digest.nil?
+    package.version("3.31.4").source.nil?
     package.version("3.31.4").metadata == { "format" => "source" }
   end
 
@@ -240,6 +242,76 @@ class Dev::Deps::BrewRepositoryTest < Minitest::Test
 
     Then "the commit rides the version as a fact the image build pins the tap to"
     package.version("1.0.0").metadata["tap_commit"] == "e5810c4f"
+    package.version("1.0.0").source == "d3mlabs/d3mlabs@e5810c4f"
+  end
+
+  test "find stamps a core formula's source as core at the commit brew reports" do
+    Given "a core formula at a tap commit"
+    repository = Dev::Deps::BrewRepository.new
+    stub_brew_info(["cmake"], [formula_json("cmake", stable: "4.4.3", tap: "homebrew/core", tap_git_head: "3c67e3be")])
+    repository.stubs(:get_formula_api).with("cmake").returns(api_response(["arm64_tahoe", "x86_64_linux"]))
+
+    When "finding"
+    package = repository.find(Dev::Deps::PackageId.new(integration: :brew, name: "cmake"))
+
+    Then
+    package.version("4.4.3").source == "homebrew/core@3c67e3be"
+  end
+
+  test "source_at spells a tap commit the same way for a fresh version and for a pin read back: #{description}" do
+    Expect
+    Dev::Deps::BrewRepository.source_at(tap, "3c67e3be") == source
+
+    Where
+    description      | tap                 | source
+    "core (no tap)"  | nil                 | "homebrew/core@3c67e3be"
+    "a tapped one"   | "d3mlabs/d3mlabs"   | "d3mlabs/d3mlabs@3c67e3be"
+  end
+
+  test "refresh_index! runs brew update once the kill-switch allows it" do
+    Given "a brew that updates cleanly, with the harness's guard lifted"
+    guard = allow_provisioning
+    repository = Dev::Deps::BrewRepository.new
+
+    When "refreshing"
+    repository.refresh_index!
+
+    Then
+    1 * Open3.capture3(READ_ENV, "brew", "update", "--quiet") >> ["", "", stub(success?: true)]
+
+    Cleanup
+    restore_provisioning_guard(guard)
+  end
+
+  test "refresh_index! raises IndexRefreshError carrying brew's stderr when the update fails" do
+    Given "a brew update that cannot reach its remote"
+    guard = allow_provisioning
+    repository = Dev::Deps::BrewRepository.new
+    Open3.stubs(:capture3).with(READ_ENV, "brew", "update", "--quiet")
+         .returns(["", "fatal: unable to access github.com", stub(success?: false)])
+
+    When "refreshing"
+    repository.refresh_index!
+
+    Then
+    error = raises Dev::Deps::BrewRepository::IndexRefreshError
+    error.message == "brew update failed (fatal: unable to access github.com)"
+
+    Cleanup
+    restore_provisioning_guard(guard)
+  end
+
+  test "refresh_index! is refused by the test harness's kill-switch: it writes the prefix like an install" do
+    Given "the guard armed, as every test has it"
+    repository = Dev::Deps::BrewRepository.new
+    Open3.expects(:capture3).never
+
+    When "refreshing"
+    repository.refresh_index!
+
+    Then
+    error = raises Dev::ProvisioningGuard::ForbiddenError
+    error.message.include?("BrewRepository#refresh_index!")
   end
 
   test "find records how the image build gets a tap formula from its bottle block: #{description}" do

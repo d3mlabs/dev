@@ -6,15 +6,22 @@ require "dev/deps/unlock_set"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::UnlockSetTest < Minitest::Test
-  test "none floats nothing and is neither all nor a subset" do
-    Given "the conservative re-lock"
-    unlock = Dev::Deps::UnlockSet.none
+  test "all floats every name and is not a subset — the bare verb's shape" do
+    Given "the full re-lock"
+    unlock = Dev::Deps::UnlockSet.all
 
     Expect
-    !unlock.all?
+    unlock.all?
     !unlock.subset?
-    !unlock.floats?("cmake")
+    unlock.floats?("anything")
     unlock.names == []
+  end
+
+  test "no names is all: there is no shape that floats nothing" do
+    Expect
+    Dev::Deps::UnlockSet.new.all?
+    Dev::Deps::UnlockSet.new(names: []).all?
+    Dev::Deps::UnlockSet.new == Dev::Deps::UnlockSet.all
   end
 
   test "named floats exactly the named declarations, once each" do
@@ -30,22 +37,11 @@ class Dev::Deps::UnlockSetTest < Minitest::Test
     unlock.names == ["gh", "cmake"]
   end
 
-  test "all floats every name and is not a subset" do
-    Given "the full re-lock"
-    unlock = Dev::Deps::UnlockSet.all
-
-    Expect
-    unlock.all?
-    !unlock.subset?
-    unlock.floats?("anything")
-  end
-
   test "equal by value" do
     Expect
     Dev::Deps::UnlockSet.new(names: ["a"]) == Dev::Deps::UnlockSet.new(names: ["a"])
     Dev::Deps::UnlockSet.new(names: ["a"]).hash == Dev::Deps::UnlockSet.new(names: ["a"]).hash
-    Dev::Deps::UnlockSet.none == Dev::Deps::UnlockSet.new
-    Dev::Deps::UnlockSet.all != Dev::Deps::UnlockSet.none
+    Dev::Deps::UnlockSet.all != Dev::Deps::UnlockSet.new(names: ["a"])
     Dev::Deps::UnlockSet.new(names: ["a"]) != Dev::Deps::UnlockSet.new(names: ["b"])
   end
 end
