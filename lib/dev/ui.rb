@@ -12,7 +12,8 @@ module Dev
   # vocabulary: a timed
   # **frame** around a stage; a **spin** for an action under a spinner;
   # a **step** for an action that owns the terminal; a **confirm**
-  # before anything irreversible; **note** for a formatted line.
+  # before anything irreversible; a **choose** when the verb needs one
+  # of several named things picked; **note** for a formatted line.
   #
   # The split between spin and step is the stdio contract, learned the
   # hard way: a spinner captures every Ruby-level write and
@@ -121,6 +122,18 @@ module Dev
     sig { abstract.params(question: String, default: T::Boolean).returns(T.nilable(T::Boolean)) }
     def confirm(question, default: false); end
 
+    # Ask for one of several named options at the terminal, answering
+    # the option picked as given. nil when there is no terminal to ask
+    # at (a pipe, CI): the caller decides what that means — a verb that
+    # cannot act without the pick refuses rather than guess one.
+    #
+    # @param question [String]
+    # @param options [Array<String>] what may be picked, in the order offered; never empty
+    # @return [String, nil] the option picked
+    # @raise [TerminalOwner::UnderSpinnerError] under a spin
+    sig { abstract.params(question: String, options: T::Array[String]).returns(T.nilable(String)) }
+    def choose(question, options); end
+
     # One formatted line, CLI::UI's markup (`{{bold:…}}`, `{{v}}`).
     #
     # @param text [String]
@@ -188,6 +201,12 @@ module Dev
 
     sig { override.params(question: String, default: T::Boolean).returns(T.nilable(T::Boolean)) }
     def confirm(question, default: false)
+      TerminalOwner.claim!("a prompt")
+      nil
+    end
+
+    sig { override.params(question: String, options: T::Array[String]).returns(T.nilable(String)) }
+    def choose(question, options)
       TerminalOwner.claim!("a prompt")
       nil
     end

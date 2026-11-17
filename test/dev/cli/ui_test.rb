@@ -230,6 +230,7 @@ class Dev::Cli::UiImplTest < Minitest::Test
     "`sh -c ./bin/package`"    | ->(_) { Dev::Lifecycle::Shell.new.run(["sh", "-c", "./bin/package"], chdir: Pathname(Dir.pwd)) }
     "a prompt"                 | ->(ui) { ui.confirm("Proceed?") }
     "a prompt"                 | ->(ui) { ui.ask_secret("Token") }
+    "a prompt"                 | ->(ui) { ui.choose("Which?", ["a", "b"]) }
     "a frame"                  | ->(ui) { ui.frame("Publishing") { :never } }
     "a step"                   | ->(ui) { ui.step("Packaging") { :never } }
     "a spinner"                | ->(ui) { ui.spin("Tagging") { :never } }
@@ -309,6 +310,18 @@ class Dev::Cli::UiImplTest < Minitest::Test
     Expect
     ui(prompt:, input: tty).confirm("Stop them too?") == true
     ui(prompt:, input: tty).confirm("Proceed?", default: true) == true
+  end
+
+  test "#choose asks CLI::UI's menu over the options at a terminal, answering the one picked, and is nil (nobody to pick) without one (dev#623)" do
+    Given
+    prompt = typed_mock(CLI::UI::Prompt, class_of: true)
+    prompt.stubs(:ask).with("Which scope?", options: ["d3mlabs", "~/actions-runner"]).returns("~/actions-runner")
+    tty = StringIO.new
+    tty.define_singleton_method(:tty?) { true }
+
+    Expect
+    ui(prompt:, input: tty).choose("Which scope?", ["d3mlabs", "~/actions-runner"]) == "~/actions-runner"
+    ui(prompt:, input: StringIO.new).choose("Which scope?", ["d3mlabs", "~/actions-runner"]).nil?
   end
 
   test "#note prints the text through CLI::UI's formatting (dev#514)" do

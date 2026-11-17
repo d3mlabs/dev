@@ -156,6 +156,9 @@ class Dev::RunnerStatusTest < Minitest::Test
   # A reach fact's continuation lines sit under this indent.
   INDENT = " " * 9
 
+  # A family's own line after its slot facts sits under the glyph's width.
+  FACT_INDENT = "  "
+
   # --- the shape (plans#52): frames by subject ----------------------------
 
   test "a host with no enrollments: the host frame, then the note, then the posture" do
@@ -201,18 +204,18 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the family frames are siblings of the host frame, each with its reach and one folded slot line"
-    rows_from(ui, "agent · 3 slots") == [
-      [:frame, "agent · 3 slots", 0],
+    rows_from(ui, "agent · 3 slots · d3mlabs") == [
+      [:frame, "agent · 3 slots · d3mlabs", 0],
       [:note, "{{v}} reach: jobs from d3mlabs/dev, d3mlabs/plans", 1],
       [:note, "#{INDENT}via #{PINS_CLAUSE}", 1],
       [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
       [:note, "{{v}} box-agent, -2, -3 — online · service installed · runs as #{ME} · _work shared with group dev", 1],
-      [:frame, "orchestrator · 2 slots", 0],
+      [:frame, "orchestrator · 2 slots · d3mlabs", 0],
       [:note, "{{v}} reach: jobs from every d3mlabs repo", 1],
       [:note, "#{INDENT}via #{PINS_CLAUSE}", 1],
       [:note, "#{INDENT}runs-on ai-orchestrator", 1],
       [:note, "{{v}} box-orchestrator, -2 — online · service installed · runs as #{ME}", 1],
-      [:frame, "build-host · 1 slot", 0],
+      [:frame, "build-host · 1 slot · JPDuchesne/snappy", 0],
       [:note, "{{v}} reach: jobs from JPDuchesne/snappy", 1],
       [:note, "#{INDENT}via any workflow", 1],
       [:note, "#{INDENT}runs-on snappy", 1],
@@ -244,7 +247,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then "the two agreeing slots fold; the deviant names its findings and the remedy"
     ui.rows.include?([:note, "{{v}} box-orchestrator, -3 — online · service installed · runs as #{ME}", 1])
-    ui.rows.include?([:note, "{{x}} box-orchestrator-2 (~/actions-runner-orchestrator-2) — #{finding} (re-run `dev runner register`)", 1])
+    ui.rows.include?([:note, "{{x}} box-orchestrator-2 (~/actions-runner-orchestrator-2) — #{finding} (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator-2` to retire it)", 1])
 
     Where
     what                        | status_word | labels                     | service | finding
@@ -253,6 +256,42 @@ class Dev::RunnerStatusTest < Minitest::Test
     "carrying another label"    | "online"    | ["ai-orchestrator", "gpu"] | true    | "labels ai-orchestrator | gpu, not the role's ai-orchestrator"
     "without its service"       | "online"    | ["ai-orchestrator"]        | false   | "no service installed"
     "offline and serviceless"   | "offline"   | ["ai-orchestrator"]        | false   | "offline on GitHub — the registration is not being run; no service installed"
+  end
+
+  test "red slots that agree fold into one line naming each dir's unregister; a family whose every slot is red adds the scope's (dev#623)" do
+    Given "two orchestrator slots, both offline on GitHub"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    write_runner(home, "actions-runner-orchestrator-2", scope: "d3mlabs", name: "box-orchestrator-2")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "offline") }
+    status = build_status(ui: ui, home: home, registry: CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP, &responder))
+
+    When
+    status.report
+
+    Then "one folded ✗ line, each slot's dir in the remedy, then the family's retire line — not a fact of its own"
+    rows_from(ui, "orchestrator · 2 slots · d3mlabs").drop(4).take(2) == [
+      [:note, "{{x}} box-orchestrator (~/actions-runner-orchestrator), box-orchestrator-2 (~/actions-runner-orchestrator-2) — offline on GitHub — the registration is not being run " \
+              "(re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator`, `dev runner unregister ~/actions-runner-orchestrator-2` to retire them)", 1],
+      [:note, "#{FACT_INDENT}every slot red — `dev runner unregister d3mlabs` retires the family", 1],
+    ]
+    ui.rows.last == [:note, "posture: 2 slots · 3 facts · 1 drifted", 0]
+  end
+
+  test "a family whose slots GitHub could not be asked about is not red: no retire line" do
+    Given "one slot, GitHub unreachable"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    responder = ->(_scope, _name) { raise Dev::RunnerRegistry::QueryError, "network is unreachable" }
+    status = build_status(ui: ui, home: home, registry: CannedRegistry.new(&responder))
+
+    When
+    status.report
+
+    Then
+    ui.rows.none? { |_kind, text, _depth| text.include?("retires the family") }
   end
 
   test "a run of consecutive slot suffixes collapses to its ends" do
@@ -268,7 +307,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    ui.rows.include?([:frame, "orchestrator · 4 slots", 0])
+    ui.rows.include?([:frame, "orchestrator · 4 slots · d3mlabs", 0])
     ui.rows.include?([:note, "{{v}} box-orchestrator, -2 … -4 — online · service installed · runs as #{ME}", 1])
   end
 
@@ -284,7 +323,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    ui.rows.include?([:note, "{{x}} JPSFF (~/actions-runner-snappy) — runs as #{ME}, not svc-runner (re-run `dev runner register`)", 1])
+    ui.rows.include?([:note, "{{x}} JPSFF (~/actions-runner-snappy) — runs as #{ME}, not svc-runner (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-snappy` to retire it)", 1])
   end
 
   test "an enrollment under the runner user's home, owned by it, is found there and reads ok" do
@@ -317,8 +356,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "agent · 1 slot").take(5) == [
-      [:frame, "agent · 1 slot", 0],
+    rows_from(ui, "agent · 1 slot · d3mlabs").take(5) == [
+      [:frame, "agent · 1 slot · d3mlabs", 0],
       [:note, "{{x}} reach: jobs from d3mlabs/dev", 1],
       [:note, "#{INDENT}via any workflow — the agent role expects #{PINS_CLAUSE}", 1],
       [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
@@ -356,8 +395,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "build-host · 1 slot").take(5) == [
-      [:frame, "build-host · 1 slot", 0],
+    rows_from(ui, "build-host · 1 slot · d3mlabs").take(5) == [
+      [:frame, "build-host · 1 slot · d3mlabs", 0],
       [:note, "{{x}} reach: jobs from d3mlabs/cellbound-3d", 1],
       [:note, "#{INDENT}via #{PINS_CLAUSE} — the build-host role expects any workflow", 1],
       [:note, "#{INDENT}runs-on ue-engine", 1],
@@ -394,8 +433,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "build-host · 1 slot").take(5) == [
-      [:frame, "build-host · 1 slot", 0],
+    rows_from(ui, "build-host · 1 slot · d3mlabs/dev").take(5) == [
+      [:frame, "build-host · 1 slot · d3mlabs/dev", 0],
       [:note, "{{x}} reach: jobs from d3mlabs/dev", 1],
       [:note, "#{INDENT}via any workflow", 1],
       [:note, "#{INDENT}runs-on dev", 1],
@@ -419,8 +458,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "agent · 1 slot").take(4) == [
-      [:frame, "agent · 1 slot", 0],
+    rows_from(ui, "agent · 1 slot · d3mlabs/cellbound-3d").take(4) == [
+      [:frame, "agent · 1 slot · d3mlabs/cellbound-3d", 0],
       [:note, "{{v}} reach: jobs from d3mlabs/cellbound-3d", 1],
       [:note, "#{INDENT}via any workflow", 1],
       [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
@@ -429,7 +468,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     registry.group_asks.empty?
   end
 
-  test "two families of one role on the host: each frame names its scope, so the reader needn't reach the from clause to tell them apart" do
+  test "every family frame names its scope — the argument `dev runner unregister` takes — so two families of one role are told apart without reading the from clause (dev#623)" do
     Given "the Mac today: three org agent slots and cellbound-3d's repo-scoped agent slot"
     ui = RecordingUi.new
     home = Dir.mktmpdir
@@ -462,12 +501,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "agent · 1 slot").take(3) == [
-      [:frame, "agent · 1 slot", 0],
+    rows_from(ui, "agent · 1 slot · d3mlabs").take(3) == [
+      [:frame, "agent · 1 slot · d3mlabs", 0],
       [:note, "{{?}} reach: cannot tell — HTTP 502 from api.github.com", 1],
       [:note, "{{v}} box-agent — online · service installed · runs as #{ME} · _work shared with group dev", 1],
     ]
-    rows_from(ui, "agent · 1 slot").none? { |_kind, text, _depth| text.include?("{{x}}") }
+    rows_from(ui, "agent · 1 slot · d3mlabs").none? { |_kind, text, _depth| text.include?("{{x}}") }
   end
 
   test "an org slot no group lists has no reach: a ✗ with register as the remedy" do
@@ -497,10 +536,11 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "agent · 1 slot").take(3) == [
-      [:frame, "agent · 1 slot", 0],
+    rows_from(ui, "agent · 1 slot · d3mlabs").take(4) == [
+      [:frame, "agent · 1 slot · d3mlabs", 0],
       [:note, "{{x}} reach: none — GitHub lists no slot of this family (stale enrollments; re-run `dev runner register`)", 1],
-      [:note, "{{x}} box-agent (~/actions-runner-agent) — gone on GitHub — stale enrollment (re-run `dev runner register`)", 1],
+      [:note, "{{x}} box-agent (~/actions-runner-agent) — gone on GitHub — stale enrollment (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-agent` to retire it)", 1],
+      [:note, "#{FACT_INDENT}every slot red — `dev runner unregister d3mlabs` retires the family", 1],
     ]
   end
 
@@ -516,8 +556,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    rows_from(ui, "build-host · 1 slot").take(3) == [
-      [:frame, "build-host · 1 slot", 0],
+    rows_from(ui, "build-host · 1 slot · d3mlabs/cellbound-3d").take(3) == [
+      [:frame, "build-host · 1 slot · d3mlabs/cellbound-3d", 0],
       [:note, "{{?}} reach: cannot tell — network is unreachable", 1],
       [:note, "{{?}} mac-box — service installed · runs as #{ME} · GitHub unreachable (network is unreachable)", 1],
     ]
@@ -610,12 +650,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string == <<~TEXT
       mac1 · darwin · launchd
       ✓ no org Brewfile shipped (nothing to check)
-      orchestrator · 2 slots
+      orchestrator · 2 slots · d3mlabs
       ✓ reach: jobs from every d3mlabs repo
                via #{PINS_CLAUSE}
                runs-on ai-orchestrator
       ✓ box-orchestrator — online · service installed · runs as #{ME}
-      ✗ box-orchestrator-2 (~/actions-runner-orchestrator-2) — offline on GitHub — the registration is not being run (re-run `dev runner register`)
+      ✗ box-orchestrator-2 (~/actions-runner-orchestrator-2) — offline on GitHub — the registration is not being run (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator-2` to retire it)
       this checkout (d3mlabs/dev) reaches: orchestrator
       posture: 2 slots · 4 facts · 1 drifted
     TEXT
@@ -1089,7 +1129,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the host frame carries a failure marker per host fact (user, two memberships, the edge, shared root, engine), the slot one of its own"
-    out.string.include?("✗ box (~/actions-runner-x) — _work tree not cooperative (group dev, setgid) (re-run `dev runner register`)")
+    out.string.include?("✗ box (~/actions-runner-x) — _work tree not cooperative (group dev, setgid) (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-x` to retire it)")
     out.string.scan("✗ ").length == 7
   end
 

@@ -70,19 +70,81 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.torn_down.map(&:dir) == [dir]
   end
 
-  test "no argument means the checkout's scope — the owner with --org — like register" do
-    Given "enrollments for the checkout's repo and its org"
+  test "no argument lists this host's enrollments by scope and asks which scope or dir — the picked one is then unregistered as if named (dev#623)" do
+    Given "the Mac: three org agent slots in dirs named from history, and cellbound-3d's own; the operator picks the org scope, then says yes"
     home = Dir.mktmpdir
-    repo_dir = write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
-    org_dir = write_runner(home, "actions-runner-ai", scope: "JPDuchesne", name: "JPSFF")
-    harness = build_harness(home: home, repo: "JPDuchesne/snappy")
+    org_one = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-agent")
+    org_two = write_runner(home, "actions-runner-cellbound3d-2", scope: "d3mlabs", name: "mac-agent-2")
+    File.write(File.join(org_two, ".service"), "unit\n")
+    write_runner(home, "actions-runner-ai-ask", scope: "d3mlabs/cellbound-3d", name: "mac-agent")
+    harness = build_harness(home: home, answer: true, pick: "d3mlabs")
 
-    When "unregistering with no reference, then with --org"
-    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: projectless_context)
-    harness.command.call(args: parsed_args(harness.command, ["--yes", "--org"]), context: projectless_context)
+    When "unregistering with no reference"
+    harness.command.call(args: parsed_args(harness.command, []), context: harness.context)
+
+    Then "the listing is grouped by scope in discovery order, the choice offers every scope then every dir — what Tab completes — and the pick resolves like the argument would"
+    harness.out.string.start_with?(<<~TEXT)
+      This host's enrollments:
+        d3mlabs/cellbound-3d — 1 slot
+          mac-agent (~/actions-runner-ai-ask, no service)
+        d3mlabs — 2 slots
+          mac-agent (~/actions-runner-cellbound3d, no service)
+          mac-agent-2 (~/actions-runner-cellbound3d-2, service installed)
+    TEXT
+    harness.ui.choices == [AnsweringUi::Choice.new(
+      text: "Unregister which scope or dir?",
+      options: ["d3mlabs/cellbound-3d", "d3mlabs", "~/actions-runner-ai-ask", "~/actions-runner-cellbound3d", "~/actions-runner-cellbound3d-2"],
+    )]
+    harness.ui.asked == ["Unregister all 2?"]
+    harness.torn_down.map(&:dir) == [org_one, org_two]
+  end
+
+  test "no argument and no terminal to ask at: nothing changed, the refusal names the scopes to pick from" do
+    Given "two scopes and no terminal"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-ai", scope: "JPDuchesne", name: "JPSFF-agent")
+    harness = build_harness(home: home, pick: nil)
+
+    When
+    harness.command.call(args: parsed_args(harness.command, []), context: harness.context)
 
     Then
-    harness.torn_down.map(&:dir) == [repo_dir, org_dir]
+    error = raises Dev::Cli::Builtins::RunnerUnregisterCommand::UnnamedEnrollmentError
+    error.message == "nothing changed: no terminal to ask at — name the enrollment: `dev runner unregister <scope>` or `<dir>` " \
+                     "(this host serves JPDuchesne: 1 slot, JPDuchesne/snappy: 1 slot)"
+    harness.torn_down == []
+  end
+
+  test "--yes with no argument refuses as ambiguous before listing or asking anything — a bare yes names nothing to be sure of" do
+    Given "two scopes and an operator who would say yes to anything"
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF")
+    write_runner(home, "actions-runner-ai", scope: "JPDuchesne", name: "JPSFF-agent")
+    harness = build_harness(home: home, answer: true, pick: "JPDuchesne")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--yes"]), context: harness.context)
+
+    Then
+    error = raises Dev::Cli::Builtins::RunnerUnregisterCommand::UnnamedEnrollmentError
+    error.message == "nothing changed: --yes with no enrollment named — name the enrollment: `dev runner unregister <scope>` or `<dir>` " \
+                     "(this host serves JPDuchesne: 1 slot, JPDuchesne/snappy: 1 slot)"
+    harness.ui.choices.empty?
+    harness.out.string.empty?
+    harness.torn_down == []
+  end
+
+  test "no argument on a host with nothing enrolled: nothing to list, nothing to ask" do
+    Given "an empty home"
+    harness = build_harness(home: Dir.mktmpdir, pick: "anything")
+
+    When
+    harness.command.call(args: parsed_args(harness.command, []), context: harness.context)
+
+    Then
+    raises Dev::Cli::Builtins::RunnerUnregisterCommand::NothingEnrolledError
+    harness.ui.choices.empty?
   end
 
   test "a scope this host serves with several slots is unregistered whole: the slots listed, one question, every slot torn down in slot order (dev#470)" do
@@ -170,27 +232,25 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     harness.command.completions(["--yes", "~/actions-runner-snappy"]) == []
   end
 
-  test "completions on a host with no enrollments are empty, and never touch gh" do
-    Given "an empty home and a repo resolver that must not be called"
-    harness = build_harness(home: Dir.mktmpdir, repo_resolver: -> { raise "gh was called" })
+  test "completions on a host with no enrollments are empty" do
+    Given "an empty home"
+    harness = build_harness(home: Dir.mktmpdir)
 
     Expect
     harness.command.completions([]) == []
   end
 
-  test "the default repo resolver asks RunnerSetup.current_repo — the one gh seam — and discovery is the real one" do
-    Given "a bare unregister with default wiring, gh answered at RunnerSetup's seam, discovery over an empty home"
+  test "the default wiring is discovery over this user's home, and nothing else — unregister never asks gh" do
+    Given "a bare unregister with default wiring, discovery over an empty home"
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
     Dev::RunnerDiscovery.stubs(:new).returns(empty_discovery)
-    Dev::RunnerSetup.expects(:current_repo).once.returns("JPDuchesne/snappy")
     command = Dev::Cli::Builtins::RunnerUnregisterCommand.new
 
     When "running with no reference"
     command.call(args: no_args, context: projectless_context)
 
-    Then "the checkout's scope was resolved through gh and nothing on the empty host serves it"
-    error = raises Dev::RunnerTeardown::NoSuchEnrollmentError
-    error.message.include?("JPDuchesne/snappy")
+    Then "the empty host has nothing to pick from"
+    raises Dev::Cli::Builtins::RunnerUnregisterCommand::NothingEnrolledError
   end
 
   private
@@ -204,20 +264,16 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
 
   # A teardown whose resolution is real (tempdir discovery) and whose
   # teardown! only records — the CLI steps have their own tests. The Ui
-  # answers every question as `answer` says (nil: no terminal).
-  def build_harness(home:, repo: "JPDuchesne/snappy", repo_resolver: nil, answer: nil)
+  # answers every question as `answer` says and every choice as `pick`
+  # says (nil: no terminal).
+  def build_harness(home:, answer: nil, pick: nil)
     torn_down = []
     discovery = Dev::RunnerDiscovery.new(home: home)
     teardown = Dev::RunnerTeardown.new(discovery: discovery, executor: nil, home: home)
     teardown.define_singleton_method(:teardown!) { |enrollment, ui:| torn_down << enrollment }
     out = StringIO.new
-    command = Dev::Cli::Builtins::RunnerUnregisterCommand.new(
-      teardown: teardown,
-      discovery: discovery,
-      repo_resolver: repo_resolver || -> { repo },
-      out: out,
-    )
-    Harness.new(command: command, torn_down: torn_down, ui: AnsweringUi.new(out: out, answer: answer), out: out)
+    command = Dev::Cli::Builtins::RunnerUnregisterCommand.new(teardown: teardown, discovery: discovery, out: out)
+    Harness.new(command: command, torn_down: torn_down, ui: AnsweringUi.new(out: out, answer: answer, pick: pick), out: out)
   end
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON).

@@ -18,8 +18,9 @@ dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
 dev runner status --check                 # the host's posture alone, no GitHub; exit 1 on drift (every job runs it)
-dev runner unregister d3mlabs             # by scope …
+dev runner unregister d3mlabs             # by scope (the last part of a family's title in status) …
 dev runner unregister ~/actions-runner    # … or by directory (Tab completes both)
+dev runner unregister                     # lists this host's enrollments by scope and asks which
 ```
 
 Enrollment is a machine fact, not a repo one: nothing is recorded in
@@ -305,12 +306,13 @@ the brew prefix. It arrives through the org Brewfile on the prefix owner's
 
 The machine's view, framed by subject at a terminal and plain through a
 pipe: one frame for the **host**, then one per **role family** — this
-host's slots sharing a scope and a role (`agent · 3 slots`,
-`orchestrator · 10 slots`, `build-host · 1 slot`; when the host plays one
-role at two scopes, the title names each — `agent · 3 slots · d3mlabs`
-beside `agent · 1 slot · d3mlabs/cellbound-3d`). Every line is a fact
-with a verdict (`✓`, `✗`, or `?` when GitHub could not be asked), and the
-box and a Mac render the same shape.
+host's slots sharing a scope and a role, the title ending with the scope
+(`agent · 3 slots · d3mlabs`, `agent · 1 slot · d3mlabs/cellbound-3d`,
+`build-host · 1 slot · JPDuchesne/snappy`). The scope is the argument
+`dev runner unregister` takes, and the title is the one place that says
+it: a slot's directory is named from its history, not its scope. Every
+line is a fact with a verdict (`✓`, `✗`, or `?` when GitHub could not be
+asked), and the box and a Mac render the same shape.
 
 The host frame carries what is true of the machine regardless of its
 slots: the runner user and its gh login with the token's expiry, who owns
@@ -326,7 +328,7 @@ family's slots run, compared with what the role expects — as one fact in
 three clauses:
 
 ```text
-orchestrator · 2 slots
+orchestrator · 2 slots · d3mlabs
 ✓ reach: jobs from every d3mlabs repo
          via d3mlabs/ai-flow/ai-commands.yml@main, d3mlabs/ai-flow/origin-firing.yml@main only
          runs-on ai-orchestrator
@@ -343,7 +345,11 @@ registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,
 service installed, who it runs as, the `_work` grant for agents) fold into
 one line while uniform, and a deviating slot breaks out on its own ✗ line
-with its directory and the findings.
+with its directory and the findings. A red slot's remedy names both ways
+out — `re-run dev runner register to repair, or dev runner unregister
+<dir> to retire it` — since a slot offline on GitHub is as likely one
+nobody wants anymore as one to repair; when every slot of a family is
+red, the family adds `dev runner unregister <scope> retires the family`.
 
 After the frames, in a checkout, `this checkout (owner/repo) reaches: …`
 names the families whose reach admits that repo, and
@@ -387,15 +393,20 @@ the repo.
 ### dev runner unregister
 
 ```bash
-dev runner unregister [<scope> | <dir>] [--yes] [--org]
+dev runner unregister [<scope> | <dir>] [--yes]
 ```
 
 Names an enrollment by scope (`d3mlabs`, `JPDuchesne/snappy` — every slot
-this host has there) or by directory (one slot). No argument means the
-checkout's scope. It asks, then stops and uninstalls the service, removes
-the registration with a token minted at the enrollment's scope, and clears
-the enrollment files. The runner binaries stay, so a later `register
---dir` reuses the download.
+this host has there) or by directory (one slot). The scope is the last
+part of the family's frame title in `dev runner status` (`agent · 3 slots
+· d3mlabs`); a directory's name says nothing reliable about its scope.
+With no argument it lists this host's enrollments grouped by scope and
+asks which scope or directory — the same candidates Tab completes;
+`--yes` with no argument is refused, since a yes names nothing. It asks,
+then stops and uninstalls the service, removes the registration with a
+token minted at the enrollment's scope, and clears the enrollment files.
+The runner binaries stay, so a later `register --dir` reuses the
+download.
 
 ## Build hosts, cold to warm
 
