@@ -12,6 +12,12 @@ module Dev
     #                 never install order
     # - version:      exact version string (tag, semver, commit SHA — depends on repo type)
     # - hash:         integrity hash ("SHA256=…") computed during fetch
+    # - source:       the fully qualified reference the integration's service takes to
+    #                 return exactly this artifact (a commit SHA, an image digest,
+    #                 `name==version`, `tap@commit`) — what Cargo.lock calls `source` and
+    #                 package-lock `resolved`. nil when the service offers no such
+    #                 reference (a cask, a Steam branch tip); such a pin cannot be kept
+    #                 by a re-lock and is re-resolved every time.
     # - metadata:     integration-specific extras (url:, repo:, cmake_targets:, tap:, …) plus
     #                 the install-scoping axes (host, env) and provenance (NEEDED_BY)
     # - dependencies: transitive dependencies discovered during fetch ([{name:, constraint:}, …])
@@ -20,9 +26,19 @@ module Dev
     # The :hash member (integrity hash) shadows Data#hash; instances are never
     # used as Hash keys, and renaming it would ripple through the lockfile
     # format. Known trade-off.
-    Dependency = Data.define(:name, :integration, :group, :version, :hash, :metadata, :dependencies, :post_install) do # rubocop:disable Lint/DataDefineOverride
-      def initialize(name:, integration:, group:, version:, hash:, metadata:, dependencies: [], post_install: nil)
-        super(name:, integration:, group:, version:, hash:, metadata:, dependencies:, post_install:)
+    Dependency = Data.define(:name, :integration, :group, :version, :hash, :source, :metadata, :dependencies, :post_install) do # rubocop:disable Lint/DataDefineOverride
+      def initialize(name:, integration:, group:, version:, hash:, metadata:, source: nil, dependencies: [], post_install: nil)
+        super(name:, integration:, group:, version:, hash:, source:, metadata:, dependencies:, post_install:)
+      end
+
+      # Whether every re-lock must re-resolve this pin: it names a version
+      # yet no source its service would return exactly that version for, so
+      # the lock has nothing to hold it by. A versionless pin (a cask) has
+      # nothing to keep and is not unkeepable.
+      #
+      # @return [Boolean]
+      def unkeepable?
+        !version.nil? && source.nil?
       end
     end
 

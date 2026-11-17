@@ -121,6 +121,7 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     latest = package.version("2.5.0")
     latest.platforms == ["Windows"]
     latest.digest.nil?
+    latest.source == "2.5.0"
     latest.artifacts["Windows"].uri == "https://api.ficsit.app/v1/version/ver2/Windows/download"
     latest.artifacts["Windows"].digest == "SHA256=deadbeef"
     latest.declarations == Dev::Deps::Declarations::Resolved.new([

@@ -29,6 +29,7 @@ class Dev::Deps::UrlRepositoryTest < Minitest::Test
     version = package.versions.first
     version.version == ""
     version.digest == expected_hash
+    version.source == "https://example.com/boost-1.90.0.tar.gz"
     version.artifacts["default"].uri == "https://example.com/boost-1.90.0.tar.gz"
     version.metadata == { "url" => "https://example.com/boost-1.90.0.tar.gz" }
     version.declarations == Dev::Deps::Declarations::Resolved.new([])

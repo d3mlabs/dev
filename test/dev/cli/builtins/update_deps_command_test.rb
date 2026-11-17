@@ -116,6 +116,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby] }.returns([ruby_pin])
     resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby, :bundler] }.returns([ruby_pin])
     Dev::Deps::Resolver.expects(:new).returns(resolver)
+    brew_index_refreshed
     order = sequence("install the interpreter, then lock")
     brew = mock
     brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
@@ -232,21 +233,20 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call keeps the brew section byte-identical when no brew declaration changed, however far brew's index moved" do
-    Given "cellbound-3d#319: a lock from an older Mac, and a newer Mac whose brew resolves every formula to a newer version"
-    root = Pathname.new(Dir.mktmpdir("update-deps-carryover-"))
+  test "call moves every pin to the newest its declaration admits, across channels, after refreshing brew's index" do
+    Given "a lock behind brew's index and behind the pip index, for a formula and an open-range pip package"
+    root = Pathname.new(Dir.mktmpdir("update-deps-bare-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        brew "cmake", group: :build
-        brew "python@3.12", group: :build
+        brew "cmake"
+        pip "kimimaro", ">=5"
       end
     RUBY
-    locked = [brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), brew_pin("python@3.12", "3.12.11", commit: "0f1ba9ea")]
-    Dev::Deps::Lockfile.new(dir: root).lock(locked, manifest_digest: Digest::SHA256.file((root / "dependencies.rb").to_s).hexdigest)
-    before = (root / "deps.lock").read
-    today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), brew_pin("python@3.12", "3.12.12", commit: "7d2877eb")]
+    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), pip_pin("kimimaro", "5.8.5")])
+    today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: today))
+    brew_index_refreshed
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -254,28 +254,93 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "deps.lock is byte-identical to what was there, and the output says what was kept"
-    (root / "deps.lock").read == before
-    $stdout.string.include?("dev: kept 2 pins from deps.lock: cmake, python@3.12")
-    !$stdout.string.include?("dev: moved")
+    Then "brew update ran once (asserted on the stub); the lock is today's, every move named, nothing kept"
+    pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
+    pins == { "cmake" => ["4.4.5", "homebrew/core@7d2877eb"], "kimimaro" => ["5.9.0", "kimimaro==5.9.0"] }
+    $stdout.string.include?("dev: moved cmake 4.4.4 → 4.4.5\n")
+    $stdout.string.include?("dev: moved kimimaro 5.8.5 → 5.9.0\n")
+    !$stdout.string.include?("dev: kept")
 
     Cleanup
     $stdout = old_stdout
     FileUtils.rm_rf(root)
   end
 
-  test "call floats only the named declaration and reports the move with its reason" do
-    Given "a lock with two formulae, both newer in brew today, and one of them named"
+  test "call refreshes brew's index only for a bare update of a manifest brew answers for: #{description}" do
+    Given "a manifest #{description}"
+    root = Pathname.new(Dir.mktmpdir("update-deps-refresh-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { #{declaration} }
+    RUBY
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
+    Dev::Deps::Registry.stubs(:lockers).returns({})
+    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!).times(refreshes)
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update #{words.join(" ")}"
+    command.call(args: parsed_args(command, words), context: build_context(root))
+
+    Then "brew update ran as often as asserted on the stub"
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+
+    Where
+    description                          | declaration        | words      | refreshes
+    "with a formula, updated bare"       | 'brew "cmake"'     | []         | 1
+    "with an interpreter, updated bare"  | 'python "3.12"'    | []         | 1
+    "with a formula, one name updated"   | 'brew "cmake"'     | ["cmake"]  | 0
+    "with only a gem, updated bare"      | 'gem "rake"'       | []         | 0
+  end
+
+  test "call warns and resolves against the index brew has when brew update fails" do
+    Given "a formula declared, and a brew update that cannot run"
+    root = Pathname.new(Dir.mktmpdir("update-deps-refresh-failed-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define { brew "cmake" }
+    RUBY
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.5", commit: "7d2877eb")]))
+    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!)
+      .raises(Dev::Deps::BrewRepository::IndexRefreshError.new(stderr: "fatal: unable to access github.com"))
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    old_stderr = $stderr
+    $stdout = StringIO.new
+    $stderr = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "the lock is written from the index at hand, and stderr says the refresh did not happen"
+    Dev::Deps::Lockfile.new(dir: root).read.map(&:version) == ["4.4.5"]
+    $stderr.string.include?("dev: warning: brew update failed (fatal: unable to access github.com) — resolving against the index brew has")
+    $stdout.string.include?("lockfiles updated")
+
+    Cleanup
+    $stdout = old_stdout
+    $stderr = old_stderr
+    FileUtils.rm_rf(root)
+  end
+
+  test "call <name> moves the named declaration and keeps every other pin the lock can keep, across channels" do
+    Given "a lock with two formulae and a pip package, all newer today, and one formula named"
     root = Pathname.new(Dir.mktmpdir("update-deps-named-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        brew "cmake", group: :build
-        brew "jq", group: :build
+        brew "cmake"
+        brew "jq"
+        pip "kimimaro", ">=5"
       end
     RUBY
-    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), brew_pin("jq", "1.7", commit: "0f1ba9ea")])
-    today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), brew_pin("jq", "1.8", commit: "7d2877eb")]
+    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), brew_pin("jq", "1.7", commit: "0f1ba9ea"), pip_pin("kimimaro", "5.8.5")])
+    today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), brew_pin("jq", "1.8", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]
     Dev::Deps::Resolver.expects(:new).returns(stub(resolve: today))
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
@@ -284,11 +349,43 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update jq"
     command.call(args: parsed_args(command, ["jq"]), context: build_context(root))
 
-    Then "jq moved to today's pin with today's commit; cmake is the lock's, tap_commit included"
+    Then "jq moved to today's pin with today's commit; cmake and kimimaro are the lock's, tap_commit included"
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.metadata["tap_commit"]]] }
-    pins == { "cmake" => ["4.4.4", "0f1ba9ea"], "jq" => ["1.8", "7d2877eb"] }
+    pins == { "cmake" => ["4.4.4", "0f1ba9ea"], "jq" => ["1.8", "7d2877eb"], "kimimaro" => ["5.8.5", nil] }
     $stdout.string.include?("dev: moved jq 1.7 → 1.8 (named)")
-    $stdout.string.include?("dev: kept 1 pin from deps.lock: cmake")
+    $stdout.string.include?("dev: kept 2 pins from deps.lock: cmake, kimimaro")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
+  test "call <name> re-resolves an unchanged pin the lock records no source for, saying why, and the lock gains one" do
+    Given "a lock written before pins carried a source: a pip pin without one, beside the formula named"
+    root = Pathname.new(Dir.mktmpdir("update-deps-sourceless-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define do
+        brew "cmake"
+        pip "kimimaro", ">=5"
+      end
+    RUBY
+    unsourced = Dev::Deps::Dependency.new(name: "kimimaro", integration: :pip, group: :app, version: "5.8.5", hash: nil, metadata: {})
+    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), unsourced])
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]))
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update cmake"
+    command.call(args: parsed_args(command, ["cmake"]), context: build_context(root))
+
+    Then "kimimaro is today's with a source from now on, and the move names the cause"
+    pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
+    pins == { "cmake" => ["4.4.5", "homebrew/core@7d2877eb"], "kimimaro" => ["5.9.0", "kimimaro==5.9.0"] }
+    $stdout.string.include?("dev: moved cmake 4.4.4 → 4.4.5 (named)")
+    $stdout.string.include?("dev: moved kimimaro 5.8.5 → 5.9.0 (the lock records no source for 5.8.5, so it cannot be kept)")
+    !$stdout.string.include?("dev: kept")
 
     Cleanup
     $stdout = old_stdout
@@ -301,13 +398,13 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        brew "cmake", group: :build
+        brew "cmake"
         gem "rake"
         gem "ffi"
       end
     RUBY
     gem_pin = ->(name, version) do
-      Dev::Deps::Dependency.new(name:, integration: :bundler, group: :app, version:, hash: nil, metadata: {})
+      Dev::Deps::Dependency.new(name:, integration: :bundler, group: :app, version:, hash: nil, source: version, metadata: {})
     end
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4"), gem_pin.call("rake", "13.2.1"), gem_pin.call("ffi", "1.16.3")])
     locker = mock
@@ -333,26 +430,27 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call --all takes brew's current versions and says which pins moved" do
-    Given "a lock behind brew's index"
-    root = Pathname.new(Dir.mktmpdir("update-deps-all-"))
+  test "call leaves a brew pin's lock line alone when a bare update finds it unmoved (ADR-0005)" do
+    Given "a lock whose formula brew still serves at the same version, from a newer index"
+    root = Pathname.new(Dir.mktmpdir("update-deps-unmoved-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
-      Dev::Deps.define { brew "cmake", group: :build }
+      Dev::Deps.define { brew "cmake" }
     RUBY
-    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea")])
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.5", commit: "7d2877eb")]))
+    Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea")], manifest_digest: Digest::SHA256.file((root / "dependencies.rb").to_s).hexdigest)
+    before = (root / "deps.lock").read
+    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.4", commit: "7d2877eb")]))
+    brew_index_refreshed
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
     old_stdout = $stdout
     $stdout = StringIO.new
 
-    When "running dev deps update --all"
-    command.call(args: parsed_args(command, ["--all"]), context: build_context(root))
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
 
-    Then "the lock is today's resolution and the move is reported"
-    Dev::Deps::Lockfile.new(dir: root).read.map { |dep| [dep.version, dep.metadata["tap_commit"]] } == [["4.4.5", "7d2877eb"]]
-    $stdout.string.include?("dev: moved cmake 4.4.4 → 4.4.5 (--all)")
-    !$stdout.string.include?("dev: kept")
+    Then "deps.lock is byte-identical: the lock's commit stands for a pin that did not move"
+    (root / "deps.lock").read == before
+    !$stdout.string.include?("dev: moved")
 
     Cleanup
     $stdout = old_stdout
@@ -363,7 +461,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     Given "dev#373: a lock with an image floor and a pip pin, a token GHCR refuses, and a pip index that answers"
     root = Pathname.new(Dir.mktmpdir("update-deps-floor-denied-"))
     write_floor_manifest(root)
-    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("17.0.6")]))
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("clang-format", "17.0.6")]))
     floor_before = (root / "deps.lock").read[/image:.*?(?=\npip:)/m]
     Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
@@ -384,17 +482,17 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call --all still needs every registry: the floor's refusal propagates" do
+  test "call bare still needs every registry: the floor's refusal propagates" do
     Given "the same lock and the same refused token"
     root = Pathname.new(Dir.mktmpdir("update-deps-floor-denied-all-"))
     write_floor_manifest(root)
-    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("17.0.6")]))
+    Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("clang-format", "17.0.6")]))
     before = (root / "deps.lock").read
     Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
 
-    When "running dev deps update --all"
-    command.call(args: parsed_args(command, ["--all"]), context: build_context(root))
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
 
     Then "the registry's own error, naming the scope to add; the lock is untouched"
     error = raises Dev::Deps::OciRepository::AccessDeniedError
@@ -411,7 +509,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        brew "cmake", group: :build
+        brew "cmake"
         gem "rake"
       end
     RUBY
@@ -432,30 +530,21 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "call refuses --all together with names" do
-    Given "a manifest declaring cmake"
-    root = Pathname.new(Dir.mktmpdir("update-deps-all-names-"))
-    File.write(root / "dependencies.rb", <<~RUBY)
-      require "dev/deps"
-      Dev::Deps.define { brew "cmake", group: :build }
-    RUBY
-    Dev::Deps::Resolver.expects(:new).never
+  test "call refuses --all as a flag it does not know: the bare verb is the full re-lock" do
+    Given "the builtin's vocabulary"
     command = Dev::Cli::Builtins::UpdateDepsCommand.new
 
-    When "running dev deps update cmake --all"
-    error = assert_raises(Dev::Cli::Builtins::UpdateDepsCommand::AllWithNamesError) do
-      command.call(args: parsed_args(command, ["cmake", "--all"]), context: build_context(root))
-    end
+    When "parsing dev deps update --all"
+    parsed_args(command, ["--all"])
 
-    Then "the refusal says the two shapes exclude each other"
-    error.message.include?("not both")
-
-    Cleanup
-    FileUtils.rm_rf(root)
+    Then
+    error = raises Dev::Cli::FlagVocabulary::UnknownFlagError
+    error.message.include?("unknown flag '--all'")
+    command.flags.empty?
   end
 
-  test "call installs the kept Ruby, not today's, so bundle lock runs under the version the lock keeps" do
-    Given "a lock pinning ruby 4.0.6 within a ~> 4.0 range, and a brew that resolves the range to 4.0.9 today"
+  test "call <name> installs the kept Ruby, not today's, so bundle lock runs under the version the lock keeps" do
+    Given "a lock pinning ruby 4.0.6 within a ~> 4.0 range, a brew that resolves the range to 4.0.9 today, and the gem named"
     root = Pathname.new(Dir.mktmpdir("update-deps-kept-ruby-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
@@ -465,7 +554,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       end
     RUBY
     ruby_pin = ->(version, commit) do
-      Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app, version:, hash: nil,
+      Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app, version:, hash: nil, source: "d3mlabs/d3mlabs@#{commit}",
         metadata: { "tap" => "d3mlabs/d3mlabs", "tap_commit" => commit, "version_suffix" => version, "format" => "bottle",
                     "platforms" => { "arm64_sequoia" => { "hash" => "SHA256=m", "link" => "https://x/m" } } })
     end
@@ -481,8 +570,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     old_stdout = $stdout
     $stdout = StringIO.new
 
-    When "running dev deps update"
-    command.call(args: no_args, context: build_context(root))
+    When "running dev deps update rake"
+    command.call(args: parsed_args(command, ["rake"]), context: build_context(root))
 
     Then "the lock still pins 4.0.6 (install and locker asserted on the mocks)"
     Dev::Deps::Lockfile.new(dir: root).read.map(&:version) == ["4.0.6"]
@@ -560,8 +649,15 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     )
   end
 
-  def pip_pin(version)
-    Dev::Deps::Dependency.new(name: "clang-format", integration: :pip, group: :app, version:, hash: nil, metadata: {})
+  # A pip pin as PipRepository resolves it: its source is the exact requirement.
+  def pip_pin(name, version)
+    Dev::Deps::Dependency.new(name:, integration: :pip, group: :app, version:, hash: nil, source: "#{name}==#{version}", metadata: {})
+  end
+
+  # Every bare update of a manifest brew answers for runs `brew update`
+  # once; the test suite forbids the real one.
+  def brew_index_refreshed
+    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!).once
   end
 
   # A real OciRepository whose registry refuses the token outright.
@@ -585,9 +681,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     repository
   end
 
-  # A bottled core-tap formula pin as BrewRepository resolves it.
-  def brew_pin(name, version, commit: "0f1ba9ea", group: :build)
-    Dev::Deps::Dependency.new(name:, integration: :brew, group:, version:, hash: nil,
+  # A bottled core-tap formula pin as BrewRepository resolves it: its source
+  # is the tap at the commit.
+  def brew_pin(name, version, commit: "0f1ba9ea", group: :app)
+    Dev::Deps::Dependency.new(name:, integration: :brew, group:, version:, hash: nil, source: "homebrew/core@#{commit}",
       metadata: { "tap_commit" => commit, "format" => "bottle",
                   "platforms" => { "x86_64_linux" => { "hash" => "SHA256=l", "link" => "https://x/l" } } })
   end

@@ -42,8 +42,9 @@ module Dev
       # @return [PackageVersion]
       sig { override.params(id: PackageId, revision: String).returns(PackageVersion) }
       def at(id, revision)
-        # An SDK package is self-contained: Audiokinetic ships the whole tree.
-        PackageVersion.new(version: revision, declarations: Declarations::Resolved.new([]))
+        # An SDK package is self-contained: Audiokinetic ships the whole tree,
+        # and the exact SDK version is what wwise-cli downloads by.
+        PackageVersion.new(version: revision, source: revision, declarations: Declarations::Resolved.new([]))
       end
     end
   end

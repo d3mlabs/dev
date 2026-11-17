@@ -39,8 +39,10 @@ module Dev
         Package.new(
           id: id,
           versions: versions.map do |version|
-            # luarocks resolves rock dependencies itself at install time.
-            PackageVersion.new(version: version, declarations: Declarations::ToolOwned.new)
+            # luarocks resolves rock dependencies itself at install time. A
+            # rock version (with its rockspec revision) is immutable once on
+            # the manifest, so it is the exact reference luarocks installs by.
+            PackageVersion.new(version: version, source: version, declarations: Declarations::ToolOwned.new)
           end,
         )
       end

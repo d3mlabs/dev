@@ -111,13 +111,10 @@ block under the description explains each, in the `Flags:` style.
 
     Usage: dev deps update [<declaration>…]
 
-    Resolve dependency constraints and write lockfiles, keeping unchanged pins
+    Resolve dependency constraints and write lockfiles: every pin moves, or only the named declarations and what they need
 
     Arguments:
-      <declaration>  a dependencies.rb declaration to float
-
-    Flags:
-      --all  float every pin
+      <declaration>  a dependencies.rb declaration to move to the newest version it admits
 
 A builtin whose grammar is a choice of forms, such as `dev deps path`,
 declares a synopsis instead; the usage line prints the synopsis, and the
@@ -149,7 +146,7 @@ Each builtin runs in one of three scopes:
 |---|---|
 | `dev up [--no-cache]` | Converge host tooling, install the lock, bring the build container up, run the project's `up:`. `--no-cache` provisions from an empty data root to prove the cold path works. |
 | `dev down` | Stop this checkout's containers; stop the engine if nothing else uses it. |
-| `dev deps update [<declaration>…] [--all]` | Resolve `dependencies.rb` and write `deps.lock`, keeping pins whose declaration did not change. |
+| `dev deps update [<declaration>…]` | Resolve `dependencies.rb` and write `deps.lock`: every pin moves to the newest its declaration admits; with names, only those and what they need. |
 | `dev deps install [--group <name>] [--except <name>] [--integration <name>] [--pinned-taps]` | Install the lock on this machine. |
 | `dev deps check` | Exit non-zero when the manifest, lock, or installed state disagree. |
 | `dev deps path ficsit <mod> <platform> \| xcode \| gh <name> \| steam <name> \| egs <name> \| wwise <name>` | Print a locked artifact's path. |

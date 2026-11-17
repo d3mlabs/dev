@@ -129,6 +129,9 @@ module Dev
             PackageVersion.new(
               version: ref.tag,
               digest: "SHA256=#{digest.delete_prefix("sha256:")}",
+              # The digest is the registry's own exact reference: a pull
+              # by it returns this manifest whatever the tag points at later.
+              source: digest,
               metadata: { "from" => ref.name, "platforms" => platforms(ref, manifest, bearer) },
             ),
           ],

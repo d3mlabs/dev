@@ -52,6 +52,9 @@ module Dev
             PackageVersion.new(
               version: T.must(pin[:version]),
               digest: pin[:hash],
+              # Gems are immutable once published: the version is the exact
+              # reference rubygems serves one by.
+              source: T.must(pin[:version]),
               # bundler owns the transitive closure. Gemfile.lock is read for
               # pinned versions only — it is the tool's solve snapshot, never
               # mined for dependency declarations.

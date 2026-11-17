@@ -28,12 +28,12 @@ module Dev
       #
       # @param declarations [Array<ScopedDeclaration>] every declaration
       #   of this integration type
-      # @param unlock [UnlockSet] which declarations float: none keeps the
-      #   tool's lockfile where it still satisfies the declarations, names
-      #   float those packages, all floats the whole set
+      # @param unlock [UnlockSet] which declarations float: all (the bare
+      #   re-lock) floats the whole set; names float those packages and
+      #   keep the tool's lockfile where it still satisfies the rest
       # @return [void]
       sig { params(declarations: T::Array[ScopedDeclaration], unlock: UnlockSet).void }
-      def lock(declarations, unlock: UnlockSet.none)
+      def lock(declarations, unlock: UnlockSet.all)
         raise NotImplementedError, "#{self.class}#lock must be implemented"
       end
     end

@@ -36,6 +36,7 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
     package.version("3" * 40).metadata == { "repo" => REMOTE, "ref" => "v1.17.0" }
     package.version("1" * 40).metadata == { "repo" => REMOTE, "ref" => "main" }
     package.versions.all? { |v| v.digest.nil? }
+    package.versions.all? { |v| v.source == v.version }
     package.versions.all? { |v| v.declarations == Dev::Deps::Declarations::Resolved.new([]) }
   end
 
@@ -89,6 +90,7 @@ class Dev::Deps::GitRepositoryTest < Minitest::Test
 
     Then "the address is trusted at resolve; existence surfaces at fetch"
     version.version == sha
+    version.source == sha
     version.digest.nil?
     version.metadata == { "repo" => "https://github.com/d3mlabs/opencell" }
     version.declarations == Dev::Deps::Declarations::Resolved.new([])

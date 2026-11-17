@@ -5,6 +5,7 @@ require "json"
 require "net/http"
 require "open3"
 require "uri"
+require "dev/provisioning_guard"
 require_relative "artifact"
 require_relative "declarations"
 require_relative "package"
@@ -41,6 +42,12 @@ module Dev
     # this machine's bottle, so core bottles come from the public formula
     # API.
     #
+    # A version's source — what a re-lock keeps the pin by — is the tap at
+    # that commit, `tap@commit`: the one reference brew installs a specific
+    # formula version from (the pinned-taps install checks the tap out
+    # there). `tap_commit` stays in the version's metadata as the install's
+    # own fact.
+    #
     # Every brew the repository spawns runs under HOMEBREW_NO_AUTO_UPDATE=1.
     # Brew's default is an implicit auto-update first — refreshing its
     # formula API cache under a lock in `$(brew --prefix)/var/homebrew/locks`,
@@ -48,7 +55,11 @@ module Dev
     # questions, and on a shared prefix (an agent user, a second developer,
     # a runner service user) the question must not fail on a write dev
     # never wanted: hosts converge from the tap at the lock's `tap_commit`,
-    # not from brew's live index, so the refresh is of no use here.
+    # not from brew's live index, so no query refreshes it. The one refresh
+    # dev asks for is `refresh_index!`, once, before a bare `dev deps
+    # update`: that verb asks for today's version of every formula, and
+    # "today" should be the clock's, not the writing machine's last `brew
+    # update`.
     class BrewRepository < Repository
       extend T::Sig
 
@@ -61,8 +72,56 @@ module Dev
       FORMULA_API = "https://formulae.brew.sh/api/formula"
       FORMAT_BOTTLE = "bottle"
       FORMAT_SOURCE = "source"
+      # The metadata key under which a version records the commit its tap
+      # was at (brew's `tap_git_head`): the fact a pinned install checks
+      # the tap out at.
+      TAP_COMMIT = "tap_commit"
+      # Separates the tap from the commit in a formula pin's source.
+      SOURCE_SEPARATOR = "@"
 
       class BrewInfoError < StandardError; end
+
+      # `brew update` failed: offline, a remote gone, or a prefix this user
+      # cannot write the update lock in.
+      class IndexRefreshError < StandardError
+        extend T::Sig
+
+        # @param stderr [String] what `brew update` said
+        sig { params(stderr: String).void }
+        def initialize(stderr:)
+          super("brew update failed (#{stderr.strip})")
+        end
+      end
+
+      class << self
+        extend T::Sig
+
+        # A formula pin's source: the tap at the commit where the formula is
+        # the pin's version. The same spelling whichever side builds it —
+        # the repository stamping a fresh version, or the lockfile lifting
+        # a pin written before pins carried a source.
+        #
+        # @param tap [String, nil] the tap slug; nil is core
+        # @param commit [String] the tap's commit
+        # @return [String] `tap@commit`
+        sig { params(tap: T.nilable(String), commit: String).returns(String) }
+        def source_at(tap, commit)
+          "#{tap || CORE_TAP}#{SOURCE_SEPARATOR}#{commit}"
+        end
+      end
+
+      # Refresh brew's index — `brew update` — so the versions the queries
+      # that follow report are today's. A write to the prefix, so the test
+      # harness's kill-switch refuses it like an install.
+      #
+      # @return [void]
+      # @raise [IndexRefreshError] if brew update fails
+      sig { void }
+      def refresh_index!
+        ProvisioningGuard.check!("run brew update", stub_hint: "BrewRepository#refresh_index!")
+        _out, err, success = brew(["update", "--quiet"])
+        raise IndexRefreshError.new(stderr: err) unless success
+      end
 
       # The public formula API did not answer for a core formula.
       class FormulaApiError < StandardError
@@ -188,12 +247,15 @@ module Dev
         metadata["tap"] = tap if tap
         metadata["version_suffix"] = suffix if suffix
         tap_commit = info["tap_git_head"]
-        metadata["tap_commit"] = tap_commit if tap_commit
+        metadata[TAP_COMMIT] = tap_commit if tap_commit
         metadata["format"] = bottles.key?(IMAGE_BOTTLE_TAG) ? FORMAT_BOTTLE : FORMAT_SOURCE
 
         PackageVersion.new(
           version: info["versions"]["stable"],
           platforms: bottles.keys,
+          # No commit (brew reported no tap_git_head) is no source: nothing
+          # a host could install exactly this version from.
+          source: tap_commit.nil? ? nil : self.class.source_at(tap, tap_commit.to_s),
           artifacts: bottles.transform_values { |file| artifact_from(file) },
           metadata: metadata,
           # brew installs formula dependencies itself.

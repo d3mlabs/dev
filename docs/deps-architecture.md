@@ -179,31 +179,31 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      the pin's `needed_by` metadata (sorted integration names).
 3. **Carry the lock's pins** — `PinCarryover` decides, pin by pin, whether
    the lock being written takes the pin just resolved or the one the lock
-   on disk has (`bundle install` against an existing `Gemfile.lock`;
-   ADR-0005 as extended by dev#355). A brew pin (formula or interpreter)
-   keeps the lock's version, hash, bottles and `tap_commit` when its
-   declaration did not change — same tap, group, host and env, and the
-   locked version still satisfies the constraint under the integration's
-   `VersionScheme` — and the lock records bottles for it (ADR-0004: what
-   a host converges to, dev#353). It floats when the author named it or
-   passed `--all` (the `UnlockSet`), when its declaration changed, when
-   an integration it is `needed_by` was named, or when the lock has no
-   bottle to pour; a floated pin that is otherwise identical to the
-   lock's keeps the previous `tap_commit`, else takes today's. In a
-   subset re-lock (`dev deps update <name>`) every non-brew pin not
-   floated is the lock's, verbatim — and so needs nothing from today's
-   universe: when the Resolver hands back an `Unresolved` for such a
-   declaration (its registry refused the host's token, dev#373), the
-   lock's pin stands, reported as kept with the registry's refusal —
-   provided it was resolved from the floor the declaration names (an
-   `image` pin records its `from`; its version is the tag). Any other
-   re-lock — `--all`, the declaration named, a bare re-lock, no pin to
-   keep, a floor that was edited — needs the answer that never came, and
-   the repository's failure propagates. The outcome names the moves and their reasons for
-   the command to report. This is a policy of the lock being written, so
-   it lives in `dev deps update`, not in the Resolver, which never sees
-   the previous lock; the `UnlockSet` also reaches each `Locker`, whose
-   tool owns its own conservative solve (`bundle lock --update <gem>`).
+   on disk has. One rule for every channel: a pin with no prior is new; a
+   floated pin — the author named its declaration, or an integration it
+   is `needed_by`, or the update is bare — is today's; a pin whose
+   declaration changed (group, host and env, the declared source — brew
+   tap, image floor, gh repo — or a constraint the locked version no
+   longer satisfies under the integration's `VersionScheme`) is today's;
+   an unchanged pin is the lock's when the lock records a `source` for it,
+   and today's, with that said once, when it does not. A bare `dev deps
+   update` therefore floats everything after `brew update` (`bundle lock
+   --update`), and `dev deps update <name>` keeps all it can (`bundle
+   update <gem>`). A pin that re-resolves to the very facts the lock has
+   keeps the lock's provenance (`source`, `tap_commit`), so an update that
+   moves nothing changes no lock line. In a subset re-lock an unchanged,
+   unfloated pin needs nothing from today's universe: when the Resolver
+   hands back an `Unresolved` for such a declaration (its registry
+   refused the host's token, dev#373), the lock's pin stands, reported as
+   kept with the registry's refusal; any other re-lock — bare, the
+   declaration named, no pin to keep, a declaration that changed — needs
+   the answer that never came, and the repository's failure propagates.
+   The outcome names the moves, each with its cause when the author did
+   not ask for it, for the command to report. This is a policy of the
+   lock being written, so it lives in `dev deps update`, not in the
+   Resolver, which never sees the previous lock; the `UnlockSet` also
+   reaches each `Locker`, whose tool owns its own solve (`bundle lock
+   --update [<gem>]`).
 4. **Write** — every pin goes to `deps.lock`, whatever its group
    (ADR-0011), nested by integration (`brew:` → `zlib:` → attrs) so the
    on-disk key carries the same (integration, name) identity the resolver
@@ -237,7 +237,7 @@ sequenceDiagram
     participant carry as PinCarryover
     participant lock as Lockfile
 
-    Note over cmd: load dependencies.rb into ScopedDeclaration[]; the UnlockSet from argv (names / --all / none)
+    Note over cmd: load dependencies.rb into ScopedDeclaration[]; the UnlockSet from argv (names, or all when bare); brew update before a bare resolution
     cmd->>lock: read_for_relock
     lock-->>cmd: previous pins
     cmd->>res: resolve(ruby / python declarations)
@@ -276,7 +276,7 @@ sequenceDiagram
     Note over res: stamp needed_by provenance onto the needed pins
     res-->>cmd: verdicts (Dependency pins, Unresolved declarations)
     cmd->>carry: apply(declarations, previous, verdicts, unlock)
-    Note over carry: per brew pin - declaration unchanged, not floated, tap commit recorded? the lock's pin (tap_commit included); else today's, with the move's reason. Subset re-lock - every other unfloated pin is the lock's, an Unresolved one included when the pin was resolved from the declaration's floor (kept, registry unreachable); any other Unresolved raises the repository's error
+    Note over carry: per pin - new or floated (named, needed by a named integration, or a bare update)? today's; declaration changed? today's; unchanged with a source? the lock's pin; unchanged without one? today's, with that reason. Subset re-lock - an unchanged, unfloated Unresolved keeps the lock's pin (kept, registry unreachable); any other Unresolved raises the repository's error
     carry-->>cmd: Outcome (pins, kept, moved, unreachable)
     cmd->>lock: lock(pins, manifest_digest)
     Note over lock: writes deps.lock, nested by integration

@@ -5,6 +5,7 @@ require "sorbet-runtime"
 require "yaml"
 require "fileutils"
 require "pathname"
+require_relative "brew_repository"
 require_relative "dependency"
 
 module Dev
@@ -15,17 +16,19 @@ module Dev
     # One lockfile, deps.lock, every group in it. Entries nest by
     # integration, mirroring package identity (integration + name), so the
     # same name under two integrations occupies two keys; a pin's install
-    # scoping (host, env) is an attribute beside its version:
+    # scoping (host, env) is an attribute beside its version, and its
+    # source — the service's exact reference for it — beside its hash:
     #
     #   brew:
-    #     zlib: { group: app, version: "1.3" }
+    #     zlib: { group: app, version: "1.3", source: homebrew/core@0f1ba9e… }
     #     powershell: { group: build, version: "7.4.0", env: ci }
     #   cmake:
-    #     zlib: { group: app, version: "1.3.1" }
+    #     zlib: { group: app, version: "1.3.1", source: 3e93b23a… }
     #
     # The reader also accepts the flat format (name-keyed, integration
     # recorded in the value hash) so a lock written in it still installs
-    # until its next `dev deps update`.
+    # until its next `dev deps update`, and lifts a brew pin's source from
+    # the `tap_commit` a lock written before pins carried one records.
     class Lockfile
       extend T::Sig
 
@@ -44,6 +47,15 @@ module Dev
       # it against the current manifest to detect "declarations changed but
       # dev deps update wasn't run". A comment so the YAML payload stays pure deps.
       MANIFEST_DIGEST_PREFIX = "# dependencies-digest: "
+
+      # Header line naming the pins no re-lock can keep (Dependency#unkeepable?):
+      # the lock records what their service served when it was written, and
+      # the next `dev deps update` records it again.
+      UNKEEPABLE_PREFIX = "# re-resolved on every dev deps update (no source the lock can hold): "
+
+      # The pin attributes with a slot of their own; everything else in an
+      # entry is metadata.
+      ATTRIBUTE_KEYS = T.let(%w[integration group version hash source].freeze, T::Array[String])
 
       DEPS_LOCK_FILE = "deps.lock"
 
@@ -127,16 +139,20 @@ module Dev
       def write_lockfile(deps, path)
         FileUtils.mkdir_p(path.dirname)
         yaml_hash = deps_to_yaml_hash(deps)
-        File.write(path, header + YAML.dump(yaml_hash).delete_prefix("---\n"))
+        File.write(path, header(deps) + YAML.dump(yaml_hash).delete_prefix("---\n"))
       end
 
-      # The comment header, including the manifest digest when one was given.
+      # The comment header: the manifest digest when one was given, and the
+      # pins no re-lock can keep when the lock holds any.
       #
+      # @param deps [Array<Dependency>] the pins being written
       # @return [String]
-      sig { returns(String) }
-      def header
+      sig { params(deps: T::Array[Dependency]).returns(String) }
+      def header(deps)
         lines = HEADER.dup
         lines << "#{MANIFEST_DIGEST_PREFIX}#{@manifest_digest}\n" if @manifest_digest
+        unkeepable = deps.select(&:unkeepable?).map { |dep| "#{dep.integration}/#{dep.name}" }
+        lines << "#{UNKEEPABLE_PREFIX}#{unkeepable.join(", ")}\n" if unkeepable.any?
         lines << "\n"
         lines
       end
@@ -169,8 +185,8 @@ module Dev
         result
       end
 
-      # A dep's value hash: group, version/hash when present, then metadata.
-      # The integration is not repeated here — it's the section key.
+      # A dep's value hash: group, version/hash/source when present, then
+      # metadata. The integration is not repeated here — it's the section key.
       #
       # @param dep [Dependency]
       # @return [Hash]
@@ -179,6 +195,7 @@ module Dev
         h = T.let({ "group" => dep.group.to_s }, T::Hash[String, T.untyped])
         h["version"] = dep.version if dep.version
         h["hash"] = dep.hash if dep.hash
+        h["source"] = dep.source if dep.source
         dep.metadata&.each { |k, v| h[k.to_s] = v } unless dep.metadata.nil? || dep.metadata.empty?
         h
       end
@@ -226,7 +243,7 @@ module Dev
         ).returns(Dependency)
       end
       def hash_to_dep(name, attrs, integration: nil)
-        metadata = attrs.reject { |k, _| %w[integration group version hash].include?(k) }
+        metadata = attrs.reject { |k, _| ATTRIBUTE_KEYS.include?(k) }
 
         Dependency.new(
           name: name,
@@ -234,8 +251,24 @@ module Dev
           group: attrs["group"].to_sym,
           version: attrs["version"],
           hash: attrs["hash"],
+          source: attrs["source"] || lifted_source(metadata),
           metadata: metadata.empty? ? {} : metadata,
         )
+      end
+
+      # The source of a pin written before pins carried one, where the lock
+      # already records it under another name: a brew pin's `tap_commit` is
+      # the commit of its tap, which is the formula's source. Every other
+      # channel's pin stays source-less until its next resolution.
+      #
+      # @param metadata [Hash] the entry's metadata
+      # @return [String, nil]
+      sig { params(metadata: T::Hash[String, T.untyped]).returns(T.nilable(String)) }
+      def lifted_source(metadata)
+        commit = metadata[BrewRepository::TAP_COMMIT]
+        return nil if commit.nil?
+
+        BrewRepository.source_at(metadata["tap"], commit.to_s)
       end
     end
   end

@@ -16,8 +16,8 @@ module Dev
     #
     # `bundle lock` is conservative on its own: a Gemfile.lock on disk keeps
     # every gem that still satisfies the Gemfile. The UnlockSet maps onto
-    # bundler's own unlock: the named gems become `--update <gem>…`, the
-    # full re-lock `--update` alone.
+    # bundler's own unlock: the bare re-lock becomes `--update` alone, the
+    # named gems `--update <gem>…`.
     class BundlerLocker < Locker
       extend T::Sig
 
@@ -63,7 +63,7 @@ module Dev
       # @return [void]
       # @raise [LockError] if bundle lock fails
       sig { override.params(declarations: T::Array[ScopedDeclaration], unlock: UnlockSet).void }
-      def lock(declarations, unlock: UnlockSet.none)
+      def lock(declarations, unlock: UnlockSet.all)
         return if declarations.empty?
 
         write_gemfile(declarations)

@@ -124,9 +124,10 @@ module Dev
       end
 
       # Two formulae of one tap lock it at different commits: a tap is one
-      # checkout, so a pinned install cannot serve both. A conservative
-      # re-lock keeps each pin's own commit, so this is legitimate; `--all`
-      # re-resolves every pin at one HEAD.
+      # checkout, so a pinned install cannot serve both. A subset re-lock
+      # (`dev deps update <name>`) keeps each other pin's own commit, so
+      # this is legitimate; a bare `dev deps update` re-resolves every pin
+      # at one HEAD.
       class TapPinConflictError < StandardError
         extend T::Sig
 
@@ -134,7 +135,7 @@ module Dev
         # @param commits [Array<String>] the commits the lock names for it
         sig { params(tap: String, commits: T::Array[String]).void }
         def initialize(tap:, commits:)
-          super("the lock pins #{tap} at #{commits.join(" and ")} — run `dev deps update --all` to re-lock at one commit")
+          super("the lock pins #{tap} at #{commits.join(" and ")} — run `dev deps update` to re-lock at one commit")
         end
       end
 
@@ -605,7 +606,7 @@ module Dev
         has = installed.empty? ? "absent" : installed.join(", ")
         @ui.note("#{formula} is #{has} here — converging to the locked #{locked}")
         spec = install_spec(dep)
-        commit = dep.metadata["tap_commit"]
+        commit = dep.metadata[BrewRepository::TAP_COMMIT]
         if commit
           install_pinned!(dep, spec, formula, locked, installed, T.let(commit, String))
         else
@@ -945,7 +946,7 @@ module Dev
       sig { params(formulae: T::Array[Dependency]).void }
       def pin_taps!(formulae)
         pins = formulae.map do |dep|
-          commit = dep.metadata["tap_commit"]
+          commit = dep.metadata[BrewRepository::TAP_COMMIT]
           raise UnpinnedFormulaError.new(name: dep.name) unless commit
 
           [T.let(dep.metadata["tap"] || BrewRepository::CORE_TAP, String), T.let(commit, String)]

@@ -37,6 +37,7 @@ class Dev::Deps::OciRepositoryTest < Minitest::Test
     version = package.versions.first
     version.version == "ue5.8-3"
     version.digest == "SHA256=#{"a" * 64}"
+    version.source == "sha256:#{"a" * 64}"
     version.metadata == { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base", "platforms" => ["linux/amd64"] }
   end
 

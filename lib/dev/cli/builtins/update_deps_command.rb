@@ -20,24 +20,20 @@ require "dev/environment_image"
 module Dev
   module Cli
     module Builtins
-      # `dev deps update [<name>…] [--all]`: resolve the dependencies.rb
-      # declarations and write the lockfiles — conservatively. A pin whose
-      # declaration did not change keeps the lock's version (`bundle install`
-      # against an existing Gemfile.lock; PinCarryover has the rule); naming
-      # declarations floats those and what they need (`bundle update <gem>`);
-      # `--all` floats everything to the registries' current versions.
-      # Everything here is derived from the per-call project root, so no
-      # collaborators need injecting.
+      # `dev deps update [<name>…]`: resolve the dependencies.rb declarations
+      # and write the lockfiles — the one verb that writes the lock. Bare, it
+      # moves every pin to the newest version its declaration admits, after
+      # `brew update` so the brew index it reads is today's (`bundle lock
+      # --update`). Naming declarations moves those and what they need, and
+      # keeps every other pin the lock can keep (`bundle update <gem>`;
+      # PinCarryover has the rule). Everything here is derived from the
+      # per-call project root, so no collaborators need injecting.
       class UpdateDepsCommand < BuiltinCommand
         extend T::Sig
 
         # A positional that is not a declaration of the manifest.
         class UnknownDeclarationError < ArgumentError; end
-        # `--all` given together with names: the two unlock shapes exclude
-        # each other.
-        class AllWithNamesError < ArgumentError; end
 
-        ALL_FLAG = "--all"
         # The host and env axes of an image build's `dev deps install`
         # (bin/docker-install-build-deps.sh runs it on Linux under CI=true).
         IMAGE_HOST = "linux"
@@ -48,7 +44,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Resolve dependency constraints and write lockfiles, keeping unchanged pins"
+          "Resolve dependency constraints and write lockfiles: every pin moves, or only the named declarations and what they need"
         end
 
         sig { override.returns(Command::Category) }
@@ -61,14 +57,10 @@ module Dev
           [
             Cli::Positional.new(
               "declaration", optional: true, repeated: true,
-              desc: "a dependencies.rb declaration to float to its registry's current version, with what it needs (default: none)",
+              desc: "a dependencies.rb declaration to move to the newest version it admits, with what it needs; " \
+                "every other pin is kept (default: every pin moves)",
             ),
           ]
-        end
-
-        sig { override.returns(T::Array[Cli::Flag]) }
-        def flags
-          [Cli::Flag.new(ALL_FLAG, desc: "float every pin to the registries' current versions")]
         end
 
         # dev deps update IS the remediation for a stale manifest — nagging before
@@ -95,8 +87,10 @@ module Dev
           # pulls the tooling its integration shells to into this project's
           # lock.
           needs = Dev::Deps::IntegrationNeeds.new.table(Dev::Deps::Registry.integration_classes)
+          repositories = Dev::Deps::Registry.repositories(project_root: project_root)
+          refresh_brew_index(repositories, declarations) if unlock.all?
           resolver = Dev::Deps::Resolver.new(
-            repositories: Dev::Deps::Registry.repositories(project_root: project_root),
+            repositories: repositories,
             schemes: Dev::Deps::Registry.schemes,
             needs: needs,
           )
@@ -158,19 +152,16 @@ module Dev
 
         private
 
-        # What the author floats: the names given, `--all`, or nothing.
+        # What the author floats: the names given, or everything.
         #
         # @param args [Cli::ParsedArgs]
         # @param declarations [Array<Dev::Deps::ScopedDeclaration>] the manifest's
         # @return [Dev::Deps::UnlockSet]
-        # @raise [AllWithNamesError] when `--all` comes with names
         # @raise [UnknownDeclarationError] when a name is not in the manifest
         sig { params(args: Cli::ParsedArgs, declarations: T::Array[Dev::Deps::ScopedDeclaration]).returns(Dev::Deps::UnlockSet) }
         def unlock_set(args, declarations)
           names = args.positionals
-          return Dev::Deps::UnlockSet.none if names.empty? && !args.flag?(ALL_FLAG)
-          raise AllWithNamesError, "dev deps update: give names or #{ALL_FLAG}, not both" if names.any? && args.flag?(ALL_FLAG)
-          return Dev::Deps::UnlockSet.all if args.flag?(ALL_FLAG)
+          return Dev::Deps::UnlockSet.all if names.empty?
 
           known = declarations.map(&:name).uniq
           unknown = names - known
@@ -182,12 +173,34 @@ module Dev
           Dev::Deps::UnlockSet.new(names:)
         end
 
-        # Say which pins moved, each with why, and which the lock on disk
-        # kept — the author asked for a conservative re-lock, so a move they
-        # did not ask for has to be visible by name. A pin kept because its
-        # registry did not answer is named with the registry's refusal: the
-        # lock is right, but the next re-lock that needs that registry will
-        # want what the message asks for.
+        # Refresh brew's index before a bare update, when the manifest has
+        # anything brew answers for: the verb asks for today's version of
+        # every formula, and today is the clock's, not the writing machine's
+        # last `brew update`. A refresh that fails — offline, or a prefix
+        # this user cannot write — is a warning: the resolution reads the
+        # index brew has, and the lock diff shows what it read.
+        #
+        # @param repositories [Hash{Symbol => Dev::Deps::Repository}] the resolution's universes
+        # @param declarations [Array<Dev::Deps::ScopedDeclaration>] the manifest's
+        # @return [void]
+        sig { params(repositories: T::Hash[Symbol, Dev::Deps::Repository], declarations: T::Array[Dev::Deps::ScopedDeclaration]).void }
+        def refresh_brew_index(repositories, declarations)
+          brew = declarations.filter_map { |decl| repositories[decl.integration] }.grep(Dev::Deps::BrewRepository).first
+          return if brew.nil?
+
+          brew.refresh_index!
+        rescue Dev::Deps::BrewRepository::IndexRefreshError => e
+          $stderr.puts "dev: warning: #{e.message} — resolving against the index brew has"
+        end
+
+        # Say which pins moved and which the lock on disk kept. A bare
+        # update moves whatever is newer; a subset re-lock says why each
+        # move it made beyond the names given (a changed declaration, a pin
+        # the lock could not keep), so a move the author did not name is
+        # visible with its cause. A pin kept because its registry did not
+        # answer is named with the registry's refusal: the lock is right,
+        # but the next re-lock that needs that registry will want what the
+        # message asks for.
         #
         # @param outcome [Dev::Deps::PinCarryover::Outcome]
         # @return [void]
@@ -197,7 +210,8 @@ module Dev
             if move.from.nil?
               puts "dev: added #{move.name} #{move.to}"
             else
-              puts "dev: moved #{move.name} #{move.from} → #{move.to} (#{move.reason})"
+              reason = move.reason
+              puts "dev: moved #{move.name} #{move.from} → #{move.to}#{" (#{reason})" if reason}"
             end
           end
           outcome.unreachable.each do |kept|

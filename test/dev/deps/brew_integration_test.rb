@@ -807,7 +807,7 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     error.message.include?("homebrew/core")
     error.message.include?("aaaa")
     error.message.include?("bbbb")
-    error.message.include?("dev deps update --all")
+    error.message.include?("run `dev deps update` to re-lock at one commit")
     0 * pinner.pin!(anything, anything)
 
     Cleanup

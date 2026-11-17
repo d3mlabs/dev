@@ -25,15 +25,18 @@ module Dev
       class ApiError < StandardError; end
 
       PYPI_HOST = "https://pypi.org"
+      # PEP 440's exact-version operator, which a pin's source is spelled with.
+      EXACT_REQUIREMENT = "=="
 
       # Report a project's version universe from PyPI's JSON API.
       #
       # One API call yields every published version with its files' SHA256
       # digests — no downloads. Each version's digest is its sdist's, falling
       # back to the first file's; yanked or file-less versions carry nil.
-      # Edges stay empty: pip resolves the transitive tree itself at install
-      # (PipIntegration), exactly as before. Constraint evaluation moves to
-      # Pep440Scheme.
+      # Each version's source is the requirement pip installs exactly it
+      # by, `name==version`. Edges stay empty: pip resolves the transitive
+      # tree itself at install (PipIntegration), exactly as before.
+      # Constraint evaluation moves to Pep440Scheme.
       #
       # @param id [PackageId] name is the PyPI project name
       # @return [Package]
@@ -47,6 +50,7 @@ module Dev
           PackageVersion.new(
             version: version,
             digest: release_digest(files),
+            source: "#{id.name}#{EXACT_REQUIREMENT}#{version}",
             declarations: Declarations::ToolOwned.new,
           )
         end

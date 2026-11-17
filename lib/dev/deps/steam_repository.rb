@@ -31,6 +31,18 @@ module Dev
     # `app_update … validate` at install time (the same nil-hash shape brew
     # casks use).
     #
+    # A steam pin carries no source, so no re-lock keeps it: `app_update`
+    # installs the branch's current build whatever buildid the lock names,
+    # and a kept buildid would describe nothing a host installs. SteamCMD's
+    # per-depot `download_depot <app> <depot> <manifest>` is the one path
+    # to a past build, and it is not an install: it writes one depot's
+    # files without the app's manifest (`appmanifest_<app>.acf`, what the
+    # install verifies and Steam's own update reads), reassembles no
+    # multi-depot app, and is unsupported for large depots. Until that
+    # changes, every `dev deps update` re-resolves the branch tip, the
+    # lock's header and `dev deps check` say so, and the install verifies
+    # the tip it got against the lock (SteamIntegration#verify_build_id).
+    #
     # Declared in dependencies.rb as:
     #   steam "SatisfactoryServer", app: 1690800
     #
@@ -88,7 +100,9 @@ module Dev
       # The branch a buildid is the tip of rides metadata as
       # a fact for SteamScheme's branch selection. No digest: Steam publishes
       # no stable per-build hash; integrity is SteamCMD's app_update …
-      # validate at install.
+      # validate at install. No source either (see the class doc): a
+      # buildid is an observation of the tip, not a reference SteamCMD
+      # installs by.
       #
       # @param id [PackageId] source is the Steam app id
       # @return [Package] one version per branch
