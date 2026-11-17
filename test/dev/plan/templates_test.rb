@@ -19,6 +19,14 @@ class Dev::Plan::TemplatesTest < Minitest::Test
     Dev::Plan::Templates.bundle_body.include?("## Tech design")
   end
 
+  test "bundle body's Tech design skeleton carries a Rollout section between Key decisions and Other considerations" do
+    Given "the H3 headings of the bundle body, in document order"
+    headings = Dev::Plan::Templates.bundle_body.scan(/^### (.+)$/).flatten
+
+    Expect "Rollout — what adopters do when a change lands — sits right before the catch-all"
+    headings == ["TL;DR", "Background", "Scope", "Key decisions", "Rollout", "Other considerations", "Appendix"]
+  end
+
   test "body_of round-trips a rendered mirror back to the bundle body" do
     Expect
     Dev::Plan::Templates.body_of(Dev::Plan::Templates.render_mirror) == Dev::Plan::Templates.bundle_body

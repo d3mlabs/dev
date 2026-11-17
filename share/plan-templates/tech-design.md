@@ -67,10 +67,26 @@ what does not apply.
 
 **Rejected: <solution C>** — one entry per alternative considered.
 
+### Rollout
+
+Who has to do what, where, when this lands. A change to a lock-digest input,
+a runner contract, a shipped workflow file, or a host-layer convention is one
+adopters must act on, and this plan is where that is known first. Answer each:
+
+- What adopters (repos, hosts, runners) have to do when this lands, and the
+  command that does it.
+- What breaks for an adopter that does nothing, and how they find out — the
+  message they see.
+- Order: does dev release first, or the adopter PR? Which adopter PRs ship
+  with this (link them).
+
+"Nothing — fully backward compatible" is a valid answer; write it out rather
+than leaving the section empty.
+
 ### Other considerations
 
-Rollout, data model, security, performance, observability — anything reviewers
-should weigh that is not a key decision.
+Data model, security, performance, observability — anything reviewers should
+weigh that is not a key decision.
 
 ### Appendix
 
