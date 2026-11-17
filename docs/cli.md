@@ -1,6 +1,7 @@
 # CLI conventions
 
-How dev finds a command, parses its flags, and reports errors.
+How dev finds a command, what its verbs mean, how it parses flags, and how
+it reports errors.
 
 ## Finding the project
 
@@ -23,6 +24,65 @@ A project may declare a command on a builtin's name. `run:` on a builtin
 (`up:` is the usual case) runs after the builtin's own body. Subcommands
 merge child by child: new children are added, same-named children replace
 the builtin's.
+
+## Command vocabulary
+
+Builtins are nouns with verbs — `dev deps update`, `dev runner status`,
+`dev plan push` — plus bare verbs at the root for the project lifecycle:
+`up`, `down`, `build`, `package`, `deploy`, `release`. The shape is `gh`'s,
+and so are the expectations it sets. Every builtin follows the rules below;
+one that does not is a bug.
+
+**A bare noun lists its verbs and does nothing.** `dev deps` and `dev runner`
+print the verb list, the same view as `dev help deps`. Nothing a noun does
+happens without a verb.
+
+**A verb means the same thing under every noun.**
+
+| Verb | Meaning |
+|---|---|
+| `status` | Reads and reports. Changes nothing. |
+| `check` | A verdict for CI and scripts: exit 0 when the state is as declared, non-zero otherwise, with what disagrees printed. |
+| `install`, `up` | Bring the machine to a state the project already recorded — the lock, the manifest. They read that record and resolve nothing. |
+| `update` | Moves the record: re-resolves and writes it. |
+| `register` / `unregister` | Enroll this host with, or retire it from, a remote. |
+| `pull` / `push` | Copy the remote's version here, or this copy to the remote. |
+| `link` | Attach a local file to a remote thing, creating the remote thing when none is named. |
+| `new` / `init` | Create a remote thing, or scaffold local files. |
+| `path`, `get`, `list` | Print a value and nothing else. |
+
+A noun does not carry two verbs that answer the same question. `dev deps
+check` is the verdict on the dependency state; there is no `dev deps status`
+beside it.
+
+**Queries are safe blind.** `status`, `check`, `path`, `get`, `list`,
+`version` and `help` never prompt, never take `--yes`, and leave the machine
+as they found it. A script, a hook or a job runs them without reading their
+help first.
+
+**A mutation with no target does one of two things**, depending on what it
+touches.
+
+- A local diff reviewed before it lands (a lockfile, a formatted file, a set
+  of links): bare means all. `dev deps update` re-resolves every
+  declaration; `dev skills sync` re-materializes every channel. There is no
+  `--all` flag; naming targets narrows the verb (`dev deps update cmake`).
+- Something irreversible, or state shared with others (an enrollment on
+  GitHub, an issue body, a release): bare acts only when exactly one target
+  is possible. Otherwise it lists the candidates and asks, or refuses and
+  names what to pass. `--yes` skips a confirmation and never picks a target:
+  `dev runner unregister --yes` with nothing named is refused.
+
+**A mutation says what it changed.** Its last line names the outcome:
+`dev: lockfiles updated — now run dev up to install.`, `pushed <file> to
+<issue>`. A stale state found on the way to something else is a message
+naming the verb that fixes it — `dependencies.rb changed since the
+lockfiles were generated — run dev deps update` — never that verb run on
+the user's behalf.
+
+**Help names everything.** `dev help <path>` for a leaf lists each of its
+positionals and flags. The one-line description is one sentence with no
+synopsis in it; the root listing's second column is that sentence.
 
 ## Flags
 
