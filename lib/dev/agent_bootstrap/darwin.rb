@@ -23,18 +23,13 @@ module Dev
     # `~/.dev` migration), and the agent has an engine of its own — colima,
     # per-user by nature — when the served repo pins an image.
     #
-    # A Mac whose shared root and `_work` trees are in a group named `ai`
-    # (LEGACY_GROUP) is re-grouped on the next run
-    # re-groups them to the data root's group, so one name serves every
-    # host and ai-flow reads it from the service env.
+    # A shared root that is not the cooperative space `dev runner status`
+    # inspects — in a group from before the one group name (`ai`), or in
+    # the group without the setgid bit — is re-granted on the next run,
+    # tree and all, so one name serves every host and ai-flow reads it
+    # from the service env.
     class Darwin < AgentBootstrap
       extend T::Sig
-
-      # The cooperative group's name before it became the data root's: what
-      # the Mac bootstrap created, and the one group this adapter re-groups
-      # away from — any other group on the root is left alone (drift shows
-      # up in `dev runner status`).
-      LEGACY_GROUP = "ai"
 
       # The shared DDC directory under the shared root. UE disables a shared
       # cache store whose path is missing rather than creating it (probed on
@@ -172,14 +167,15 @@ module Dev
       # human-owned so `dev up` writes it, the group + setgid +
       # group-writable so cooperative caches (the shared DDC) work, world-
       # readable so the agent reads it like /opt/homebrew. An existing root
-      # is left alone — bar the one re-group off the legacy name — and
-      # drift shows up in `dev runner status`. Then the one-off migration.
+      # is held to what `dev runner status` inspects of it (#cooperative_dir?)
+      # and re-granted when it falls short — its owner is never changed.
+      # Then the one-off migration.
       sig { override.void }
       def ensure_data_root!
         existed = File.directory?(@data_root)
         ensure_cooperative_dir!(@data_root, "the shared root")
         ensure_cooperative_dir!(File.join(@data_root, DDC_DIR), "the shared DDC")
-        regroup_legacy!(@data_root) if existed
+        grant_data_root! if existed
         migrate_home_artifacts!
       end
 
@@ -199,19 +195,24 @@ module Dev
         end
       end
 
-      # A root in the legacy `ai` group moves, tree and all, to the data
-      # root's group (one group name across hosts). Symlinks are
-      # re-grouped themselves, never followed (`-h`), as the Linux
-      # provisioner's share does. Modes are untouched — the root was
-      # provisioned setgid group-writable already.
-      #
-      # @param path [String]
-      sig { params(path: String).void }
-      def regroup_legacy!(path)
-        return unless group_of(path) == LEGACY_GROUP
+      # An existing root that is not the cooperative space status inspects
+      # — the group and the setgid bit — gets the same grant the `_work`
+      # tree does (#grant_work_tree!): the group, group-writable
+      # throughout, setgid on every dir, tree and all. Converging exactly
+      # what is inspected is what keeps register's ✓ and status's ✗ from
+      # disagreeing: the Mac's root sat in group `dev` without setgid once
+      # a re-group alone had moved it off the legacy `ai` name. Symlinks
+      # are re-grouped themselves, never followed (`-h`), as the Linux
+      # provisioner's share does. A root already `2775` in the group is a
+      # no-op.
+      sig { void }
+      def grant_data_root!
+        return if cooperative_dir?(@data_root)
 
-        @ui.step("Re-grouping #{path} from #{LEGACY_GROUP} to #{DataRoot::GROUP} (one group across hosts)") do
-          step!("sudo", "chgrp", "-Rh", DataRoot::GROUP, path)
+        @ui.step("Granting the #{DataRoot::GROUP} group cooperative access to #{@data_root}") do
+          step!("sudo", "chgrp", "-Rh", DataRoot::GROUP, @data_root)
+          step!("sudo", "chmod", "-R", "g+rwX", @data_root)
+          step!("sudo", "find", @data_root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+")
         end
       end
 

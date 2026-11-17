@@ -232,12 +232,17 @@ same as host facts.
 After the handover, package work by hand on that host is `sudo -iu runner
 brew …`. Your own `dev up` in a checkout there does two different things
 with brew. The host half — dev's self-update and the org Brewfile — is
-skipped silently: it is host state the jobs converge on their next run.
-To converge it by hand — to test a release before the next job, or to
-repair the box — run `dev up` as the prefix's owner, outside any
-checkout: `sudo -iu runner dev up` (`runner` unless register ran with
-`--as`). `dev up` is the upgrade — brew's update and the scoped
-upgrade of dev itself — so there is no `brew upgrade` to type. The
+skipped: it is host state the jobs converge on their next run. In a
+checkout the skip is silent; outside one, `dev up`'s summary says so
+and names the owner (`dev: host layer converged — brew tooling is
+runner's and was skipped (jobs converge it; by hand: sudo -iu runner dev
+up)`), so a `dev up` run to upgrade dev never reads as success over a
+self-update that did not run. To converge it by hand — to test a
+release before the next job, or to repair the box — run `dev up` as the
+prefix's owner, outside any checkout: `sudo -iu runner dev up` (`runner`
+unless register ran with `--as`). `dev up` is the upgrade — brew's
+update and the scoped upgrade of dev itself — so there is no `brew
+upgrade` to type. The
 checkout's pins (`dependencies.rb`) are project state nobody converges
 for you, so your own `dev up` installs them through the runner user's
 brew, asking your password once (`sudo -u runner <prefix>/bin/brew …`);
@@ -287,9 +292,11 @@ prompts:
   docker-group user). A drop-in still carrying the older agent → owner
   brew edge is rewritten without it, and `dev runner status` reports such
   an edge as drift;
-- the shared **data root** (provisioned on a Mac, asserted on Linux),
-  brew's lock directory as a group space, and the deployment tap trusted
-  by the agent user;
+- the shared **data root** (provisioned on a Mac and, when an existing
+  root is not what `dev runner status` inspects — group `dev`, setgid,
+  group-writable throughout — re-granted tree and all; asserted on
+  Linux), brew's lock directory as a group space, and the deployment tap
+  trusted by the agent user;
 - on a Mac, the agent's own **colima** engine when the repo pins an
   image. On Linux there is no agent engine: the agent for an image-built
   repo runs inside the project's container, and until that lands a Linux

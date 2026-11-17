@@ -6,6 +6,7 @@ require "pathname"
 require_relative "cd/hook_installer"
 require_relative "deps/gem_skills"
 require_relative "learnings/synchronizer"
+require_relative "runner_user"
 require_relative "settings"
 require_relative "shell_rc_hook"
 require_relative "skills/corpus_channel"
@@ -50,6 +51,22 @@ module Dev
     # Answers whether this process may write the brew prefix.
     PrefixWritable = T.type_alias { T.proc.returns(T::Boolean) }
 
+    # Answers who owns the brew prefix (nil without one, or unreadable).
+    PrefixOwner = T.type_alias { T.proc.returns(T.nilable(String)) }
+
+    # What #converge_tooling did with the brew tooling layer — the fact the
+    # one summary that reports the host layer (the projectless `dev up`)
+    # reads. Skipped means the prefix is another user's, who alone writes
+    # it: `prefix_owner` names them (nil when the owner cannot be read). A
+    # brewless machine's empty layer is converged: nothing was left undone.
+    class ToolingOutcome < T::Struct
+      const :skipped, T::Boolean
+      const :prefix_owner, T.nilable(String)
+    end
+
+    # The layer converged, or had nothing to converge.
+    TOOLING_CONVERGED = T.let(ToolingOutcome.new(skipped: false, prefix_owner: nil), ToolingOutcome)
+
     class << self
       extend T::Sig
 
@@ -76,6 +93,18 @@ module Dev
       sig { returns(PrefixWritable) }
       def default_prefix_writable
         -> { prefix_writable?(Dev::Settings.brew_prefix) }
+      end
+
+      # Who owns the machine's own prefix (Settings.brew_prefix, the one
+      # prefix resolution) — the name a skipped layer is reported under.
+      #
+      # @return [Proc]
+      sig { returns(PrefixOwner) }
+      def default_prefix_owner
+        lambda do
+          prefix = Dev::Settings.brew_prefix
+          prefix && RunnerUser.owner_of(prefix)
+        end
       end
     end
 
@@ -119,6 +148,9 @@ module Dev
     # @param prefix_writable [Proc] whether this process may write the brew
     #   prefix (HostService.prefix_writable? on the machine's; injectable
     #   so tests never read the machine)
+    # @param prefix_owner [Proc] who owns the brew prefix — named when the
+    #   layer is skipped for them (HostService.default_prefix_owner on the
+    #   machine's; injectable so tests never read the machine)
     sig do
       params(
         settings: Dev::Settings,
@@ -129,6 +161,7 @@ module Dev
         gem_skills_factory: GemSkillsFactory,
         synchronizer: T.untyped,
         prefix_writable: PrefixWritable,
+        prefix_owner: PrefixOwner,
       ).void
     end
     def initialize(settings: Dev::Settings.new, brew_executor: BrewExecutor.new,
@@ -137,7 +170,8 @@ module Dev
                    own_skills: Dev::Skills::OwnSkills.new,
                    gem_skills_factory: ->(project_root) { Dev::Deps::GemSkills.new(project_root: project_root) },
                    synchronizer: Dev::Learnings::Synchronizer.for(settings: settings, materializer: materializer),
-                   prefix_writable: HostService.default_prefix_writable)
+                   prefix_writable: HostService.default_prefix_writable,
+                   prefix_owner: HostService.default_prefix_owner)
       @settings = settings
       @brew_executor = brew_executor
       @hook_installer = hook_installer
@@ -146,6 +180,7 @@ module Dev
       @gem_skills_factory = gem_skills_factory
       @synchronizer = synchronizer
       @prefix_writable = prefix_writable
+      @prefix_owner = prefix_owner
     end
 
     # The brew tooling layer: brew converges brew — dev never
@@ -173,15 +208,22 @@ module Dev
     # up` is for, and Dev::Deps::BrewIntegration escalates them to the
     # prefix owner with the operator's password.
     #
-    # @return [void]
-    sig { void }
+    # What happened is returned rather than printed: in a checkout the skip
+    # stays silent (every `dev up` there would nag), while the projectless
+    # bootstrap sums the host layer up and that summary has to be true —
+    # the operator who ran it to upgrade dev must not read success over a
+    # self-update that never ran.
+    #
+    # @return [ToolingOutcome] converged, or skipped for the prefix's owner
+    sig { returns(ToolingOutcome) }
     def converge_tooling
-      return unless system_config_path
-      return unless @prefix_writable.call
+      return TOOLING_CONVERGED unless system_config_path
+      return ToolingOutcome.new(skipped: true, prefix_owner: @prefix_owner.call) unless @prefix_writable.call
 
       warn_unnamed_deployment
       self_update
       converge_brewfile if brewfile_path.file?
+      TOOLING_CONVERGED
     end
 
     # Ensure the `dev cd` wrapper function + completer are in the user's

@@ -358,9 +358,10 @@ module Dev
             gives the agent its own colima when the checkout pins an image; a Linux host
             joins the agent to the root `dev up` made and has no agent engine — an
             image-built repo's agent runs inside the project's container, so
-            agent labels for such a repo are refused there. A Mac
-            bootstrapped before the one group name re-groups its root and `_work` trees from
-            `#{AgentBootstrap::Darwin::LEGACY_GROUP}` to `#{DataRoot::GROUP}` on its next register.
+            agent labels for such a repo are refused there. A Mac whose shared root is
+            not what `dev runner status` inspects (group `#{DataRoot::GROUP}`, setgid, group-writable
+            throughout — a root from before the one group name, or re-grouped without
+            setgid) is re-granted, tree and all, on its next register.
 
             Examples:
               dev runner register                      # this repo's build host: repo scope, label = the repo name, named <hostname>

@@ -55,7 +55,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   test "call converges the host tooling and links shipped skills as its host half" do
     Given "an up command whose host service expects the converge and the skill links"
     host_service = quiet_host_service
-    host_service.expects(:converge_tooling).once
+    host_service.expects(:converge_tooling).once.returns(Dev::HostService::TOOLING_CONVERGED)
     host_service.expects(:sync_skills).with(project_root: nil).once
     install_deps = install_deps_mock
     install_deps.stubs(:call)
@@ -89,7 +89,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   test "a projectless up still makes the data root: it is the machine's, not the project's" do
     Given
     host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling)
+    host_service.stubs(:converge_tooling).returns(Dev::HostService::TOOLING_CONVERGED)
     host_service.stubs(:install_rc_hook)
     host_service.stubs(:sync_skills)
     host_service.stubs(:sync_learnings)
@@ -109,7 +109,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   test "call without a project converges the host half, syncs org learnings, and skips provisioning" do
     Given "a projectless context and a host service expecting only host work"
     host_service = typed_mock(Dev::HostService)
-    host_service.expects(:converge_tooling).once
+    host_service.expects(:converge_tooling).once.returns(Dev::HostService::TOOLING_CONVERGED)
     host_service.expects(:install_rc_hook).once
     host_service.expects(:sync_skills).with(project_root: nil).once
     host_service.expects(:sync_learnings).with(project_root: nil).once
@@ -122,8 +122,37 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
 
     Then "deps install never runs, and the bootstrap message points at projects"
     0 * install_deps.call(args: anything, context: anything)
-    stdout.include?("dev: host layer converged.")
+    stdout.include?("dev: host layer converged.\n")
     stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
+  end
+
+  # dev#622: the operator's projectless `dev up` on the box read "host
+  # layer converged" while the brew layer — dev's self-update included —
+  # had been skipped for the runner user's prefix; `dev --version` stayed
+  # put. The summary is the one place the skip is told (in a checkout it
+  # stays silent: every `dev up` there would nag), so it names the owner
+  # and the by-hand converge.
+  test "a projectless up whose brew layer was skipped says so, naming the prefix owner — #{what}" do
+    Given "a host service whose tooling converge reports the skip"
+    host_service = typed_mock(Dev::HostService)
+    host_service.stubs(:converge_tooling).returns(Dev::HostService::ToolingOutcome.new(skipped: true, prefix_owner: owner))
+    host_service.stubs(:install_rc_hook)
+    host_service.stubs(:sync_skills)
+    host_service.stubs(:sync_learnings)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps_mock, host_service: host_service)
+
+    When "running up outside any project"
+    stdout = capture_stdout { command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))) }
+
+    Then "the summary carries the skip and the remedy, and still points at projects"
+    stdout.include?(summary)
+    !stdout.include?("dev: host layer converged.\n")
+    stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
+
+    Where
+    what            | owner    | summary
+    "owner known"   | "runner" | "dev: host layer converged — brew tooling is runner's and was skipped (jobs converge it; by hand: sudo -iu runner dev up)"
+    "owner unknown" | nil      | "dev: host layer converged — brew tooling is another user's and was skipped (jobs converge it; by hand: dev up as the brew prefix's owner)"
   end
 
   test "call brings the service dependencies up, in order, after the deps install they may depend on — through the port, not the CLI" do
@@ -339,7 +368,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
 
   def quiet_host_service
     host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling)
+    host_service.stubs(:converge_tooling).returns(Dev::HostService::TOOLING_CONVERGED)
     host_service.stubs(:install_rc_hook)
     host_service.stubs(:sync_skills)
     host_service

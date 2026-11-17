@@ -25,19 +25,34 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   HUMAN_OWNS_EVERYTHING = ->(_path) { "human" }
 
   # Filesystem-facing params always point at tmp paths: an already-provisioned
-  # shared root (DDC dir included) and no ~/.dev to migrate; and no
-  # deployment tap (the host's Settings never decide a test), so
-  # identity-step tests stay focused. Every path is the human's — the owner
-  # lookup never stats the host, whose tmpdir is whoever runs the suite
-  # (on the box, a user named ai-agent, which read as the agent owning the
-  # prefix). The Ui is a recorder: pass one to read what the bootstrap said.
+  # shared root (DDC dir included, stat'ing cooperative through the
+  # executor) and no ~/.dev to migrate; and no deployment tap (the host's
+  # Settings never decide a test), so identity-step tests stay focused.
+  # Every path is the human's — the owner lookup never stats the host,
+  # whose tmpdir is whoever runs the suite (on the box, a user named
+  # ai-agent, which read as the agent owning the prefix). The Ui is a
+  # recorder: pass one to read what the bootstrap said.
   def bootstrap(executor, **kwargs)
-    provisioned_root = Dir.mktmpdir.tap { |root| FileUtils.mkdir_p(File.join(root, "ddc")) }
     defaults = {
-      data_root: provisioned_root, home_dev: File.join(Dir.mktmpdir, "absent-home-dev"),
+      data_root: provisioned_root(executor), home_dev: File.join(Dir.mktmpdir, "absent-home-dev"),
       launch_agents_dir: Dir.mktmpdir, brew_executable: nil, owner_of: HUMAN_OWNS_EVERYTHING, tap: nil,
     }
     Dev::AgentBootstrap::Darwin.new(runner_user: "human", executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
+  end
+
+  # A shared root as a converged register left it: the DDC dir under it,
+  # and its stat answering cooperative through the executor (made after
+  # the executor, so the canned answer is added to it).
+  def provisioned_root(executor)
+    Dir.mktmpdir.tap do |root|
+      FileUtils.mkdir_p(File.join(root, "ddc"))
+      cooperative_root(root).each { |argv, answer| executor.answer_capture(argv, answer) }
+    end
+  end
+
+  # The capture saying a shared root is cooperative: in the group, setgid.
+  def cooperative_root(root)
+    { ["stat", "-f", "%Sg %Sp", root] => "dev drwxrwsr-x\n" }
   end
 
   test "converge! is a no-op when the host is already converged" do
@@ -179,9 +194,9 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   end
 
   test "converge! provisions the DDC dir under an existing shared root" do
-    Given "a shared root provisioned before the DDC dir existed"
-    executor = converged_identity_executor
+    Given "a cooperative shared root provisioned before the DDC dir existed"
     shared_root = Dir.mktmpdir
+    executor = converged_identity_executor(capture_results: cooperative_root(shared_root))
 
     When "converging"
     bootstrap(executor, data_root: shared_root).converge!
@@ -195,29 +210,42 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     ]
   end
 
-  # plans#59: a Mac bootstrapped before the one group name has its root
-  # in `ai`; the next register moves the tree to `dev` — once, `-h` so
-  # symlinks are re-grouped and never followed.
-  test "converge! re-groups a shared root still in the legacy ai group, tree and all" do
-    Given "a converged host whose shared root stats as group ai"
+  # dev#622: register converges what `dev runner status` inspects — the
+  # group *and* the setgid bit, group-writable throughout, as the `_work`
+  # grant does. The Mac's root sat in group `dev` without setgid (chgrp
+  # alone had moved it off the legacy `ai` group), so register's ✓ steps
+  # were followed by status's ✗. `-h` on the chgrp: symlinks are
+  # re-grouped, never followed.
+  test "converge! grants a shared root that is not the cooperative space status inspects — #{what}" do
+    Given "a converged host whose shared root stats as #{stat.strip.inspect}"
     shared_root = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(shared_root, "ddc"))
-    executor = converged_identity_executor(capture_results: { ["stat", "-f", "%Sg %Sp", shared_root] => "ai drwxrwsr-x\n" })
+    executor = converged_identity_executor(capture_results: { ["stat", "-f", "%Sg %Sp", shared_root] => stat })
     ui = RecordingUi.new
 
     When "converging"
     bootstrap(executor, data_root: shared_root, ui: ui).converge!
 
-    Then "one recursive chgrp, a step; modes untouched"
-    executor.runs == [["sudo", "chgrp", "-Rh", "dev", shared_root]]
-    ui.rows == [[:step, "Re-grouping #{shared_root} from ai to dev (one group across hosts)", 0]]
+    Then "the group, group-writable throughout, setgid on every dir — one step"
+    executor.runs == [
+      ["sudo", "chgrp", "-Rh", "dev", shared_root],
+      ["sudo", "chmod", "-R", "g+rwX", shared_root],
+      ["sudo", "find", shared_root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"],
+    ]
+    ui.rows == [[:step, "Granting the dev group cooperative access to #{shared_root}", 0]]
+
+    Where
+    what                                   | stat
+    "in group dev without setgid"          | "dev drwxrwxr-x\n"
+    "in the legacy ai group"               | "ai drwxrwsr-x\n"
+    "in another group, not group-writable" | "staff drwxr-xr-x\n"
   end
 
-  test "converge! leaves a shared root in any other group alone (drift is status's to report)" do
-    Given "a converged host whose shared root stats as group staff"
+  test "converge! runs no chmod on a shared root already 2775 in group dev" do
+    Given "a converged host whose shared root stats cooperative"
     shared_root = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(shared_root, "ddc"))
-    executor = converged_identity_executor(capture_results: { ["stat", "-f", "%Sg %Sp", shared_root] => "staff drwxr-xr-x\n" })
+    executor = converged_identity_executor(capture_results: cooperative_root(shared_root))
 
     When "converging"
     bootstrap(executor, data_root: shared_root).converge!
@@ -247,12 +275,12 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
   end
 
   test "migration skips entries the shared root already holds" do
-    Given "a shared root that already carries an engines tree"
-    executor = converged_identity_executor
+    Given "a cooperative shared root that already carries an engines tree"
     home_dev = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(home_dev, "engines", "stale"))
     shared_root = Dir.mktmpdir
     FileUtils.mkdir_p(File.join(shared_root, "engines", "current"))
+    executor = converged_identity_executor(capture_results: cooperative_root(shared_root))
 
     When "converging"
     bootstrap(executor, data_root: shared_root, home_dev: home_dev).converge!
@@ -263,14 +291,12 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     File.directory?(File.join(home_dev, "engines", "stale"))
   end
 
-  test "an existing shared root is left alone (no mode churn)" do
+  test "an existing cooperative shared root is left alone (no mode churn)" do
     Given "an already-provisioned shared root carrying its DDC dir"
     executor = converged_identity_executor
-    shared_root = Dir.mktmpdir
-    FileUtils.mkdir_p(File.join(shared_root, "ddc"))
 
     When "converging"
-    bootstrap(executor, data_root: shared_root).converge!
+    bootstrap(executor).converge!
 
     Then
     executor.runs.empty?

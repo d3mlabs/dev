@@ -589,15 +589,6 @@ module Dev
       File.read(service_file).strip
     end
 
-    # The group a path carries, "" when it cannot be read.
-    #
-    # @param path [String]
-    # @return [String]
-    sig { params(path: String).returns(String) }
-    def group_of(path)
-      @executor.capture(*stat_argv(path)).strip.split(" ", 2).first.to_s
-    end
-
     # Run an admin command, raising when it fails.
     #
     # @param cmd [Array<String>] argv
