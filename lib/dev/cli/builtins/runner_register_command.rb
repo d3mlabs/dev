@@ -216,9 +216,14 @@ module Dev
 
         # The summary line, then what the operator needs at the prompt: who
         # does what in a registration, the Linux runner-user rule, the one
-        # login command, the examples.
+        # login command, the examples. The by-hand commands spell the
+        # runner user as this host resolves it (RunnerUser.for_host: the
+        # prefix's owner after a hand-over), so what `--help` prints on a
+        # host registered `--as ci` is what to type there; off Linux the
+        # rule's default stands in, since the text describes the Linux rule.
         sig { override.returns(String) }
         def desc
+          runner_user = @runner_user_factory.call(nil, NoUi.new) || Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME)
           <<~DESC
             Enroll this host as a self-hosted runner in a role (--role; --ai-flow, --labels), converging its contracts
 
@@ -313,10 +318,14 @@ module Dev
             find gh. Jobs upgrade dev through brew, and brew is single-owner, so
             brew's prefix is the runner user's: register hands it over (one chown,
             announced) when someone else owns it; a package by hand on the host is then
-            `sudo -iu #{Dev::RunnerUser::DEFAULT_NAME} brew ...`. Your own `dev up` in a checkout there
-            skips the host half (dev's self-update, the org Brewfile — the jobs converge
-            it) and converges the checkout's pins through the runner user's brew, asking
-            your password once (`sudo -u #{Dev::RunnerUser::DEFAULT_NAME}`; no sudoers line is written for it).
+            `sudo -iu #{runner_user.name} brew ...`. Nothing records the name: a host whose prefix
+            belongs to a user other than you has that user as its runner user, and
+            register, status and this text read it from the prefix (here: #{runner_user.name}).
+            Your own `dev up` in a checkout there skips the host half (dev's self-update,
+            the org Brewfile — the jobs converge it; by hand, `#{runner_user.host_up_command}`
+            outside any checkout) and converges the checkout's pins through the runner
+            user's brew, asking your password once (`sudo -u #{runner_user.name}`; no sudoers line is
+            written for it).
             Brew loads nothing from a tap its user has not trusted, and trust is per
             user, so register also has the runner user trust the deployment's tap
             (`brew trust --tap <tap>`, as that user) — and you, as yourself, since your
@@ -326,7 +335,7 @@ module Dev
             (repo: the private fetches, under two owners; read:org: gh's own gate;
             read:packages: the same login pulls from ghcr) — and asks for it, input
             hidden, the first time; headless it prints the command instead and stops:
-              #{Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME).login_command}
+              #{runner_user.login_command}
             An enrollment running as anyone else is drift: register offers to retire it
             and enroll fresh as the runner user. On macOS the enrollment is yours (a
             per-user LaunchAgent); the agent user is the second identity there, and its
@@ -348,7 +357,7 @@ module Dev
             same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
             renames it) in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
             sudoers edge from the runner user to the agent (NOPASSWD, SETENV — the operator on a
-            Mac, `#{Dev::RunnerUser::DEFAULT_NAME}` on Linux) and no edge back — the agent writes no brew prefix
+            Mac, `#{runner_user.name}` on Linux) and no edge back — the agent writes no brew prefix
             (pins are the dispatcher's, gems the agent's own home), so a brew edge an earlier
             register wrote is retired; the tap
             trusted as the agent; the `_work` tree group-writable; and the service env naming
@@ -394,7 +403,7 @@ module Dev
             Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: <hostname>-<role>, the bare hostname for a build host. A name another family holds at the scope is refused, never replaced"),
             Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
             Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
-            Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: #{Dev::RunnerUser::DEFAULT_NAME}"),
+            Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: the owner of brew's prefix once a register handed it over, #{Dev::RunnerUser::DEFAULT_NAME} before"),
             Cli::Flag.new(YES_FLAG, desc: "answer yes without asking: unregister superseded enrollments and surplus slots, leave the org's pool"),
           ]
         end

@@ -137,6 +137,16 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   include SorbetHelper
 
+  # Class methods, defined ahead of the tests: Where tables are evaluated
+  # in class scope as the file loads.
+  class << self
+    # The runner user a host handed to `ci` resolves (RunnerUser.for_host),
+    # as register's usage reads it: a name, no host probed.
+    def ci_identity
+      Dev::RunnerUser.new(name: "ci", home_of: ->(_user) { nil }, brew: nil, path: "/usr/bin", tap: nil, operator: "human")
+    end
+  end
+
   # --- usage ------------------------------------------------------------
 
   test "every flag register declares carries a description, so `dev runner register --help` explains each" do
@@ -1723,6 +1733,40 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   test "--as carries a description, like every register flag" do
     Expect
     usage_command.flags.map(&:name).include?("--as")
+  end
+
+  # dev#613: the usage's by-hand commands are the ones to type on *this*
+  # host — the runner user as the host resolves it (the prefix's owner
+  # after a hand-over), not the rule's default; the default stands in off
+  # Linux, where the text describes the Linux rule.
+  test "register's usage spells its by-hand commands with the runner user this host resolves — #{what}" do
+    Given "a command whose host rule answers #{what}, asked for its usage without --as"
+    as_names = []
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(
+      runner_user_factory: ->(name, _ui) {
+        as_names << name
+        runner_user
+      },
+      data_root_provisioner: nil, wsl_runner_host: nil,
+    )
+
+    When
+    desc = command.desc
+
+    Then "every by-hand command carries the name; the rule's default is still named as the rule"
+    as_names == [nil]
+    desc.include?("sudo -iu #{spelled} gh auth login --with-token")
+    desc.include?("`sudo -iu #{spelled} brew ...`")
+    desc.include?("by hand, `sudo -iu #{spelled} dev up`")
+    desc.include?("(`sudo -u #{spelled}`; no sudoers line")
+    desc.include?("`#{spelled}` on Linux")
+    desc.include?("(here: #{spelled})")
+    desc.include?("the runner user is `runner` by rule (--as renames it)")
+
+    Where
+    what                     | runner_user | spelled
+    "a host handed to ci"    | ci_identity | "ci"
+    "no runner user (a Mac)" | nil         | "runner"
   end
 
   # --- plumbing ---------------------------------------------------------
