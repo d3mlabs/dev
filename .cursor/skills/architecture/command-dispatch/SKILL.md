@@ -32,6 +32,12 @@ bare `dev`; the hidden `complete` builtin walks the same tree. The seams:
   (`deps` → `DepsPathCommand`; `plan` → `PlanNewCommand`…); accessors expose
   one public method per verb — never hand-roll `case args.first` dispatch.
   Global nouns register in `GlobalCatalog`, project builtins in the Runner.
+- A verb's name and bare-form behavior come from the shared vocabulary in
+  `docs/cli.md` ("Command vocabulary"): `status` reads, `check` is an exit
+  code, `install`/`up` resolve nothing, `update` moves; a targetless
+  mutation means all for a reviewable local diff and asks or refuses for
+  shared or irreversible state. A verb the table lacks is a doc change
+  first, then a leaf.
 - Project commands live in dev.yml, never in dev's core; `commands:` parse
   to the node's `children` (`CommandGroup` when no `run:`) and merge child
   by child with a same-named builtin in the repository.
