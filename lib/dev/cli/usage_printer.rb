@@ -19,9 +19,13 @@ module Dev
     # the Environment and the Development flow builtins); as one plain list
     # otherwise. Alphabetical
     # within a section, so the listing is deterministic regardless of
-    # registration order. A node's own flags list after its description, in
-    # the order the command declares them — the command carries its
-    # documentation where the operator meets it.
+    # registration order. A node's usage line spells its arguments from
+    # its own vocabulary — the synopsis it declares, else its positionals
+    # with their optional and repeat markers — and ARGS_PLACEHOLDER only
+    # when it declares neither: a project command's argv is its script's
+    # to describe. Its positionals and flags list after its description,
+    # each block in the order the command declares them — the command
+    # carries its documentation where the operator meets it.
     #
     # Every command with a project body — a project command, a builtin a
     # project overrode — also says where it runs on this machine:
@@ -62,6 +66,11 @@ module Dev
       # name, so the summaries line up across sections.
       LABEL_WIDTH = 12
 
+      # What the usage line spells for a node with no argument vocabulary:
+      # a project command (the script owns its arguments), or a builtin
+      # that declares neither positionals nor a synopsis.
+      ARGS_PLACEHOLDER = "[args...]"
+
       # One line of a headed block — a command's or a verb subject's — and
       # the detail lines that follow it.
       class Row < T::Struct
@@ -92,13 +101,14 @@ module Dev
       def print_node(path:, command:, out:)
         invocation = ["dev", *path].join(" ")
         children = command.children.reject { |_name, child| child.hidden? }.to_a
-        out.puts "Usage: #{invocation} [args...]" unless command.is_a?(CommandGroup)
-        out.puts "#{command.is_a?(CommandGroup) ? "Usage:" : "      "} #{invocation} <command> [args...]" unless children.empty?
+        out.puts "Usage: #{invocation} #{arguments(command)}" unless command.is_a?(CommandGroup)
+        out.puts "#{command.is_a?(CommandGroup) ? "Usage:" : "      "} #{invocation} <command> #{ARGS_PLACEHOLDER}" unless children.empty?
         out.puts ""
         out.puts command.desc
         sentence = environment_sentence(command)
         out.puts sentence if sentence
         details(command).each { |line| out.puts line }
+        print_positionals(command.positionals, out) unless command.positionals.empty?
         print_flags(command.flags, out) unless command.flags.empty?
         listing = command.is_a?(LifecycleCommand) ? command.listing : nil
         print_listing(listing, out) if listing
@@ -139,6 +149,38 @@ module Dev
         HEADINGS.each do |category, heading|
           section = sections[category]
           print_section(heading, section, out) if section
+        end
+      end
+
+      # What the usage line spells after the invocation: the command's
+      # synopsis when it declares one, else its positionals in order with
+      # their markers, else the placeholder.
+      #
+      # @param command [Dev::Cli::Command]
+      # @return [String]
+      sig { params(command: Command).returns(String) }
+      def arguments(command)
+        synopsis = command.synopsis
+        return synopsis if synopsis
+        return ARGS_PLACEHOLDER if command.positionals.empty?
+
+        command.positionals.map(&:usage).join(" ")
+      end
+
+      # The node's positionals, one per line, in declaration order, in the
+      # flags block's shape: the bare placeholder (the markers are the usage
+      # line's), descriptions aligned in one column sized to the longest.
+      #
+      # @param positionals [Array<Dev::Cli::Positional>]
+      # @param out [IO, StringIO]
+      # @return [void]
+      sig { params(positionals: T::Array[Positional], out: T.any(IO, StringIO)).void }
+      def print_positionals(positionals, out)
+        width = T.must(positionals.map { |positional| positional.placeholder.length }.max)
+        out.puts ""
+        out.puts "Arguments:"
+        positionals.each do |positional|
+          out.puts "  #{positional.placeholder.ljust(width)}  #{positional.desc}".rstrip
         end
       end
 

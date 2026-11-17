@@ -166,10 +166,13 @@ class CommandTest < Minitest::Test
       def call(args:, context:); end
     end.new
 
-    Expect "the Command trait defaults hold"
+    Expect "the Command trait defaults hold: no traits, no flags, no positional vocabulary"
     !builtin.hidden?
     !builtin.staleness_exempt?
     !builtin.stamps?
+    builtin.flags == []
+    builtin.positionals == []
+    builtin.synopsis.nil?
   end
 
   test "subclassing BuiltinCommand is the hierarchy's declared open edge" do
@@ -212,6 +215,8 @@ class CommandTest < Minitest::Test
     !verb.staleness_exempt?
     !verb.stamps?
     verb.flags == []
+    verb.positionals == []
+    verb.synopsis.nil?
     verb.listing.nil?
   end
 

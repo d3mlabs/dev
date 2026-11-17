@@ -4,13 +4,14 @@
 require "dev/lifecycle"
 require_relative "flag"
 require_relative "parsed_args"
+require_relative "positional"
 
 module Dev
   module Cli
     # What `dev deploy <channel>` makes of its argv: the
     # shipments — one archive per build — selected from a **source**, never
     # built, never guessed. The channel's accept set, narrowed by the
-    # positional when one is given (`[BUILD]`, a name or a pattern in the
+    # positional when one is given (`[<build>]`, a name or a pattern in the
     # grammar), is spelled out per platform (Channel#artifact_patterns): one
     # archive ships per entry, and the config axis is the operator's choice —
     # `--config` chooses; without it the source must hold exactly one
@@ -40,12 +41,21 @@ module Dev
       FORCE_FLAG = "--force"
       RELEASE_FLAG = "--release"
 
+      # The one positional a channel takes: what narrows the accept set.
+      POSITIONAL = T.let(
+        Cli::Positional.new(
+          "build", optional: true,
+          desc: "a build name or pattern narrowing what ships, within the accept set (default: every build the channel accepts)",
+        ).freeze,
+        Cli::Positional,
+      )
+
       FLAGS = T.let(
         [
           Cli::Flag.new(CONFIG_FLAG, takes_value: true, desc: "the config to ship when the source holds several of an accepted build"),
-          Cli::Flag.new(RELEASE_FLAG, takes_value: true, desc: "ship the archives of release VERSION, downloaded and verified, on the live track"),
+          Cli::Flag.new(RELEASE_FLAG, takes_value: true, desc: "ship the archives of this release, downloaded and verified, on the live track"),
           Cli::Flag.new(ALLOW_STALE_FLAG, desc: "ship an artifact not packaged from a clean tree at this commit"),
-          Cli::Flag.new(FORCE_FLAG, desc: "ship BUILD although the channel does not accept it"),
+          Cli::Flag.new(FORCE_FLAG, desc: "ship the <build> although the channel does not accept it"),
         ].freeze,
         T::Array[Cli::Flag],
       )

@@ -14,13 +14,13 @@ require "dev/lifecycle"
 module Dev
   module Cli
     module Builtins
-      # `dev build [BUILD] [--target T] [--platform P] [--config C]`: make one
-      # build's install through its target's builder. The
+      # `dev build [<build>] [--target T] [--platform P] [--config C]`: make
+      # one build's install through its target's builder. The
       # verb exists iff the project declares `targets:`, and acts on one
       # build: the positional (a name or a pattern, an omitted axis taking
       # the target's first), its long form in flags, or — bare — the first
       # declared target's default build, which is why a project lists its
-      # fast-loop target first.
+      # fast-loop target first (the selector spells the positional).
       #
       # The stage: `before` consumes the argv into the build (BuildSelector),
       # resolves where it runs (BuildDispatcher — the target's `environment:`
@@ -75,9 +75,12 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Build a target's install (build [BUILD] | --target T [--platform P] [--config C] [--runner L | --container])\n" \
-            "BUILD is `<target>[-<platform>[-<config>]]`; an omitted axis takes the target's first. " \
-            "Bare `dev build` is `#{default_build}`."
+          "Build a target's install"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [@selector.positional]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
@@ -122,14 +125,6 @@ module Dev
           else
             @out.puts "#{env.build}: nothing to build (target '#{env.build.target}' declares no `build:`)"
           end
-        end
-
-        private
-
-        # @return [String] what bare `dev build` means
-        sig { returns(String) }
-        def default_build
-          T.must(@selector.targets.first).default_build.name
         end
       end
     end

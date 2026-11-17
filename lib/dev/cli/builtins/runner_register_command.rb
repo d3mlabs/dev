@@ -225,7 +225,7 @@ module Dev
         def desc
           runner_user = @runner_user_factory.call(nil, NoUi.new) || Dev::RunnerUser.new(name: Dev::RunnerUser::DEFAULT_NAME)
           <<~DESC
-            Enroll this host as a self-hosted runner in a role (--role; --ai-flow, --labels), converging its contracts
+            Enroll this host as a self-hosted runner in a role, converging its contracts
 
             Converges (engine, label contracts), then enrolls — or amends an existing
             enrollment's labels in place. Re-running is the idempotent no-op and the

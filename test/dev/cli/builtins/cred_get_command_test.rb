@@ -17,7 +17,8 @@ class Dev::Cli::Builtins::CredGetCommandTest < Minitest::Test
     command.staleness_exempt? == true
     command.stamps? == false
     command.category == Dev::Cli::Command::Category::Workflow
-    command.desc.include?("get <namespace> <key>")
+    command.desc == "Print a stored credential, resolved through the provider chain"
+    command.positionals.map(&:usage) == ["<namespace>", "<key>"]
   end
 
   test "call forwards its argv, the context's Ui and its stream to the accessor's get" do

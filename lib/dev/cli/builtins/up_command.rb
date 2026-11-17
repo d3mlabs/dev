@@ -78,7 +78,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Install locked deps and bring the build container up, then run the project's up command (if defined); --no-cache does it from nothing"
+          "Install locked deps and bring the build container up, then run the project's up command if it defines one"
         end
 
         sig { override.returns(Command::Category) }
@@ -90,7 +90,10 @@ module Dev
         # (the args are handed on to it).
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(NO_CACHE_FLAG), *@install_deps_command.flags]
+          [
+            Cli::Flag.new(NO_CACHE_FLAG, desc: "provision the project from an empty data root, proving the cold path; the warm state is untouched"),
+            *@install_deps_command.flags,
+          ]
         end
 
         # up IS the staleness remediation — never nag before it.

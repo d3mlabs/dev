@@ -456,7 +456,7 @@ module Dev
           # check ≈ bundle check (inspect and exit non-zero when unsatisfied).
           "deps" => CommandGroup.new(
             path: ["deps"],
-            desc: "Manage dependencies (update | install | check | path)",
+            desc: "Manage dependencies",
             category: Command::Category::Environment,
             children: {
               "update" => Builtins::UpdateDepsCommand.new,
@@ -504,7 +504,7 @@ module Dev
       def container_builtins(up:, down:)
         CommandGroup.new(
           path: ["container"],
-          desc: "Manage this checkout's build container (up | down | reset | status)",
+          desc: "Manage this checkout's build container",
           category: Command::Category::Environment,
           children: {
             "up" => up,

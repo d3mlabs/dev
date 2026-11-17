@@ -47,6 +47,11 @@ module Dev
           Command::Category::Workflow
         end
 
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("command", optional: true, repeated: true, desc: "the path of the command to describe (default: this listing)")]
+        end
+
         # Help must work while the dependency state is stale — it is how the
         # remediation commands get discovered in the first place.
         sig { override.returns(T::Boolean) }

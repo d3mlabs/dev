@@ -42,6 +42,34 @@ Every builtin and group declares its flags and follows the `gh` convention:
 verbatim, `--help` and `--` included; the script owns its flags. A project
 `run:` on a builtin's name owns that slot's argv the same way.
 
+## Positional arguments
+
+Every builtin declares its positionals, and its usage spells them: the
+usage line names each in order — `<name>` for a required one, `[<name>]`
+for an optional one, `<name>…` for one that repeats — and an `Arguments:`
+block under the description explains each, in the `Flags:` style.
+
+    Usage: dev deps update [<declaration>…]
+
+    Resolve dependency constraints and write lockfiles, keeping unchanged pins
+
+    Arguments:
+      <declaration>  a dependencies.rb declaration to float
+
+    Flags:
+      --all  float every pin
+
+A builtin whose grammar is a choice of forms, such as `dev deps path`,
+declares a synopsis instead; the usage line prints the synopsis, and the
+`Arguments:` block still explains each placeholder it uses.
+
+A builtin's description is one sentence, with no placeholders in it: a
+listing's second column is that sentence, and the usage line is where the
+grammar lives.
+
+**Project commands have no positional vocabulary.** Their usage line
+prints `[args...]`, since the script owns its arguments.
+
 ## Scope
 
 Each builtin runs in one of three scopes:
@@ -61,29 +89,29 @@ Each builtin runs in one of three scopes:
 |---|---|
 | `dev up [--no-cache]` | Converge host tooling, install the lock, bring the build container up, run the project's `up:`. `--no-cache` provisions from an empty data root to prove the cold path works. |
 | `dev down` | Stop this checkout's containers; stop the engine if nothing else uses it. |
-| `dev deps update [<name>…] [--all]` | Resolve `dependencies.rb` and write `deps.lock`, keeping pins whose declaration did not change. |
-| `dev deps install [--group G] [--except G] [--integration I] [--pinned-taps]` | Install the lock on this machine. |
+| `dev deps update [<declaration>…] [--all]` | Resolve `dependencies.rb` and write `deps.lock`, keeping pins whose declaration did not change. |
+| `dev deps install [--group <name>] [--except <name>] [--integration <name>] [--pinned-taps]` | Install the lock on this machine. |
 | `dev deps check` | Exit non-zero when the manifest, lock, or installed state disagree. |
-| `dev deps path <integration> <name> [<platform>]` | Print a locked artifact's path. |
-| `dev build [BUILD] [--target T] [--platform P] [--config C] [--runner L \| --container]` | Build one target's install. |
-| `dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--runner L \| --container] [--fetch]` | Build, then archive and stamp the artifact. `--fetch` brings a remote host's artifact into this machine's store. |
-| `dev deploy <channel> [BUILD] [--release V] [--config C] [--allow-stale] [--force] [--dry-run] [--runner L]` | Ship artifacts to a channel. |
-| `dev deploy --release V [--dry-run]` | Ship a release to every channel. |
-| `dev deploy status [--release V]` | What each channel carries. |
+| `dev deps path ficsit <mod> <platform> \| xcode \| gh <name> \| steam <name> \| egs <name> \| wwise <name>` | Print a locked artifact's path. |
+| `dev build [<build>] [--target <target>] [--platform <platform>] [--config <config>] [--runner <label> \| --container]` | Build one target's install. |
+| `dev package [<build>] [--target <target>] [--platform <platform>] [--config <config>] [--no-build] [--runner <label> \| --container] [--fetch]` | Build, then archive and stamp the artifact. `--fetch` brings a remote host's artifact into this machine's store. |
+| `dev deploy <channel> [<build>] [--release <version>] [--config <config>] [--allow-stale] [--force] [--dry-run] [--runner <label>]` | Ship artifacts to a channel. |
+| `dev deploy --release <version> [--dry-run]` | Ship a release to every channel. |
+| `dev deploy status [--release <version>]` | What each channel carries. |
 | `dev release [<version>\|major\|minor\|patch] [--yes]` | Tag, push, package and attach archives to a GitHub release. |
-| `dev cd <repo>` | Jump to a checkout by fuzzy name. |
-| `dev clone [<org>/]<repo>` | Clone into the canonical path and land there. |
+| `dev cd <query>` | Jump to a checkout by fuzzy name. |
+| `dev clone <repo> [--path]` | Clone into the canonical path and land there. |
 | `dev config list\|get <key>\|set <key> <value>` | Settings. |
 | `dev cred get <namespace> <key>` | Resolve a credential and print it. |
 | `dev engine up\|down [--force]\|status` | The per-user container engine. |
 | `dev container up\|down\|reset\|status` | This checkout's images and containers. |
-| `dev runner register\|status\|unregister` | Self-hosted runner enrollment. |
-| `dev plan new\|link\|pull\|push\|status\|init` | Plans as GitHub issues. |
+| `dev runner register\|status\|unregister [<scope>\|<dir>] [--yes]` | Self-hosted runner enrollment. |
+| `dev plan new <title>\|link <n> [<file>] \| <file>\|pull <n>\|push [<plan>]\|status\|init` | Plans as GitHub issues. |
 | `dev learnings sync\|status\|invariants\|init` | Org learnings read path. |
 | `dev skills status [--json]\|sync` | Agent skill links. |
-| `dev cache gc [--keep N] [--tool-caches]` | Reclaim caches. |
+| `dev cache gc [--keep <n>] [--tool-caches]` | Reclaim caches. |
 | `dev version` | Print the version. |
-| `dev help [<path>…]` | Usage for any node. |
+| `dev help [<command>…]` | Usage for any node. |
 
 ## Errors
 

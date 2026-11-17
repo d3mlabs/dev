@@ -140,11 +140,11 @@ class RunnerTest < Minitest::Test
     "the root"                    | []               | ["--help"]                                | "Usage: dev <command> [args...]"
     "a builtin group"             | ["deps"]         | ["deps", "--help"]                        | "Usage: dev deps <command> [args...]"
     "a builtin group, short"      | ["deps"]         | ["deps", "-h"]                            | "Usage: dev deps <command> [args...]"
-    "a builtin leaf"              | ["deps", "path"] | ["deps", "path", "--help"]                | "Usage: dev deps path [args...]"
-    "a leaf, after a positional"  | ["deps", "path"] | ["deps", "path", "xcode", "-h"]           | "Usage: dev deps path [args...]"
+    "a builtin leaf"              | ["deps", "path"] | ["deps", "path", "--help"]                | "Usage: dev deps path ficsit <mod> <platform> | xcode | gh <name> | steam <name> | egs <name> | wwise <name>"
+    "a leaf, after a positional"  | ["deps", "path"] | ["deps", "path", "xcode", "-h"]           | "Usage: dev deps path ficsit <mod> <platform> | xcode | gh <name> | steam <name> | egs <name> | wwise <name>"
     "a flagged leaf, among flags" | ["cache", "gc"]  | ["cache", "gc", "--keep", "3", "-h"]      | "Usage: dev cache gc [args...]"
-    "a global leaf in the tree"   | ["plan", "new"]  | ["plan", "new", "Carve system", "--help"] | "Usage: dev plan new [args...]"
-    "the help command itself"     | ["help"]         | ["help", "--help"]                        | "Usage: dev help [args...]"
+    "a global leaf in the tree"   | ["plan", "new"]  | ["plan", "new", "Carve system", "--help"] | "Usage: dev plan new <title>"
+    "the help command itself"     | ["help"]         | ["help", "--help"]                        | "Usage: dev help [<command>…]"
   end
 
   test "#{argv.inspect} is a usage error at #{shape}: the flag, the node's usage on stderr, exit 2" do
@@ -170,9 +170,9 @@ class RunnerTest < Minitest::Test
     shape                     | argv                                 | flag      | invocation      | usage_line
     "the root"                | ["--bogus"]                          | "--bogus" | "dev"           | "Usage: dev <command> [args...]"
     "a builtin group"         | ["deps", "--hlep"]                   | "--hlep"  | "dev deps"      | "Usage: dev deps <command> [args...]"
-    "a builtin without flags" | ["deps", "path", "xcode", "-x"]      | "-x"      | "dev deps path" | "Usage: dev deps path [args...]"
+    "a builtin without flags" | ["deps", "path", "xcode", "-x"]      | "-x"      | "dev deps path" | "Usage: dev deps path ficsit <mod> <platform> | xcode | gh <name> | steam <name> | egs <name> | wwise <name>"
     "a builtin with flags"    | ["cache", "gc", "--keep=3", "--kep"] | "--kep"   | "dev cache gc"  | "Usage: dev cache gc [args...]"
-    "a global leaf"           | ["plan", "new", "x", "--hlep"]       | "--hlep"  | "dev plan new"  | "Usage: dev plan new [args...]"
+    "a global leaf"           | ["plan", "new", "x", "--hlep"]       | "--hlep"  | "dev plan new"  | "Usage: dev plan new <title>"
   end
 
   test "run with unknown command prints error to stderr and exits 1" do
@@ -202,7 +202,7 @@ class RunnerTest < Minitest::Test
     runner.run([])
 
     Then "deps is one row; update-deps / install-deps / check are gone"
-    out.string.include?("  deps …       Manage dependencies (update | install | check | path)")
+    out.string.include?("  deps …       Manage dependencies")
     !out.string.include?("update-deps")
     !out.string.include?("install-deps")
     !out.string.match?(/^  check /)
@@ -368,11 +368,12 @@ class RunnerTest < Minitest::Test
     out.rewind
     with_targets.run(["help", "build"])
 
-    Then "the verbs sit in the Lifecycle section, build's usage names the bare default; the other project has neither"
+    Then "the verbs sit in the Lifecycle section, build's usage spells the positional and names the bare default; the other project has neither"
     root_usage.include?("Lifecycle:")
     root_usage.lines.any? { |l| l.strip.start_with?("build ") }
     root_usage.lines.any? { |l| l.strip.start_with?("package ") }
-    out.string.include?("Bare `dev build` is `rspock`.")
+    out.string.include?("Usage: dev build [<build>]\n")
+    out.string.include?("Arguments:\n  <build>  the build, as `<target>[-<platform>[-<config>]]`; an omitted axis takes the target's first (default: rspock)\n")
     without.string.lines.none? { |l| l.strip.start_with?("build ", "package ") }
   end
 
@@ -392,7 +393,8 @@ class RunnerTest < Minitest::Test
     build_runner(out: without, targets: { "rspock" => { "desc" => "The gem" } }).run([])
 
     Expect "the verb takes a version and lists what a release contains; the other project has no release"
-    every_build.string.include?("release [<version>|major|minor|patch]")
+    every_build.string.include?("Usage: dev release [<version>|major|minor|patch]\n")
+    every_build.string.include?("Arguments:\n  <version>  the version to cut, or the part of VERSION to bump — major, minor or patch (default: patch)\n")
     every_build.string.include?(<<~LISTING)
       Release builds:
         rspock       The gem   host
@@ -550,13 +552,13 @@ class RunnerTest < Minitest::Test
     without.string.lines.none? { |l| l.strip.start_with?("deploy") }
     deploy_usage.include?(<<~USAGE)
       Commands:
-        rubygems     gem push                                                         host
+        rubygems     gem push                                  host
                      Accepts: rspock
                      Protocol: run: gem push "$DEV_ARTIFACT"
-        staging      rsync to the box                                                 host
+        staging      rsync to the box                          host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
-        status       What each channel carries and from where (status [--release V])
+        status       What each channel carries and from where
     USAGE
     out.string.include?("Runs on the host.\nAccepts: site-dev, site-release\nProtocol: run: ./bin/stage\n")
     out.string.include?("--allow-stale")
@@ -701,18 +703,18 @@ class RunnerTest < Minitest::Test
          "dev's own `status` sits among them either way"
     out.string.include?(<<~USAGE)
       Commands:
-        staging      rsync to the box                                                 host
+        staging      rsync to the box                          host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
-        status       What each channel carries and from where (status [--release V])
-        steam        Steam depots                                                     host
+        status       What each channel carries and from where
+        steam        Steam depots                              host
                      Accepts: site-release
                      Protocol: publisher: steam
     USAGE
     undeclared_out.string.include?(<<~USAGE)
       Commands:
-        status       What each channel carries and from where (status [--release V])
-        steam        Ship through the lock's steam publisher                          host
+        status       What each channel carries and from where
+        steam        Ship through the lock's steam publisher   host
                      Accepts: rspock
                      Protocol: publisher: steam
     USAGE
@@ -932,6 +934,48 @@ class RunnerTest < Minitest::Test
     help_out.string.include?("Capture is agent-driven, not a dev verb: the capture-learning skill")
     help_out.string.include?("ai-flow's /learn on GitHub")
     !root_out.string.include?("Capture is agent-driven")
+  end
+
+  # --- the positional vocabulary (dev#630) ----------------------------------
+
+  test "no builtin or group describes itself with a synopsis: every summary the listings render is one sentence, free of placeholders and alternatives" do
+    Given "a Runner over a project with every gated builtin present — an image pin, targets, a release, a channel — walked through help and complete"
+    out = StringIO.new
+    runner = build_runner(
+      out: out, root: pinned_root("myapp-linux"),
+      targets: { "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" } },
+      commands: {
+        "release" => { "targets" => ["site-release"] },
+        "deploy" => { "commands" => { "staging" => { "desc" => "rsync to the box", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" } } },
+      },
+    )
+
+    When "rendering the usage of every node in the tree"
+    usages = every_path(runner, out).to_h { |path| [path, usage(runner, out, path)] }
+
+    Then "the tree is the full one, and no node's summary line — what its parent lists — carries a `<` or a `|`"
+    (%w[up deps cache container down build package release deploy runner cd clone config cred engine learnings skills plan version help] -
+      usages.keys.select { |path| path.size == 1 }.map(&:first)).empty?
+    usages.keys.include?(["deps", "update"])
+    usages.keys.include?(["deploy", "staging"])
+    usages.keys.include?(["runner", "unregister"])
+    usages.reject { |path, _usage| path.empty? }.map { |_path, usage| summary_of(usage) }.none? { |summary| summary.match?(/[<|]/) }
+  end
+
+  test "the root listing's second column is each builtin's one-sentence summary; `dev help <builtin>` spells its positionals" do
+    Given
+    out = StringIO.new
+    runner = build_runner(out: out)
+
+    When
+    root = usage(runner, out, [])
+    update = usage(runner, out, ["deps", "update"])
+
+    Then
+    root.include?("  deps …       Manage dependencies\n")
+    update.start_with?("Usage: dev deps update [<declaration>…]\n\nResolve dependency constraints and write lockfiles, keeping unchanged pins\n")
+    update.include?("Arguments:\n  <declaration>  a dependencies.rb declaration to float")
+    update.include?("Flags:\n  --all  float every pin")
   end
 
   test "an unknown child of a pure project group is reported with its full path" do
@@ -1178,6 +1222,36 @@ class RunnerTest < Minitest::Test
   end
 
   private
+
+  # One command's output: run it on a Runner built over +out+, read, then
+  # clear the stream for the next run.
+  def capture(runner, out, argv)
+    runner.run(argv)
+    captured = out.string.dup
+    out.truncate(0)
+    out.rewind
+    captured
+  end
+
+  # `dev help <path>`.
+  def usage(runner, out, path)
+    capture(runner, out, ["help", *path])
+  end
+
+  # The desc's first line as printed: what follows the usage block.
+  def summary_of(usage)
+    usage.lines.map(&:chomp).drop_while { |line| line.start_with?("Usage:", "       dev ") }.drop_while(&:empty?).fetch(0)
+  end
+
+  # Every visible path in the tree, the root included, found the way a
+  # shell does: `complete` names a node's children, and a node has
+  # children exactly when its usage prints the subcommand form.
+  def every_path(runner, out, path = [])
+    return [path] unless usage(runner, out, path).include?("#{["dev", *path].join(" ")} <command> [args...]")
+
+    children = capture(runner, out, ["complete", *path]).lines.map(&:chomp)
+    [path] + children.flat_map { |child| every_path(runner, out, [*path, child]) }
+  end
 
   # Every run builds an ExecutionContext, so the helper always pins the
   # project root to a temp dir; tests needing their own pass a root.

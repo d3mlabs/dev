@@ -24,12 +24,20 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Print a stored credential, resolved through the provider chain (get <namespace> <key>)"
+          "Print a stored credential, resolved through the provider chain"
         end
 
         sig { override.returns(Command::Category) }
         def category
           Command::Category::Workflow
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new("namespace", desc: "the credential's namespace, e.g. an integration's name"),
+            Cli::Positional.new("key", desc: "the credential's key within the namespace"),
+          ]
         end
 
         # Host-global: a project's dependency staleness is irrelevant.

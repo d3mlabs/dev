@@ -17,12 +17,17 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Create a templated issue + linked local plan (new \"<title>\" [--blank] [--org])"
+          "Create a templated issue and the local plan linked to it"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("title", desc: "the issue's title, and the plan's H1 (quote it)")]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(BLANK_FLAG), Cli::Flag.new(ORG_FLAG)]
+          [Cli::Flag.new(BLANK_FLAG, desc: "scaffold only the H1, no template body"), ORG]
         end
 
         private

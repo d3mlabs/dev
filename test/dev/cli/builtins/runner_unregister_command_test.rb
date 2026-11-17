@@ -23,7 +23,11 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
     command.hidden? == false
     command.category == Dev::Cli::Command::Category::Environment
     command.stamps? == false
-    command.desc.include?("--yes")
+    command.desc == "Remove one of this host's runner enrollments, or every slot it has at a scope"
+    command.synopsis == "[<scope>|<dir>]"
+    command.positionals.map(&:placeholder) == ["<scope>", "<dir>"]
+    command.flags.map(&:name) == ["--yes"]
+    command.flags.none? { |flag| flag.desc.empty? }
   end
 
   test "unregister <scope> resolves, asks naming scope, runner, dir and service, and tears down on yes" do

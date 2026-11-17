@@ -201,7 +201,7 @@ class Dev::BinDevTest < Minitest::Test
 
     Then "the leaf's usage, and gh was never reached"
     status.success?
-    out.include?("Usage: dev plan new [args...]")
+    out.include?("Usage: dev plan new <title>")
     out.include?("Create a templated issue")
     !File.exist?(gh_marker(dir))
 
@@ -220,7 +220,7 @@ class Dev::BinDevTest < Minitest::Test
     Then "the flag is refused before the verb runs"
     status.exitstatus == 2
     err.include?("dev: unknown flag '--hlep' for 'dev plan new'")
-    err.include?("Usage: dev plan new [args...]")
+    err.include?("Usage: dev plan new <title>")
     out.empty?
     !File.exist?(gh_marker(dir))
 

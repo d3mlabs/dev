@@ -45,7 +45,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "What each channel carries and from where (status [--release V])"
+          "What each channel carries and from where"
         end
 
         sig { override.returns(Command::Category) }

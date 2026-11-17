@@ -51,7 +51,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Reclaim stale tree versions, build images, prefix volumes and snapshot branches (--keep N; --tool-caches drops the tools' caches)"
+          "Reclaim stale tree versions, build images, prefix volumes and snapshot branches"
         end
 
         sig { override.returns(Command::Category) }
@@ -61,7 +61,10 @@ module Dev
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(KEEP_FLAG, takes_value: true), Cli::Flag.new(TOOL_CACHES_FLAG)]
+          [
+            Cli::Flag.new(KEEP_FLAG, takes_value: true, desc: "how many versions of each tree to keep (default: #{Dev::Deps::CacheGc::DEFAULT_KEEP})"),
+            Cli::Flag.new(TOOL_CACHES_FLAG, desc: "also drop the tools' download caches whole"),
+          ]
         end
 
         # GC is maintenance over the cache, not a build: it reads the lockfile to

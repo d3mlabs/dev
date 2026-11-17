@@ -16,12 +16,17 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Fetch the issue into the local plan (pull <n> [--merge] [--org])"
+          "Fetch the issue into the local plan"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [Cli::Positional.new("n", desc: "the issue number")]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(MERGE_FLAG), Cli::Flag.new(ORG_FLAG)]
+          [Cli::Flag.new(MERGE_FLAG, desc: "3-way merge a diverged local copy instead of refusing to overwrite it"), ORG]
         end
 
         private

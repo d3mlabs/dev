@@ -17,16 +17,19 @@ require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::UsagePrinterTest < Minitest::Test
-  # Minimal builtin fake: the printer only reads desc and category, so the
-  # fake carries just those traits.
+  # Minimal builtin fake: the printer reads desc and category, and the
+  # argument vocabulary a leaf declares (positionals, synopsis) — nothing
+  # by default, as for a real builtin.
   class FakeBuiltin < Dev::Cli::BuiltinCommand
-    def initialize(desc:, category:)
+    def initialize(desc:, category:, positionals: [], synopsis: nil)
       super()
       @desc = desc
       @category = category
+      @positionals = positionals
+      @synopsis = synopsis
     end
 
-    attr_reader :desc, :category
+    attr_reader :desc, :category, :positionals, :synopsis
 
     def call(args:, context:); end
   end
@@ -322,6 +325,101 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
     Then "no Commands section"
     out.string == "Usage: dev test unit [args...]\n\nUnit tests\n"
+  end
+
+  # --- the positional vocabulary (dev#630) --------------------------------
+
+  test "print_node spells a leaf's positionals on its usage line, with their markers, and lists them in an Arguments block before the flags" do
+    Given "a builtin declaring a required, an optional and a repeated positional, and a flag"
+    printer = Dev::Cli::UsagePrinter.new
+    command = FakeBuiltin.new(
+      desc: "Ship a build", category: Dev::Cli::Command::Category::Workflow,
+      positionals: [
+        Dev::Cli::Positional.new("channel", desc: "where it ships"),
+        Dev::Cli::Positional.new("build", desc: "which build (default: every accepted one)", optional: true),
+        Dev::Cli::Positional.new("declaration", desc: "a declaration to float", optional: true, repeated: true),
+      ],
+    )
+    command.stubs(:flags).returns([Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")])
+    out = StringIO.new
+
+    When "printing the node"
+    printer.print_node(path: ["ship"], command: command, out: out)
+
+    Then "the usage line carries the marked placeholders; the block labels by the bare placeholder, aligned, then the flags follow"
+    out.string == <<~USAGE
+      Usage: dev ship <channel> [<build>] [<declaration>…]
+
+      Ship a build
+
+      Arguments:
+        <channel>      where it ships
+        <build>        which build (default: every accepted one)
+        <declaration>  a declaration to float
+
+      Flags:
+        --dry-run  select and report, ship nothing
+    USAGE
+  end
+
+  test "a synopsis replaces the positionals on the usage line, and the positionals it names still describe themselves" do
+    Given "a builtin whose grammar is alternatives"
+    printer = Dev::Cli::UsagePrinter.new
+    command = FakeBuiltin.new(
+      desc: "Print a locked artifact's path", category: Dev::Cli::Command::Category::Environment,
+      synopsis: "ficsit <mod> <platform> | xcode | gh <name>",
+      positionals: [
+        Dev::Cli::Positional.new("mod", desc: "a locked mod"),
+        Dev::Cli::Positional.new("platform", desc: "the mod's platform"),
+        Dev::Cli::Positional.new("name", desc: "a locked artifact"),
+      ],
+    )
+    out = StringIO.new
+
+    When "printing the node"
+    printer.print_node(path: ["deps", "path"], command: command, out: out)
+
+    Then
+    out.string == <<~USAGE
+      Usage: dev deps path ficsit <mod> <platform> | xcode | gh <name>
+
+      Print a locked artifact's path
+
+      Arguments:
+        <mod>       a locked mod
+        <platform>  the mod's platform
+        <name>      a locked artifact
+    USAGE
+  end
+
+  test "a builtin with neither positionals nor a synopsis keeps the args placeholder and prints no Arguments block" do
+    Given
+    printer = Dev::Cli::UsagePrinter.new
+    out = StringIO.new
+
+    When
+    printer.print_node(path: ["deps", "check"], command: environment_builtin(desc: "Check freshness"), out: out)
+
+    Then
+    out.string == "Usage: dev deps check [args...]\n\nCheck freshness\n"
+  end
+
+  test "a runnable node with children spells its own positionals on the first usage line; the subcommand form keeps the placeholder" do
+    Given "a leaf heading a child"
+    printer = Dev::Cli::UsagePrinter.new
+    command = FakeBuiltin.new(
+      desc: "Ship", category: Dev::Cli::Command::Category::Workflow,
+      positionals: [Dev::Cli::Positional.new("channel", desc: "where")],
+    ).with_children({ "status" => workflow_builtin(desc: "What ships") })
+    out = StringIO.new
+
+    When
+    printer.print_node(path: ["ship"], command: command, out: out)
+
+    Then
+    lines = out.string.lines.map(&:chomp)
+    lines.fetch(0) == "Usage: dev ship <channel>"
+    lines.fetch(1) == "       dev ship <command> [args...]"
   end
 
   # --- the environment column (dev#409) ----------------------------------

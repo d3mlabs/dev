@@ -59,7 +59,7 @@ module Dev
         sig { override.returns(String) }
         def desc
           <<~DESC
-            Inspect this host's runner enrollments and their contract facts (--check: the host's posture, exit 1 on drift)
+            Inspect this host's runner enrollments and their contract facts
 
             The machine's view, framed by subject: the host, then one frame per role
             family — each slot's reach, online state and labels against what its role

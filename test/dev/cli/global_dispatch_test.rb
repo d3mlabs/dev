@@ -405,7 +405,7 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
 
     Then "the flag and the node are named, the usage follows, and the verb never ran"
     $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config get'\n"
-    $stderr.string.include?("Usage: dev config get [args...]")
+    $stderr.string.include?("Usage: dev config get <key>")
     config.last_call.nil?
 
     Cleanup

@@ -20,12 +20,15 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Scaffold this repo's learnings index + .gitignore footprint, or the org layout (--org); write-once"
+          "Scaffold this repo's learnings index and .gitignore footprint, leaving an existing index untouched"
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(ORG_FLAG), Cli::Flag.new(GITIGNORE_FLAG)]
+          [
+            Cli::Flag.new(ORG_FLAG, desc: "scaffold the org knowledge repo's layout instead (index.md and skills/)"),
+            Cli::Flag.new(GITIGNORE_FLAG, desc: "only the .gitignore step"),
+          ]
         end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }

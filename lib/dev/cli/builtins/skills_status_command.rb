@@ -29,7 +29,7 @@ module Dev
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(JSON_FLAG)]
+          [Cli::Flag.new(JSON_FLAG, desc: "a bare JSON payload on stdout instead of the report")]
         end
 
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }

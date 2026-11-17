@@ -15,12 +15,22 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Update the issue body from the local plan, guarded (push [<file>|<n>] [--org])"
+          "Update the issue body from the local plan, refusing when the issue moved since the last sync"
+        end
+
+        sig { override.returns(T::Array[Cli::Positional]) }
+        def positionals
+          [
+            Cli::Positional.new(
+              "plan", optional: true,
+              desc: "the plan file, or the number of the issue it is linked to (default: the workspace's sole linked plan)",
+            ),
+          ]
         end
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          [Cli::Flag.new(ORG_FLAG)]
+          [Cli::Flag.new(ORG_FLAG, desc: "resolve an issue number against the org plans repo (a file names its repo itself)")]
         end
 
         private

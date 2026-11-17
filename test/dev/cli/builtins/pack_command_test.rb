@@ -23,9 +23,11 @@ class Dev::Cli::Builtins::PackCommandTest < Minitest::Test
     !command.staleness_exempt?
     !command.stamps?
     command.category == Dev::Cli::Command::Category::Workflow
-    command.desc.include?("pack DIR [--out STEM] [--format zip|tar] [--split SIZE]")
+    command.desc == "Archive a directory in one of dev's forms"
+    command.positionals.map(&:usage) == ["<dir>"]
     command.flags.map(&:name) == ["--out", "--format", "--split"]
     command.flags.all?(&:takes_value?)
+    command.flags.none? { |flag| flag.desc.empty? }
   end
 
   test "pack DIR zips the directory beside the caller as <name>.zip and prints the file" do
