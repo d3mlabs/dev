@@ -29,9 +29,8 @@ module Dev
       #
       # Versioned casks are distinct cask names in Homebrew's own universe
       # (`temurin@21`), so the name is the whole coordinate — there is no
-      # suffix fact to select over, and a `version:` constraint on a cask is
-      # unsatisfiable by construction (BrewScheme finds no suffix to match,
-      # loudly).
+      # version to select over, and a requirement on a cask is refused at
+      # declaration (CaskScheme supports Any alone, loudly).
       #
       # @param id [PackageId] name is the cask name
       # @return [Package] a singleton universe

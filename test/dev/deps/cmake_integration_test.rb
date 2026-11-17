@@ -611,7 +611,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
 
     universe = Dev::Deps::PackageVersion.new(
       version: "sha1",
-      metadata: { "repo" => "https://github.com/google/googletest" },
+      metadata: { "repo" => "https://github.com/google/googletest", "ref" => "main" },
     )
     stub_repo = StubRepository.new(universes: { "googletest" => [universe] })
     resolver = Dev::Deps::Resolver.new(
@@ -622,6 +622,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
       Dev::Deps::ScopedDeclaration.new(
         declaration: Dev::Deps::Declaration.new(
           name: "googletest", integration: :cmake,
+          requirement: Dev::Deps::Requirement::Exact.new(version: "main"),
           source: "https://github.com/google/googletest",
         ),
         scope: Dev::Deps::Scope.new(group: :test),

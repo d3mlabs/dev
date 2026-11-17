@@ -20,7 +20,7 @@ module Dev
     #                 by a re-lock and is re-resolved every time.
     # - metadata:     integration-specific extras (url:, repo:, cmake_targets:, tap:, …) plus
     #                 the install-scoping axes (host, env) and provenance (NEEDED_BY)
-    # - dependencies: transitive dependencies discovered during fetch ([{name:, constraint:}, …])
+    # - dependencies: transitive dependencies discovered during fetch ([{name:, requirement:}, …])
     # - post_install: callable or array of callables to run after the dep is fetched.
     #                 Each callable receives (dep, project_root). Not serialized to lockfile.
     # The :hash member (integrity hash) shadows Data#hash; instances are never

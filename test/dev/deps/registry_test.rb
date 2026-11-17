@@ -30,7 +30,7 @@ class Dev::Deps::RegistryTest < Minitest::Test
     classes.values.all? { |klass| klass <= Dev::Deps::Integration }
   end
 
-  test "the interpreters resolve over brew's universe with their own constraint semantics" do
+  test "the interpreters resolve over brew's universe with their own requirement semantics" do
     When "listing the schemes"
     schemes = Dev::Deps::Registry.schemes
 

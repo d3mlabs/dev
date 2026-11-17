@@ -3,7 +3,8 @@
 
 require "test_helper"
 require "dev/deps/brew_cask_repository"
-require "dev/deps/brew_scheme"
+require "dev/deps/cask_scheme"
+require "dev/deps/requirement"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::BrewCaskRepositoryTest < Minitest::Test
@@ -21,15 +22,15 @@ class Dev::Deps::BrewCaskRepositoryTest < Minitest::Test
     package.versions.first.declarations == Dev::Deps::Declarations::ToolOwned.new
   end
 
-  test "a version constraint on a cask is unsatisfiable — the cask name is the coordinate" do
+  test "a requirement on a cask is refused — the cask name is the coordinate" do
     Given "a cask's singleton universe (versioned casks are distinct names, e.g. temurin@21)"
     repository = Dev::Deps::BrewCaskRepository.new
     package = repository.find(Dev::Deps::PackageId.new(integration: :cask, name: "temurin"))
+    scheme = Dev::Deps::CaskScheme.new
 
-    When "evaluating a suffix constraint against it"
-    satisfied = Dev::Deps::BrewScheme.new.satisfies?(package.versions.first, { "version" => "21" })
-
-    Then "no suffix fact exists to match — the resolve fails loudly, not silently"
-    satisfied == false
+    Expect "the channel takes Any alone; its one entry satisfies nothing else"
+    !scheme.supports?(Dev::Deps::Requirement.parse("~> 21.0"))
+    scheme.satisfies?(package.versions.first, Dev::Deps::Requirement::Any.new)
+    !scheme.satisfies?(package.versions.first, Dev::Deps::Requirement.parse("~> 21.0"))
   end
 end

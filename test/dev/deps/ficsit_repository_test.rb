@@ -125,7 +125,7 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     latest.artifacts["Windows"].uri == "https://api.ficsit.app/v1/version/ver2/Windows/download"
     latest.artifacts["Windows"].digest == "SHA256=deadbeef"
     latest.declarations == Dev::Deps::Declarations::Resolved.new([
-      Dev::Deps::Declaration.new(name: "SML", integration: :ficsit, constraint: { "version" => "^3.12.0" }),
+      Dev::Deps::Declaration.new(name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse(">= 3.12.0, < 4.0.0")),
     ])
     latest.metadata == { "mod_id" => "abc123", "game_version" => ">=491125" }
     package.version("2.4.0").artifacts["Windows"].digest == "SHA256=cafebabe"

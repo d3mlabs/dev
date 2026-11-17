@@ -9,6 +9,7 @@ require_relative "scoped_declaration"
 require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
+require_relative "requirement"
 require_relative "version_scheme"
 
 module Dev
@@ -19,7 +20,7 @@ module Dev
     #
     # The choice layer of the deps pipeline: repositories report facts (which
     # versions exist — Repository#find), schemes evaluate predicates (does a
-    # version satisfy a constraint — VersionScheme), and this class chooses:
+    # version satisfy a requirement — VersionScheme), and this class chooses:
     # for each declaration it filters the package's universe through the
     # integration's scheme, takes the highest satisfying version, mints the
     # pin, and walks that version's edges to resolve transitives. Whole-set
@@ -41,11 +42,19 @@ module Dev
       # A declaration names an integration the registry doesn't wire.
       class UnknownIntegrationError < StandardError; end
 
-      # The same dependency is declared twice with disagreeing constraints.
+      # A declaration asks its channel something the channel cannot
+      # evaluate: a form the channel's scheme does not support (a range over
+      # a cask, over a Steam branch), a requirement against a channel with
+      # no scheme at all (url, egs), or one the universe at hand cannot
+      # answer (a range over a one-version brew family). The message names
+      # the channel's reason and what it does take.
+      class UnsupportedRequirementError < StandardError; end
+
+      # The same dependency is declared twice with disagreeing asks.
       class ConflictingDeclarationError < StandardError; end
 
       # No version in the package's universe satisfies the declaration —
-      # constraint mismatch, missing requested platform, or empty universe.
+      # requirement mismatch, missing requested platform, or empty universe.
       class NoSatisfyingVersionError < StandardError; end
 
       # A declaration whose universe could not be read: its repository
@@ -69,7 +78,7 @@ module Dev
       Ask = T.type_alias { T::Hash[Symbol, T.untyped] }
 
       # @param repositories [Hash{Symbol => Repository}] integration type → repository
-      # @param schemes [Hash{Symbol => VersionScheme}] integration type → constraint semantics
+      # @param schemes [Hash{Symbol => VersionScheme}] integration type → requirement semantics
       # @param needs [Hash{Symbol => Array<ScopedDeclaration>}] integration
       #   type → the declarations its own manifest exports
       #   (IntegrationNeeds#table); absent means the integration needs no
@@ -115,7 +124,8 @@ module Dev
       # @return [Array<Dependency, Unresolved>] one verdict per package identity
       # @raise [ConflictingDeclarationError] if one package is declared with
       #   disagreeing asks, by the project or by an integration's manifest
-      # @raise [UnknownIntegrationError] if a declaration's integration has no repository or scheme
+      # @raise [UnknownIntegrationError] if a declaration's integration has no repository
+      # @raise [UnsupportedRequirementError] if a declaration's channel cannot evaluate its requirement
       # @raise [NoSatisfyingVersionError] if a declaration cannot be satisfied
       sig { params(declarations: T::Array[ScopedDeclaration]).returns(T::Array[Verdict]) }
       def resolve(declarations)
@@ -154,7 +164,7 @@ module Dev
       # context. Transitive deps inherit the declaring dep's Scope wholesale:
       # a dep only needed in one group/host/env can't need its transitive
       # closure anywhere else. Each Declaration arrives finished from the
-      # Repository (integration stamped, constraint normalized); only the
+      # Repository (integration stamped, requirement normalized); only the
       # context is stamped here, because context is a property of the path,
       # not of the fact.
       #
@@ -254,8 +264,14 @@ module Dev
       end
 
       # Ask the declaration's repository for the package universe and pick the
-      # highest version that satisfies the constraint (per the integration's
+      # highest version that satisfies the requirement (per the integration's
       # scheme) and publishes every explicitly requested platform.
+      #
+      # The requirement is held to the scheme's contract first, before any
+      # I/O: a form the channel does not support is the declaration being
+      # wrong, and says so without a universe. Once the universe is read
+      # the scheme gets a second say (VersionScheme#refusal) for a form it
+      # supports in general but this universe cannot answer.
       #
       # The repository's query is the walk's one I/O, and its failure is the
       # one failure that is not a verdict on the declaration: the universe
@@ -268,7 +284,8 @@ module Dev
       #   platforms; nil entries mean "the integration's default"
       # @return [PackageVersion, Unresolved] the chosen version, or the
       #   declaration with the repository's failure
-      # @raise [UnknownIntegrationError] if repository or scheme is unwired
+      # @raise [UnknownIntegrationError] if the repository is unwired
+      # @raise [UnsupportedRequirementError] if the channel cannot evaluate the requirement
       # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
       sig do
         params(
@@ -280,24 +297,21 @@ module Dev
         repository = @repositories[decl.integration]
         raise UnknownIntegrationError, "no repository registered for #{decl.integration.inspect}" unless repository
 
-        # Scheme-less integrations (url) have no constraint grammar at all:
-        # an empty ask takes the universe as reported, a non-empty one is the
-        # declaration being wrong.
         scheme = @schemes[decl.integration]
-        if scheme.nil? && !decl.constraint.empty?
-          raise UnknownIntegrationError,
-            "#{decl.integration.inspect} has no version scheme — it cannot evaluate " \
-              "constraint #{decl.constraint.inspect}"
-        end
+        reject_unsupported(decl, scheme)
 
         package = begin
           repository.find(package_id(decl))
         rescue StandardError => e
           return Unresolved.new(declaration: decl, error: e)
         end
+        if scheme && (reason = scheme.refusal(name: decl.name, requirement: decl.requirement, versions: package.versions))
+          raise UnsupportedRequirementError, reason
+        end
+
         explicit = platforms.compact
         candidates = package.versions.select do |version|
-          (scheme.nil? || satisfies?(scheme, version, decl.constraint)) &&
+          (scheme.nil? || satisfies?(scheme, version, decl.requirement)) &&
             publishes_platforms?(version, explicit)
         end
         raise NoSatisfyingVersionError, no_satisfying_message(decl, package, explicit, scheme) if candidates.empty?
@@ -306,39 +320,64 @@ module Dev
         # rows); selection is over distinct version strings, first fact wins.
         by_version = T.let({}, T::Hash[String, PackageVersion])
         candidates.each { |version| by_version[version.version] ||= version }
-        by_version.fetch(T.must(sorted_versions(scheme, by_version.keys).last))
+        T.must(sorted_versions(scheme, by_version.values).last)
       end
 
-      # Order distinct version strings ascending: the scheme's total order,
-      # or the universe's reported order when no scheme exists.
+      # Hold the declaration's ask to its channel's contract: a scheme-less
+      # channel (url, egs, image — the address is the whole ask) takes
+      # nothing but the empty ask and no options; a channel with a scheme
+      # takes the forms its scheme supports.
+      #
+      # @param decl [ScopedDeclaration]
+      # @param scheme [VersionScheme, nil] the integration's semantics, if any
+      # @return [void]
+      # @raise [UnsupportedRequirementError]
+      sig { params(decl: ScopedDeclaration, scheme: T.nilable(VersionScheme)).void }
+      def reject_unsupported(decl, scheme)
+        if scheme.nil?
+          return if decl.requirement.any? && decl.options.empty?
+
+          asked = decl.requirement.any? ? decl.options.inspect : "`#{decl.requirement}`"
+          raise UnsupportedRequirementError,
+            "#{decl.name}: #{decl.integration} takes no requirement — its declaration is the whole address, " \
+              "so there is nothing to select with #{asked}"
+        end
+        return if scheme.supports?(decl.requirement)
+
+        raise UnsupportedRequirementError,
+          "#{decl.name}: #{decl.integration} cannot evaluate `#{decl.requirement}` — it takes #{scheme.supported}"
+      end
+
+      # Order distinct versions ascending: the scheme's total order, or the
+      # universe's reported order when no scheme exists.
       #
       # @param scheme [VersionScheme, nil] the integration's semantics, if any
-      # @param versions [Array<String>] distinct version strings
-      # @return [Array<String>]
-      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[String]).returns(T::Array[String]) }
+      # @param versions [Array<PackageVersion>] distinct versions
+      # @return [Array<PackageVersion>]
+      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[PackageVersion]).returns(T::Array[PackageVersion]) }
       def sorted_versions(scheme, versions)
         scheme ? scheme.sort(versions) : versions
       end
 
-      # Constraint satisfaction, treating versions the scheme cannot parse as
-      # non-satisfying: a universe can contain versions that predate or ignore
-      # the ecosystem's conventions, and they simply aren't candidates. A
-      # malformed constraint, by contrast, propagates — that's the user's
-      # declaration being wrong.
+      # Requirement satisfaction, treating versions the scheme cannot parse
+      # as non-satisfying: a universe can contain versions that predate or
+      # ignore the ecosystem's conventions, and they simply aren't
+      # candidates. A requirement the scheme cannot read, by contrast,
+      # propagates — that's the user's declaration being wrong.
       #
-      # @param scheme [VersionScheme] the integration's constraint semantics
+      # @param scheme [VersionScheme] the integration's requirement semantics
       # @param version [PackageVersion] the candidate
-      # @param constraint [Hash] the declaration constraint
+      # @param requirement [Requirement] the declaration's requirement
       # @return [Boolean]
       sig do
         params(
           scheme: VersionScheme,
           version: PackageVersion,
-          constraint: T::Hash[String, T.untyped],
+          requirement: Requirement,
         ).returns(T::Boolean)
       end
-      def satisfies?(scheme, version, constraint)
-        scheme.satisfies?(version, constraint)
+      def satisfies?(scheme, version, requirement)
+        scheme.satisfies?(version, requirement)
       rescue VersionScheme::InvalidVersionError
         false
       end
@@ -464,7 +503,7 @@ module Dev
       end
 
       # Reject sets where one package is declared with disagreeing asks —
-      # constraint, source, revision, or materialization. A dep declared in several
+      # requirement, options, source, revision, or materialization. A dep declared in several
       # groups resolves once, so agreement is the precondition for that single
       # resolution being right for everyone; disagreeing asset globs would
       # otherwise let one row's materialization win silently. Grouping is per
@@ -526,7 +565,13 @@ module Dev
       # @return [Ask]
       sig { params(decl: ScopedDeclaration).returns(Ask) }
       def ask(decl)
-        { constraint: decl.constraint, source: decl.source, revision: decl.revision, materialization: decl.materialization }
+        {
+          requirement: decl.requirement,
+          options: decl.options,
+          source: decl.source,
+          revision: decl.revision,
+          materialization: decl.materialization,
+        }
       end
 
       # Stamp the declaration's install-scoping axes (host, env) onto the
@@ -567,7 +612,7 @@ module Dev
       end
 
       # A NoSatisfyingVersionError message that says why: what was asked,
-      # what the universe held. When the constraint alone rules out every
+      # what the universe held. When the requirement alone rules out every
       # version (not the platform filter), the scheme gets first say
       # (VersionScheme#unsatisfied) — a fact-matching ecosystem can name
       # the fact that moved where a count cannot.
@@ -586,12 +631,12 @@ module Dev
         ).returns(String)
       end
       def no_satisfying_message(decl, package, explicit, scheme)
-        if scheme && package.versions.none? { |version| satisfies?(scheme, version, decl.constraint) }
-          explained = scheme.unsatisfied(name: decl.name, constraint: decl.constraint, versions: package.versions)
+        if scheme && package.versions.none? { |version| satisfies?(scheme, version, decl.requirement) }
+          explained = scheme.unsatisfied(name: decl.name, requirement: decl.requirement, versions: package.versions)
           return explained if explained
         end
 
-        wanted = decl.constraint.empty? ? "any version" : decl.constraint.inspect
+        wanted = decl.requirement.any? ? "any version" : "`#{decl.requirement}`"
         wanted += " on #{explicit.join(", ")}" unless explicit.empty?
         "no version of #{decl.name} satisfies #{wanted} " \
           "(universe: #{package.versions.size} version(s))"

@@ -14,9 +14,13 @@ require "dev/deps/declaration"
 require "dev/deps/declarations"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
-require "dev/deps/exact_scheme"
+require "dev/deps/requirement"
+require "dev/deps/version_scheme"
+require "dev/deps/brew_scheme"
+require "dev/deps/gem_scheme"
 require "dev/deps/semver_scheme"
 require "dev/deps/steam_scheme"
+require "dev/deps/tag_scheme"
 
 # Stub repository over a canned universe: name -> [PackageVersion, ...].
 # Records every find call (id) and at call (id + revision) for assertion.
@@ -46,8 +50,25 @@ class StubRepository < Dev::Deps::Repository
   end
 end
 
+# A scheme for universes whose version strings carry no order (SHAs,
+# labels): Any and an exact match satisfy, nothing else; the universe's
+# reported order stands.
+class PassthroughScheme < Dev::Deps::VersionScheme
+  def satisfies?(version, requirement)
+    return true if requirement.any?
+
+    requirement.is_a?(Dev::Deps::Requirement::Exact) && requirement.version == version.version
+  end
+
+  def sort(versions)
+    versions.dup
+  end
+end
+
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ResolverTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
+
   # Shorthand: a PackageVersion universe entry. dependencies: takes the
   # Declaration list of a Resolved claim; pass declarations: for ToolOwned.
   def version(v, digest: nil, source: nil, platforms: [], dependencies: [], metadata: {},
@@ -60,26 +81,29 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   # Shorthand: a transitive declaration as a Repository would report it —
-  # integration stamped, constraint already normalized to dev's shape.
-  def edge(name, constraint, integration: :ficsit)
+  # integration stamped, requirement already in dev's language.
+  def edge(name, requirement, integration: :ficsit)
     Dev::Deps::Declaration.new(
       name: name,
       integration: integration,
-      constraint: constraint ? { "version" => constraint } : {},
+      requirement: Requirement.parse(requirement),
     )
   end
 
-  # Shorthand: assemble the Declaration + Scope composition from flat kwargs.
-  def declaration(name:, integration:, constraint: {}, source: nil, revision: nil, group: :app,
+  # Shorthand: assemble the Declaration + Scope composition from flat kwargs;
+  # the requirement is an expression in dev's language.
+  def declaration(name:, integration:, requirement: nil, options: {}, source: nil, revision: nil, group: :app,
                   platform: nil, host: nil, env: nil, post_install: nil, materialization: {})
     Dev::Deps::ScopedDeclaration.new(
-      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:, source:, revision:),
+      declaration: Dev::Deps::Declaration.new(
+        name:, integration:, requirement: Requirement.parse(requirement), options:, source:, revision:,
+      ),
       scope: Dev::Deps::Scope.new(group:, host:, env:),
       platform:, post_install:, materialization:,
     )
   end
 
-  def resolver_for(integration, repo, scheme: Dev::Deps::ExactScheme.new(key: "version"))
+  def resolver_for(integration, repo, scheme: PassthroughScheme.new)
     Dev::Deps::Resolver.new(repositories: { integration => repo }, schemes: { integration => scheme })
   end
 
@@ -114,7 +138,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
       "SML" => [version("3.12.0"), version("3.13.1"), version("4.0.0")],
     })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.12.0" }),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.12"),
     ]
 
     When "resolving with SemverScheme"
@@ -130,7 +154,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
       "SML" => [version("not-a-version"), version("3.12.0")],
     })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.0.0" }),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
     ]
 
     When "resolving with SemverScheme"
@@ -141,10 +165,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   test "raises NoSatisfyingVersionError when nothing in the universe qualifies" do
-    Given "a universe entirely below the constraint"
+    Given "a universe entirely below the requirement"
     repo = StubRepository.new(universes: { "SML" => [version("2.0.0")] })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.0.0" }),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
     ]
 
     When "resolving"
@@ -158,8 +182,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Given "a Steam universe whose public tip has moved past the pinned buildid"
     repo = StubRepository.new(universes: { "SatisfactoryServer" => [version("26000000", metadata: { "branch" => "public" })] })
     declarations = [
-      declaration(name: "SatisfactoryServer", integration: :steam, group: :integration, source: "1690800",
-        constraint: { "buildid" => 25782485, "branch" => "public" }),
+      declaration(name: "SatisfactoryServer", integration: :steam, group: :integration, source: "1690800/public",
+        requirement: "= 25782485"),
     ]
 
     When "resolving"
@@ -171,12 +195,12 @@ class Dev::Deps::ResolverTest < Minitest::Test
     !error.message.include?("universe: 1 version(s)")
   end
 
-  test "raises ConflictingDeclarationError when one name carries two constraints" do
-    Given "the same dep declared with disagreeing constraints"
+  test "raises ConflictingDeclarationError when one name carries two requirements" do
+    Given "the same dep declared with disagreeing requirements"
     repo = StubRepository.new(universes: { "SML" => [version("3.12.0")] })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, constraint: { "version" => "^3.0.0" }),
-      declaration(name: "SML", integration: :ficsit, group: :test, constraint: { "version" => "^2.0.0" }),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
+      declaration(name: "SML", integration: :ficsit, group: :test, requirement: "~> 2.0"),
     ]
 
     When "resolving"
@@ -192,10 +216,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: { "ffi" => [version("3.4.0")] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { bundler: bundler_repo, brew: brew_repo },
-      schemes: {
-        bundler: Dev::Deps::ExactScheme.new(key: "version"),
-        brew: Dev::Deps::ExactScheme.new(key: "version"),
-      },
+      schemes: { bundler: PassthroughScheme.new, brew: PassthroughScheme.new },
     )
     declarations = [
       declaration(name: "ffi", integration: :bundler, group: :app),
@@ -210,7 +231,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result.map { |d| [d.integration, d.version] }.sort == [[:brew, "3.4.0"], [:bundler, "1.17.0"]].sort
   end
 
-  test "same name under two integrations with different constraints is not a conflict" do
+  test "same name under two integrations with different requirements is not a conflict" do
     Given "each integration constrains its own ffi differently"
     bundler_repo = StubRepository.new(universes: { "ffi" => [version("1.17.0")] })
     brew_repo = StubRepository.new(universes: { "ffi" => [version("3.4.0")] })
@@ -219,14 +240,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
       schemes: { bundler: Dev::Deps::SemverScheme.new, brew: Dev::Deps::SemverScheme.new },
     )
     declarations = [
-      declaration(name: "ffi", integration: :bundler, group: :app, constraint: { "version" => "^1.0.0" }),
-      declaration(name: "ffi", integration: :brew, group: :app, constraint: { "version" => "^3.0.0" }),
+      declaration(name: "ffi", integration: :bundler, group: :app, requirement: "~> 1.0"),
+      declaration(name: "ffi", integration: :brew, group: :app, requirement: "~> 3.0"),
     ]
 
     When "resolving"
     result = resolver.resolve(declarations)
 
-    Then "no ConflictingDeclarationError — constraints are scoped per integration"
+    Then "no ConflictingDeclarationError — requirements are scoped per integration"
     result.size == 2
   end
 
@@ -239,7 +260,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: { "zlib" => [version("1.2.0")] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { ficsit: ficsit_repo, brew: brew_repo },
-      schemes: { ficsit: Dev::Deps::SemverScheme.new, brew: Dev::Deps::ExactScheme.new(key: "version") },
+      schemes: { ficsit: Dev::Deps::SemverScheme.new, brew: PassthroughScheme.new },
     )
     declarations = [
       declaration(name: "zlib", integration: :brew, group: :app),
@@ -269,16 +290,16 @@ class Dev::Deps::ResolverTest < Minitest::Test
     raises Dev::Deps::Resolver::UnknownIntegrationError
   end
 
-  test "find receives identity only — the source on the id, never the constraint" do
+  test "find receives identity only — the source on the id, never the requirement" do
     Given "a pinned-identity declaration (gh-style)"
     repo = StubRepository.new(universes: { "engine" => [version("5.8.0")] })
     declarations = [
       declaration(name: "engine", integration: :gh, group: :editor,
-        constraint: { "tag" => "5.8.0" }, source: "d3mlabs/unreal-engine"),
+        requirement: "= 5.8.0", source: "d3mlabs/unreal-engine"),
     ]
 
-    When "resolving with the gh exact scheme"
-    resolver_for(:gh, repo, scheme: Dev::Deps::ExactScheme.new(key: "tag")).resolve(declarations)
+    When "resolving with the gh tag scheme"
+    resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(declarations)
 
     Then "the declaration's source rides the id; the tag stays scheme-side"
     repo.finds == [{ id: Dev::Deps::PackageId.new(integration: :gh, name: "engine", source: "d3mlabs/unreal-engine") }]
@@ -308,7 +329,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "walks transitive edges, inheriting group, host, and env" do
     Given "a scoped parent whose chosen version has an edge"
     repo = StubRepository.new(universes: {
-      "parent" => [version("1.0.0", dependencies: [edge("child", "^2.0.0")])],
+      "parent" => [version("1.0.0", dependencies: [edge("child", "~> 2.0")])],
       "child" => [version("2.0.0"), version("3.0.0")],
     })
     declarations = [
@@ -318,7 +339,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     When "resolving"
     result = resolver_for(:ficsit, repo, scheme: Dev::Deps::SemverScheme.new).resolve(declarations)
 
-    Then "the child resolved under the edge constraint with the parent's scoping"
+    Then "the child resolved under the edge requirement with the parent's scoping"
     child = result.find { |d| d.name == "child" }
     child.version == "2.0.0"
     child.group == :test
@@ -448,12 +469,12 @@ class Dev::Deps::ResolverTest < Minitest::Test
     repo = StubRepository.new(universes: { "engine" => [version("5.8.0", metadata: { "commit" => "abc" })] })
     declarations = [
       declaration(name: "engine", integration: :gh, group: :editor,
-        constraint: { "tag" => "5.8.0" },
+        requirement: "= 5.8.0",
         materialization: { "asset_pattern" => "*.tar.zst.*", "build" => "make install" }),
     ]
 
     When "resolving"
-    result = resolver_for(:gh, repo, scheme: Dev::Deps::ExactScheme.new(key: "tag")).resolve(declarations)
+    result = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(declarations)
 
     Then "version facts and install instructions meet in the pin, nothing lost"
     result[0].metadata["commit"] == "abc"
@@ -496,19 +517,125 @@ class Dev::Deps::ResolverTest < Minitest::Test
     result[0].version.nil?
   end
 
-  test "a constraint against a scheme-less integration fails loudly" do
-    Given "a url dep declared with a version constraint no grammar can evaluate"
+  test "a requirement against a scheme-less integration is refused before the universe is read" do
+    Given "a url dep declared with a requirement no channel can evaluate"
     repo = StubRepository.new(universes: { "boost" => [version("")] })
     resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
     declarations = [
-      declaration(name: "boost", integration: :url, group: :app, constraint: { "version" => "1.90" }),
+      declaration(name: "boost", integration: :url, group: :app, requirement: "~> 1.90"),
     ]
 
     When "resolving"
     resolver.resolve(declarations)
 
-    Then "no scheme means no constraint grammar — the declaration is wrong"
-    raises Dev::Deps::Resolver::UnknownIntegrationError
+    Then "the address is the whole ask — the declaration is wrong, and the repository was never asked"
+    error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
+    error.message.include?("boost: url takes no requirement")
+    error.message.include?("~> 1.90")
+    repo.finds.empty?
+  end
+
+  test "options against a scheme-less integration are refused the same way" do
+    Given
+    repo = StubRepository.new(universes: { "boost" => [version("")] })
+    resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
+    declarations = [
+      declaration(name: "boost", integration: :url, group: :app, options: { "flavour" => "static" }),
+    ]
+
+    When
+    resolver.resolve(declarations)
+
+    Then
+    error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
+    error.message.include?("flavour")
+  end
+
+  test "a form the channel's scheme does not support is refused with the channel's reason" do
+    Given "a steam dep asking a range"
+    repo = StubRepository.new(universes: { "SatisfactoryServer" => [version("26000000", metadata: { "branch" => "public" })] })
+    declarations = [
+      declaration(name: "SatisfactoryServer", integration: :steam, group: :app, source: "1690800/public",
+        requirement: ">= 26000000"),
+    ]
+
+    When "resolving"
+    resolver_for(:steam, repo, scheme: Dev::Deps::SteamScheme.new).resolve(declarations)
+
+    Then "the refusal names the declaration, the ask and what the channel takes; no universe was read"
+    error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
+    error.message.include?("SatisfactoryServer: steam cannot evaluate `>= 26000000`")
+    error.message.include?("exact buildid")
+    repo.finds.empty?
+  end
+
+  test "a range over a one-version brew family is refused naming the version there is" do
+    Given "a formula brew has one version of"
+    repo = StubRepository.new(universes: { "cmake" => [version("3.31.4")] })
+    declarations = [declaration(name: "cmake", integration: :brew, group: :app, requirement: "~> 3.31.0")]
+
+    When "resolving"
+    resolver_for(:brew, repo, scheme: Dev::Deps::BrewScheme.new).resolve(declarations)
+
+    Then
+    error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
+    error.message.include?("cmake: brew has one version of it, 3.31.4")
+  end
+
+  test "a range over a brew family picks the greatest satisfying real version" do
+    Given "the llvm family as brew reports it"
+    repo = StubRepository.new(universes: { "llvm" => [
+      version("21.1.0"),
+      version("19.1.7", metadata: { "version_suffix" => "19" }),
+      version("18.1.8", metadata: { "version_suffix" => "18" }),
+    ] })
+    declarations = [
+      declaration(name: "llvm", integration: :brew, group: :app, requirement: "~> 18.0"),
+    ]
+
+    When "resolving"
+    result = resolver_for(:brew, repo, scheme: Dev::Deps::BrewScheme.new).resolve(declarations)
+
+    Then "the @18 member, by its real version"
+    result[0].version == "18.1.8"
+    result[0].metadata["version_suffix"] == "18"
+  end
+
+  test "existing manifest shapes resolve to the same pins under the one language" do
+    Given "the asks today's manifests make: a bare brew formula, a brew family member, an exact ruby, a gh tag, a gem range"
+    brew_repo = StubRepository.new(universes: {
+      "cmake" => [version("3.31.4")],
+      "python" => [version("3.13.1"), version("3.12.8", metadata: { "version_suffix" => "3.12" })],
+    })
+    ruby_repo = StubRepository.new(universes: { "ruby" => [version("4.0.5"), version("4.0.6")] })
+    gh_repo = StubRepository.new(universes: { "UnrealEngine" => [version("5.6.0-css-80"), version("5.6.1-css-83")] })
+    gem_repo = StubRepository.new(universes: { "rake" => [version("12.3.3"), version("13.3.1")] })
+    resolver = Dev::Deps::Resolver.new(
+      repositories: { brew: brew_repo, python: brew_repo, ruby: ruby_repo, gh: gh_repo, bundler: gem_repo },
+      schemes: {
+        brew: Dev::Deps::BrewScheme.new, python: Dev::Deps::BrewScheme.new, ruby: Dev::Deps::GemScheme.new,
+        gh: Dev::Deps::TagScheme.new, bundler: Dev::Deps::GemScheme.new,
+      },
+    )
+    declarations = [
+      declaration(name: "cmake", integration: :brew),
+      declaration(name: "python", integration: :python, requirement: "~> 3.12.0"),
+      declaration(name: "ruby", integration: :ruby, requirement: "= 4.0.6", source: "d3mlabs/d3mlabs"),
+      declaration(name: "UnrealEngine", integration: :gh, requirement: "= 5.6.1-css-83", source: "satisfactorymodding/UnrealEngine"),
+      declaration(name: "rake", integration: :bundler, requirement: "~> 13.0"),
+    ]
+
+    When "resolving"
+    result = resolver.resolve(declarations)
+
+    Then
+    result.map { |d| [d.name, d.version] }.sort == [
+      ["UnrealEngine", "5.6.1-css-83"],
+      ["cmake", "3.31.4"],
+      ["python", "3.12.8"],
+      ["rake", "13.3.1"],
+      ["ruby", "4.0.6"],
+    ]
   end
 
   test "a revision ask dispatches to at — no universe query, no scheme" do
@@ -589,7 +716,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     })
     declarations = [
       declaration(name: "SML", integration: :ficsit, group: :app, platform: "LinuxServer",
-        constraint: { "version" => "^3.0.0" }),
+        requirement: "~> 3.0"),
     ]
 
     When "resolving"
@@ -721,7 +848,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: { "xcodes" => [version("1.6.2")] })
     resolver = Dev::Deps::Resolver.new(
       repositories: { xcode: xcode_repo, brew: brew_repo },
-      schemes: { xcode: Dev::Deps::ExactScheme.new(key: "version"), brew: Dev::Deps::ExactScheme.new(key: "version") },
+      schemes: { xcode: PassthroughScheme.new, brew: PassthroughScheme.new },
       needs: { xcode: [declaration(name: "xcodes", integration: :brew)] },
     )
     declarations = [
@@ -746,7 +873,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo.define_singleton_method(:find) { |_id| raise Dev::Deps::BrewRepository::BrewInfoError, "brew info failed" }
     resolver = Dev::Deps::Resolver.new(
       repositories: { xcode: xcode_repo, brew: brew_repo },
-      schemes: { xcode: Dev::Deps::ExactScheme.new(key: "version"), brew: Dev::Deps::ExactScheme.new(key: "version") },
+      schemes: { xcode: PassthroughScheme.new, brew: PassthroughScheme.new },
       needs: { xcode: [declaration(name: "xcodes", integration: :brew)] },
     )
 
@@ -782,7 +909,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     brew_repo = StubRepository.new(universes: brew_universe)
     Dev::Deps::Resolver.new(
       repositories: { xcode: xcode_repo, brew: brew_repo },
-      schemes: { xcode: Dev::Deps::ExactScheme.new(key: "version"), brew: Dev::Deps::ExactScheme.new(key: "version") },
+      schemes: { xcode: PassthroughScheme.new, brew: PassthroughScheme.new },
       needs: needs,
     )
   end
@@ -846,10 +973,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
   test "a project declaration disagreeing with an integration's need is a ConflictingDeclarationError" do
     Given "the project pins xcodes to one version and xcode's manifest asks another"
-    needs = { xcode: [declaration(name: "xcodes", integration: :brew, constraint: { "version" => "1.6.2" })] }
+    needs = { xcode: [declaration(name: "xcodes", integration: :brew, requirement: "= 1.6.2")] }
     declarations = [
       declaration(name: "Xcode", integration: :xcode),
-      declaration(name: "xcodes", integration: :brew, constraint: { "version" => "1.0.0" }),
+      declaration(name: "xcodes", integration: :brew, requirement: "= 1.0.0"),
     ]
 
     When "resolving"

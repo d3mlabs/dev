@@ -1,70 +1,60 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "version_scheme"
+require_relative "range_scheme"
+require_relative "requirement"
 
 module Dev
   module Deps
-    # RubyGems constraint semantics (:bundler): Gem::Requirement syntax
-    # ("~> 1.17", ">= 1.0, < 2.0", exact pins) and Gem::Version ordering.
+    # RubyGems requirement semantics (:bundler, :ruby): the channel dev's
+    # language is borrowed from, so the requirement translates to a
+    # Gem::Requirement term for term (`render`) and Gem::Version orders.
     #
-    # A thin wrapper over rubygems' own classes — the authority on its own
-    # version grammar. Comma-separated requirements are conjunctive, matching
-    # Gemfile semantics.
-    class GemScheme < VersionScheme
+    # bundler is a tool-solved channel: the Locker hands `render`'s output
+    # to the Gemfile and bundler picks; `satisfies?` then confirms the
+    # lock's singleton choice. `ruby` is dev-picked: the d3mlabs tap's
+    # `ruby@X.Y.Z` family is ranged over with these same rules.
+    class GemScheme < RangeScheme
       extend T::Sig
 
-      # The requirement string is not valid Gem::Requirement syntax.
-      class InvalidConstraintError < VersionScheme::InvalidConstraintError; end
+      # A requirement version rubygems cannot read.
+      class InvalidRequirementError < VersionScheme::InvalidRequirementError; end
       # The version string is not a valid Gem::Version.
       class InvalidVersionError < VersionScheme::InvalidVersionError; end
 
-      # The constraint key carrying the version requirement (the gem DSL's
-      # positional requirement lands under "version").
-      CONSTRAINT_KEY = "version"
-
       # @param version [PackageVersion] a candidate; only its version string matters
-      # @param constraint [Hash] declaration constraint; only "version" is a
-      #   version requirement (other keys — require:, git: — are gem options)
-      # @return [Boolean]
-      # @raise [InvalidConstraintError] if the requirement does not parse
+      # @param requirement [Requirement]
+      # @return [Boolean] rubygems' own verdict
+      # @raise [InvalidRequirementError] if a requirement version does not parse
       # @raise [InvalidVersionError] if the version does not parse
-      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
-      def satisfies?(version, constraint)
-        expression = constraint[CONSTRAINT_KEY].to_s.strip
-        return true if expression.empty?
-
-        requirement(expression).satisfied_by?(gem_version(version.version))
+      sig { override.params(version: PackageVersion, requirement: Requirement).returns(T::Boolean) }
+      def satisfies?(version, requirement)
+        render(requirement).satisfied_by?(comparison_key(version.version))
       end
 
-      # @param versions [Array<String>] gem version strings
-      # @return [Array<String>] ascending by Gem::Version ordering
-      # @raise [InvalidVersionError] if any version does not parse
-      sig { override.params(versions: T::Array[String]).returns(T::Array[String]) }
-      def sort(versions)
-        versions.sort_by { |version| gem_version(version) }
-      end
-
-      private
-
-      # @param expression [String] comma-separated requirement terms
+      # The requirement in the tool's own type — identity, term for term;
+      # the empty ask is rubygems' default (`>= 0`).
+      #
+      # @param requirement [Requirement]
       # @return [Gem::Requirement]
-      # @raise [InvalidConstraintError] if any term does not parse
-      sig { params(expression: String).returns(Gem::Requirement) }
-      def requirement(expression)
-        Gem::Requirement.new(expression.split(",").map(&:strip))
+      # @raise [InvalidRequirementError] if a requirement version does not parse
+      sig { params(requirement: Requirement).returns(Gem::Requirement) }
+      def render(requirement)
+        Gem::Requirement.new(requirement.terms.map(&:to_s))
       rescue Gem::Requirement::BadRequirementError
-        raise InvalidConstraintError, "not a rubygems requirement: #{expression.inspect}"
+        raise InvalidRequirementError, "not a rubygems requirement: #{requirement.to_s.inspect}"
       end
 
-      # @param version [String]
+      protected
+
+      # @param coordinate [String]
       # @return [Gem::Version]
       # @raise [InvalidVersionError] if the version does not parse
-      sig { params(version: String).returns(Gem::Version) }
-      def gem_version(version)
-        Gem::Version.new(version)
+      sig { override.params(coordinate: String).returns(Gem::Version) }
+      def comparison_key(coordinate)
+        Gem::Version.new(coordinate)
       rescue ArgumentError
-        raise InvalidVersionError, "not a rubygems version: #{version.inspect}"
+        raise InvalidVersionError, "not a rubygems version: #{coordinate.inspect}"
       end
     end
   end

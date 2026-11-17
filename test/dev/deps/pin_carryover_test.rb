@@ -6,15 +6,16 @@ require "dev/deps/brew_repository"
 require "dev/deps/brew_scheme"
 require "dev/deps/declaration"
 require "dev/deps/dependency"
-require "dev/deps/exact_scheme"
 require "dev/deps/gem_scheme"
 require "dev/deps/oci_repository"
 require "dev/deps/pep440_scheme"
 require "dev/deps/pin_carryover"
+require "dev/deps/requirement"
 require "dev/deps/resolver"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/steam_scheme"
+require "dev/deps/tag_scheme"
 require "dev/deps/unlock_set"
 
 transform!(RSpock::AST::Transformation)
@@ -42,9 +43,11 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     Dev::Deps::Dependency.new(name:, integration: :pip, group:, version:, hash: "SHA256=#{name}-#{version}", source:, metadata: {})
   end
 
-  def declared(name, integration: :brew, constraint: {}, tap: nil, group: :build, host: nil, revision: nil)
+  def declared(name, integration: :brew, requirement: nil, tap: nil, group: :build, host: nil, revision: nil)
     Dev::Deps::ScopedDeclaration.new(
-      declaration: Dev::Deps::Declaration.new(name:, integration:, constraint:, source: tap, revision:),
+      declaration: Dev::Deps::Declaration.new(
+        name:, integration:, requirement: Dev::Deps::Requirement.parse(requirement), source: tap, revision:,
+      ),
       scope: Dev::Deps::Scope.new(group:, host:),
     )
   end
@@ -53,7 +56,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     Dev::Deps::PinCarryover.new(
       schemes: {
         brew: Dev::Deps::BrewScheme.new, ruby: Dev::Deps::GemScheme.new, python: Dev::Deps::BrewScheme.new,
-        pip: Dev::Deps::Pep440Scheme.new, gh: Dev::Deps::ExactScheme.new(key: "tag"), steam: Dev::Deps::SteamScheme.new,
+        pip: Dev::Deps::Pep440Scheme.new, gh: Dev::Deps::TagScheme.new, steam: Dev::Deps::SteamScheme.new,
       },
     )
   end
@@ -80,8 +83,8 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "a bare update moves every pin to the resolution's, across channels, and keeps nothing" do
     Given "a lock with a brew formula, an open-range pip package and a gh release, all newer today"
-    declarations = [declared("cmake"), declared("kimimaro", integration: :pip, constraint: { "version" => ">=5" }, group: :app),
-                    declared("gh", integration: :gh, constraint: { "tag" => "v2.81.0" }, tap: "cli/cli")]
+    declarations = [declared("cmake"), declared("kimimaro", integration: :pip, requirement: ">= 5", group: :app),
+                    declared("gh", integration: :gh, requirement: "= 2.81.0", tap: "cli/cli")]
     previous = [formula("cmake", version: "4.4.4", commit: OLD), pip("kimimaro", "5.8.5"),
                 Dev::Deps::Dependency.new(name: "gh", integration: :gh, group: :build, version: "v2.80.0", hash: nil, source: "a" * 40, metadata: { "repo" => "cli/cli" })]
     resolved = [formula("cmake", version: "4.4.5", commit: NEW), pip("kimimaro", "5.9.0"),
@@ -98,7 +101,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "a bare update carries a brew pin's provenance only when nothing about the pin changed (ADR-0005, per pin)" do
     Given "two core formulae, one moved upstream, one not"
-    declarations = [declared("cmake"), declared("python", integration: :python, constraint: { "version" => "3.12" })]
+    declarations = [declared("cmake"), declared("python", integration: :python, requirement: "~> 3.12.0")]
     previous = [formula("cmake", version: "4.4.4", commit: OLD), formula("python", integration: :python, version: "3.12.15", suffix: "3.12", commit: OLD)]
     resolved = [formula("cmake", version: "4.4.4", commit: NEW), formula("python", integration: :python, version: "3.12.16", suffix: "3.12", commit: NEW)]
 
@@ -147,8 +150,8 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> moves the named pin and keeps every unchanged pin the lock records a source for, whatever its channel" do
     Given "a brew formula named, a pip package and a brew interpreter beside it, all newer today"
-    declarations = [declared("cmake"), declared("kimimaro", integration: :pip, constraint: { "version" => ">=5" }, group: :app),
-                    declared("python", integration: :python, constraint: { "version" => "3.12" })]
+    declarations = [declared("cmake"), declared("kimimaro", integration: :pip, requirement: ">= 5", group: :app),
+                    declared("python", integration: :python, requirement: "~> 3.12.0")]
     kimimaro = pip("kimimaro", "5.8.5")
     previous = [formula("cmake", version: "4.4.4", commit: OLD), kimimaro, formula("python", integration: :python, version: "3.12.15", suffix: "3.12", commit: OLD)]
     resolved = [formula("cmake", version: "4.4.5", commit: NEW), pip("kimimaro", "5.9.0"), formula("python", integration: :python, version: "3.12.16", suffix: "3.12", commit: NEW)]
@@ -165,9 +168,9 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     moves(outcome) == [["cmake", "4.4.4", "4.4.5", "named"]]
   end
 
-  test "update <name> re-resolves a pip pin whose constraint changed" do
+  test "update <name> re-resolves a pip pin whose requirement changed" do
     Given "nibabel '>=5.5' with the lock at 5.4.2, and cmake named"
-    declarations = [declared("cmake"), declared("nibabel", integration: :pip, constraint: { "version" => ">=5.5" }, group: :app)]
+    declarations = [declared("cmake"), declared("nibabel", integration: :pip, requirement: ">= 5.5", group: :app)]
     previous = [formula("cmake", version: "4.4.4", commit: OLD), pip("nibabel", "5.4.2")]
     resolved = [formula("cmake", version: "4.4.4", commit: OLD), pip("nibabel", "5.5.0")]
 
@@ -182,7 +185,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> re-resolves an unchanged pin the lock records no source for, and says so" do
     Given "a lock written before pins carried a source: a pip pin without one, beside a named formula"
-    declarations = [declared("cmake"), declared("trimesh", integration: :pip, constraint: { "version" => ">=5" }, group: :app)]
+    declarations = [declared("cmake"), declared("trimesh", integration: :pip, requirement: ">= 5", group: :app)]
     previous = [formula("cmake", version: "4.4.4", commit: OLD), pip("trimesh", "5.2.0", sourced: false)]
     resolved = [formula("cmake", version: "4.4.5", commit: NEW), pip("trimesh", "5.2.1")]
 
@@ -198,7 +201,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> keeps a brew pin a lock written before sources recorded a tap commit for, and re-resolves the rest once" do
     Given "the lock as Lockfile lifts it: the formula's source is its tap commit; the gh pin has none"
-    declarations = [declared("jq"), declared("cmake"), declared("gh", integration: :gh, constraint: { "tag" => "v2.81.0" }, tap: "cli/cli")]
+    declarations = [declared("jq"), declared("cmake"), declared("gh", integration: :gh, requirement: "= 2.81.0", tap: "cli/cli")]
     gh_before = Dev::Deps::Dependency.new(name: "gh", integration: :gh, group: :build, version: "v2.81.0", hash: nil, metadata: { "repo" => "cli/cli" })
     gh_today = Dev::Deps::Dependency.new(name: "gh", integration: :gh, group: :build, version: "v2.81.0", hash: nil, source: "b" * 40, metadata: { "repo" => "cli/cli" })
     previous = [formula("jq", version: "1.7", commit: OLD), formula("cmake", version: "4.4.4", commit: OLD), gh_before]
@@ -216,7 +219,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> keeps a ranged interpreter at the lock's patch while the range still admits it" do
     Given "ruby '~> 4.0' locked at 4.0.5, a tap that now carries 4.0.6, and another declaration named"
-    declarations = [declared("ruby", integration: :ruby, constraint: { "version" => "~> 4.0" }, tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
+    declarations = [declared("ruby", integration: :ruby, requirement: "~> 4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
     previous = [formula("ruby", integration: :ruby, version: "4.0.5", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
     resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
 
@@ -244,7 +247,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
     Where
     description               | declaration | pin_change
-    "constraint moved to 19"  | { constraint: { "version" => "19" } } | {}
+    "requirement moved to 19" | { requirement: "~> 19.0" }           | {}
     "tap changed"             | { tap: "d3mlabs/d3mlabs" }           | { tap: "d3mlabs/d3mlabs" }
     "group changed"           | { group: :app }                      | { group: :app }
     "gained a host gate"      | { host: :darwin }                    | { metadata: { "host" => "darwin" } }
@@ -252,7 +255,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> re-resolves an exact interpreter pin the lock no longer satisfies" do
     Given "ruby '4.0.6' with the lock at 4.0.5"
-    declarations = [declared("ruby", integration: :ruby, constraint: { "version" => "4.0.6" }, tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
+    declarations = [declared("ruby", integration: :ruby, requirement: "= 4.0.6", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
     previous = [formula("ruby", integration: :ruby, version: "4.0.5", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
     resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
 
@@ -266,7 +269,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "update <name> re-resolves an interpreter pin whose locked version its scheme cannot read" do
     Given "ruby '~> 4.0' locked at a brew revision (4.0.5_1), which is not a rubygems version"
-    declarations = [declared("ruby", integration: :ruby, constraint: { "version" => "~> 4.0" }, tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
+    declarations = [declared("ruby", integration: :ruby, requirement: "~> 4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
     previous = [formula("ruby", integration: :ruby, version: "4.0.5_1", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
     resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
 
@@ -401,7 +404,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   test "a subset re-lock keeps the lock's pin for a declaration whose registry did not answer, and says so" do
     Given "dev#373: an image floor the host has no token for, beside the pip declaration being re-locked"
     floor = declared("cellbound-3d-linux", integration: :image, tap: "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3", group: :app)
-    declarations = [floor, declared("clang-format", integration: :pip, constraint: { "version" => "18.1.8" }, group: :app)]
+    declarations = [floor, declared("clang-format", integration: :pip, requirement: "= 18.1.8", group: :app)]
     floor_before = Dev::Deps::Dependency.new(name: "cellbound-3d-linux", integration: :image, group: :app, version: "ue5.8-3",
       hash: "SHA256=#{"a" * 64}", metadata: { "from" => "ghcr.io/d3mlabs/unreal-engine-build-base" })
     previous = [floor_before, pip("clang-format", "17.0.6")]

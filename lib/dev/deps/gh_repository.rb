@@ -67,10 +67,9 @@ module Dev
 
       # Report a GitHub dependency's universe: every tag and release.
       #
-      # Universe order feeds the unconstrained pick (ExactScheme preserves
-      # order and the Resolver takes the last sorted version): tag-only
-      # versions first, then releases oldest to newest, so an unconstrained
-      # gh dep pins the latest release rather than an arbitrary tag.
+      # Tag-only versions first, then releases oldest to newest; the
+      # Resolver takes the greatest satisfying tag under TagScheme's
+      # ordering, so a ranged gh dep pins the newest version tag.
       #
       # @param id [PackageId] source is the "owner/repo" slug
       # @return [Package] one version per tag/release, facts complete

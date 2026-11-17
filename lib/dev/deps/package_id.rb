@@ -5,7 +5,7 @@ require_relative "../value_equality"
 
 module Dev
   module Deps
-    # Identity of a package within its integration's universe: constraint-free
+    # Identity of a package within its integration's universe: requirement-free
     # and version-free.
     #
     # This is the "which package are we talking about" half of the domain,

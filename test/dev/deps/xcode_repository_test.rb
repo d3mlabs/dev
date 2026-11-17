@@ -21,7 +21,7 @@ class Dev::Deps::XcodeRepositoryTest < Minitest::Test
   end
 
   test "find refuses — there is no enumerable Xcode universe" do
-    Given "a constraint-shaped ask"
+    Given "a requirement-shaped ask"
     repo = Dev::Deps::XcodeRepository.new
 
     When "finding"

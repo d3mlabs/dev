@@ -14,8 +14,9 @@ two roles.
 | --- | --- | --- |
 | Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-addressed deps (a git URL, an `owner/repo` slug, a tap, a Steam app id). Value object, works as a Hash key. Version is deliberately not identity: two versions of one package are related candidates in one universe, never two packages — keeping selection (semver, ranges) possible over them. If a legitimate same-package-twice case ever appears, the fix is per-context resolution in the solver, not versioned identity. |
 | Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (the published bytes per platform — fetched by dev, or by the tool with dev recording them), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts). Facts are unconditional: nothing in a universe depends on who asked. |
-| Declaration | `Declaration` | The shared atom: name + integration + constraint + optional `source` coordinate + optional `revision` address, always in dev's shape (`{}` = unconstrained). A constraint is a predicate over the published universe; a revision is a direct address into an ecosystem's continuous space (a git commit SHA, an exact Xcode version) that forgoes resolution entirely — declaring both is a loud error. Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
-| Requirement | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
+| Declaration | `Declaration` | The shared atom: name + integration + `requirement` + `options` + optional `source` coordinate + optional `revision` address. The requirement is a `Requirement` — what is asked of the package's versions, in dev's one language (`Any` when nothing is asked); the options are the integration's own vocabulary beside it (a gem's `require:`, a pip `host:`). A revision is a direct address into an ecosystem's continuous space (a git commit SHA, an exact Xcode version) that forgoes resolution entirely — declaring one beside a requirement or options is a loud error. Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
+| Requirement | `Requirement` | The one language every declaration speaks: `Any`, `Exact(v)`, `Pessimistic(v)` or `Bounds([op, v]…)`, parsed from rubygems' requirement syntax (`"4.0.1"`, `"~> 18.0"`, `">= 2, < 3"`). `~> v` means `>= v, < bump(v)` with rubygems' bump, once, for every channel. The version inside is kept as written; what it means is the channel's. |
+| Scoped declaration | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
 | Pin | `Dependency` | What was chosen: exact version, integrity hash, metadata. What the lockfile serializes and integrations install. |
 
 Supporting types: `Artifact` (one downloadable file with an optional
@@ -39,7 +40,7 @@ flowchart LR
   subgraph outcome [Pin]
     Dep["Dependency"] --> Lockfile
   end
-  Scoped --> Atom["Declaration<br/>name, integration, constraint"]
+  Scoped --> Atom["Declaration<br/>name, integration, requirement, options"]
   DeclADT -->|Resolved| Atom
   Scoped -->|Resolver| Dep
   Atom -.->|"walk marries with parent's Scope"| Scoped
@@ -49,15 +50,15 @@ flowchart LR
 
 | Layer | Class(es) | The one question it answers | Never does |
 | --- | --- | --- | --- |
-| Repository | `Repository#find(id) -> Package`, `Repository#at(id, revision) -> PackageVersion` | "What published versions of this package exist, and what are their facts?" (`find`) / "Lift this address into a version" (`at`) | Evaluate constraints; choose among candidates; see install instructions |
-| Scheme | `VersionScheme#satisfies?/#sort` | "Does this version satisfy this constraint, and how do versions order?" | Talk to the network; know about declarations |
+| Repository | `Repository#find(id) -> Package`, `Repository#at(id, revision) -> PackageVersion` | "What published versions of this package exist, and what are their facts?" (`find`) / "Lift this address into a version" (`at`) | Evaluate requirements; choose among candidates; see install instructions |
+| Scheme | `VersionScheme#supports?/#satisfies?/#sort/#refusal` | "Which forms of the requirement language can this channel evaluate, does this version satisfy this requirement, and how do versions order?" | Talk to the network; know about declarations |
 | Locker | `Locker#lock(declarations)` | "Given this whole declaration set, make the ecosystem tool solve it" | Read the result (that's the repository's find) |
-| Resolver | `Resolver#resolve(declarations) -> [Dependency]` | "Which version do we pin, and what transitives follow?" | Fetch bytes; know ecosystem constraint syntax |
+| Resolver | `Resolver#resolve(declarations) -> [Dependency]` | "Which version do we pin, and what transitives follow?" | Fetch bytes; know how an ecosystem orders versions |
 | Integration | `Integration#install_all` | "How do these pins become installed software on this machine?" | Resolve versions |
 
 The registry (`Registry::INTEGRATIONS`) is the single wiring table: one
 `Entry` per integration symbol declaring its repository, optional scheme
-(nil for integrations with no constraint grammar — url, xcode, wwise), optional
+(nil for integrations whose address is the whole ask — url, egs, xcode, wwise, image), optional
 locker, optional integration, optional `install_alias` (url installs
 through cmake's integration *instance*, so their shared batch artifact
 `deps.cmake` is written once, whole), optional `publisher` — the
@@ -80,7 +81,7 @@ operation:
 
 - **Discrete** — the published universe: gh releases and tags, git refs,
   brew formula-spec families, steam branch tips, pip releases.
-  Enumerable, so `find(id)` reports all of it with facts, and constraints
+  Enumerable, so `find(id)` reports all of it with facts, and requirements
   select over it. `find` is the I/O operation; for degenerate universes
   the query *is* the observation — url downloads and hashes the artifact
   (an observable-now singleton), cask checks nothing because the name's
@@ -101,8 +102,8 @@ space (cmake/git and gh commits, xcode and wwise versions); the base class
 refuses with `NoAddressableSpaceError` and the Resolver lets that refusal
 propagate. There is no registry flag to drift out of sync.
 
-Revisions are deliberately *not* standardized the way constraints are: a
-constraint is a predicate dev must evaluate, so it must be in dev's shape;
+Revisions are deliberately *not* standardized the way requirements are: a
+requirement is a predicate dev must evaluate, so it is in dev's language;
 a revision is an opaque address dev only forwards, spelled in the
 ecosystem's canonical form and validated at the DSL boundary (a cmake
 `commit:` and a gh `sha:` must be a full 40-hex SHA).
@@ -123,7 +124,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    are materialized on disk.
 2. **Resolve** — the `Resolver`, per declaration:
    - rejects declaration sets where one package (integration + name)
-     carries disagreeing constraints, sources, revisions, or
+     carries disagreeing requirements, options, sources, revisions, or
      materializations (axes — group/platform/host/env — may differ; the
      same name under two integrations is two packages, free to differ);
    - if the declaration carries a `revision`, dispatches to
@@ -142,13 +143,19 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      goes on (the declaration's needs still queue; it has no version
      whose edges could). What a missing universe means is the caller's
      policy (`PinCarryover`, below);
+   - holds the requirement to the channel's contract before any I/O:
+     a form the scheme does not support (`supports?` — a range on a
+     cask or a Steam branch) is an `UnsupportedRequirementError` naming
+     what the channel takes (`supported`); a scheme-less integration
+     (url, egs, xcode, wwise, image) takes only `Any` and no options.
+     Once the universe is read the scheme gets a second say
+     (`refusal`): a brew family with one version has no range to pick
+     among, and says which version it has;
    - filters the reported versions through the integration's scheme
-     (`satisfies?`, fact-aware: schemes may match universe facts like a
-     steam branch or a git ref), treating scheme-unparseable universe
-     versions as non-candidates, and drops versions that don't publish
-     every explicitly requested platform; scheme-less integrations (url,
-     xcode, wwise) accept only the empty constraint — anything else is a loud
-     `UnknownIntegrationError`, never a silent pass;
+     (`satisfies?`, fact-aware: a git scheme reads the version's `ref`
+     fact), treating scheme-unparseable universe versions as
+     non-candidates, and drops versions that don't publish every
+     explicitly requested platform;
    - picks the highest satisfying version (`sort`), mints the
      `Dependency` from that version's facts merged with the declaration's
      `materialization` (install instructions meet version facts exactly
@@ -183,7 +190,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
    floated pin — the author named its declaration, or an integration it
    is `needed_by`, or the update is bare — is today's; a pin whose
    declaration changed (group, host and env, the declared source — brew
-   tap, image floor, gh repo — or a constraint the locked version no
+   tap, image floor, gh repo — or a requirement the locked version no
    longer satisfies under the integration's `VersionScheme`) is today's;
    an unchanged pin is the lock's when the lock records a `source` for it,
    and today's, with that said once, when it does not. A bare `dev deps
@@ -249,20 +256,21 @@ sequenceDiagram
     bundler-->>lkr: Gemfile.lock written (or LockError)
     Note over cmd: IntegrationNeeds reads each integration's own dependencies.rb as a library - its exports are the needs table
     cmd->>res: resolve(all declarations)
-    Note over res: reject disagreeing constraints per (integration, name) - ConflictingDeclarationError
+    Note over res: reject disagreeing requirements per (integration, name) - ConflictingDeclarationError
     loop until queue empty (declared + transitive + needs)
         alt declaration carries a revision (continuous space)
             res->>rep: at(PackageId, revision)
             Note over rep: pure lift, no I/O — the address is trusted now, verified at install
             rep-->>res: PackageVersion
             Note over res: no scheme, no selection — mint the pin directly
-        else constraint over the published universe (discrete space)
+        else requirement over the published universe (discrete space)
+            res->>sch: supports?(requirement) — refuse an unsupported form before any I/O
             res->>rep: find(PackageId)
             rep->>backing: query universe (registry API / Gemfile.lock / ls-remote / GraphQL)
             backing-->>rep: raw versions, platforms, declared deps, digests
-            Note over rep: normalize upstream constraints into dev's shape, stamp its integration, state its Declarations claim (Resolved | ToolOwned)
+            Note over rep: translate upstream requirements into dev's language, stamp its integration, state its Declarations claim (Resolved | ToolOwned)
             rep-->>res: Package (PackageVersion facts) — or a failure (token refused, network down), recorded as an Unresolved verdict in the pin's place; the walk goes on
-            res->>sch: satisfies?(version, constraint) each, then sort
+            res->>sch: refusal(name, requirement, versions), then satisfies?(version, requirement) each, then sort
             sch-->>res: ordered satisfying candidates
             Note over res: drop versions missing an explicitly requested platform, pick max (NoSatisfyingVersionError if none), mint the Dependency pin into the PackageId-keyed resolved set — version facts + declaration materialization + artifact projection + Scope
         end
@@ -345,38 +353,60 @@ marker, inert on the host and overriding inside, and neither side
 rewrites the other's file. `dev deps path` stays the answer for a script
 that needs the absolute path rather than PATH.
 
-## Constraint semantics per integration
+## Requirement semantics per integration
 
-| Integration | Scheme | Constraint language |
+Every declaration verb takes the same optional positional: a requirement
+in rubygems' syntax (`"4.0.1"`, `"~> 18.0"`, `">= 2, < 3"`), parsed once
+into a `Requirement`. Keyword sugar stays where a channel's own spelling
+is the natural one — brew `version: "18"` and `brew "llvm@18"` both mean
+`"~> 18.0"`, a gh `tag:` or a steam `buildid:` is an `Exact` — and a verb
+given both spellings refuses (`TwoRequirementsError`). What a channel
+does with the requirement is one of three things.
+
+- **Translate** — the channel's tool solves. `GemScheme#render` turns the
+  requirement into a `Gem::Requirement` term for term, and `BundlerLocker`
+  writes that into the Gemfile.
+- **Evaluate** — dev picks. The scheme reads `Requirement#bounds` (the
+  comparator terms, `~>` expanded to `>= v, < bump(v)`) against its own
+  ordering of the universe's versions, and the Resolver takes the max.
+  `RangeScheme` is this once; a subclass supplies the ordering alone.
+- **Refuse** — the channel has nothing to range over. `supports?` names
+  the forms it takes, and the Resolver refuses the rest at declaration,
+  before any universe is read, with `supported` as the reason.
+
+| Integration | Scheme | What the requirement means |
 | --- | --- | --- |
-| bundler | `GemScheme` | rubygems requirements (`~>`, `>=`, …) — but selection is degenerate: the universe is the lock's singleton choice |
-| ficsit | `SemverScheme` | node-style ranges (`^`, `~`, comparators) |
-| pip | `Pep440Scheme` | PEP 440 specifiers (`==`, `~=`, wildcards, conjunction) |
-| luarocks | `RockScheme` | rockspec-style comparators and `~>` |
-| gh | `ExactScheme(key: "tag")` | `tag:` names one release tag out of the enumerated releases+tags universe; no range grammar exists by design. Unconstrained selects the latest release. `sha:` is not a constraint at all — it is a revision (continuous space, `at`), a full 40-hex commit SHA; a commit publishes no release, so a `sha:` pin materializes with `build:` alone (its source tarball, fetched by commit). |
-| cmake | `GitScheme` | `tag:`/`branch:` match the version's `ref` fact over the enumerated `ls-remote` refs. `commit:` is not a constraint at all — it is a revision (continuous space, `at`). |
-| steam | `SteamScheme` | `branch:` selects by the version's branch fact (default `public`); optional `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip — the failure names the current tip and the two ways out (bump `buildid:`, or drop it to follow the branch). |
-| ruby | `GemScheme` | the `ruby` verb's version is a rubygems requirement over the d3mlabs tap's `ruby@X.Y.Z` family — one immutable formula per patch, enumerated from the tap's own formula list (`brew tap-info`), each member's `version_suffix` being its exact version: `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
-| python | `BrewScheme` | the `python` verb's version is the minor, a formula suffix selecting homebrew/core's `python@<minor>` exactly as `brew "llvm", version: "18"` selects `llvm@18`; locks under `python:` and installs as a brew pin. |
-| brew, cask | `BrewScheme` | `version:` is a formula *suffix* (`"18"` selects the `llvm@18` sibling out of the enumerated spec family), matched against the `version_suffix` fact; the reported stable version is brew's record, not the coordinate. Casks have no suffix fact — versioned casks are distinct cask names (`temurin@21`), so `version:` on a cask is unsatisfiable by construction. |
-| url, egs, xcode, wwise | — (no scheme) | no constraint grammar exists: url's universe is an observable-now singleton (egs, Epic's BuildPatchTool zip, is a url universe under its own symbol so pinning it contributes the `deploy egs` channel — [dev#426](https://github.com/d3mlabs/dev/issues/426)), xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). Only the empty constraint is legal; anything else raises. A url `tag:` is a display label riding materialization, naming, never selection; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
+| bundler | `GemScheme` | Translated: `render` hands bundler the terms as written. `satisfies?` then confirms the lock's singleton choice. Everything else on the line (`require:`, `git:`, `path:`) is the declaration's options, written as gem options. |
+| ruby | `GemScheme` | Evaluated with rubygems' ordering over the d3mlabs tap's `ruby@X.Y.Z` family (one immutable formula per patch, enumerated from `brew tap-info`): `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
+| pip | `Pep440Scheme` | Evaluated with PEP 440 ordering (dev < pre < release < post, epochs). `~>` reads as PEP 440's `~=`. |
+| luarocks | `RockScheme` | Evaluated over `major.minor[.patch]-revision`; a revision is a release above the unrevised version. |
+| ficsit | `SemverScheme` | Evaluated with semver ordering. The `version:` keyword is ficsit.app's own node-style range (`"^3.12.0"`), translated by `SemverRange` at the DSL boundary; the repository translates the ranges SMR writes on a mod's edges the same way. |
+| brew, python | `BrewScheme` | Evaluated over the formula family's real stable versions — the bare spec's and its versioned siblings' (`llvm` 21.1.0, `llvm@19` 19.1.7, `llvm@18` 18.1.8) — with Homebrew's own ordering (`BrewVersion`: `3.11.4_1` above `3.11.4`, `1.0r3` above `1.0`, `1.0.0-beta` below `1.0.0`). `brew "llvm@18"`, `brew "llvm", version: "18"` and `brew "llvm", "~> 18.0"` are one declaration, named `llvm`; the member chosen rides its `version_suffix` fact into the pin, and `BrewIntegration` installs `llvm@18` from it. The `python` verb's minor is the same sugar over homebrew/core's `python@<minor>`. A family with one version satisfies `Any` or its exact version; a range over it is refused naming that version (`refusal`), rather than satisfied today and unanswerable when brew moves the formula. |
+| cask | `CaskScheme` | Refused: `Any` alone. Homebrew publishes no versions for casks and a versioned cask is its own name (`brew "temurin@21", cask: true`). |
+| gh | `TagScheme` | Evaluated over the repo's releases and tags: `tag:` is an `Exact` matched by name as spelled (`"5.6.1-css-83"`, `"toolchain-2"`); the positional ranges over the tags that are versions, a leading `v` read past, with rubygems' tolerant ordering. A gh declaration never floats to the latest release: it names a requirement, a `tag:` or a `sha:`. `sha:` is a revision (continuous space, `at`), a full 40-hex commit SHA; a commit publishes no release, so a `sha:` pin materializes with `build:` alone. |
+| cmake | `GitScheme` | `TagScheme` over the version's `ref` fact (the enumerated `ls-remote` refs): `tag:`/`branch:` are an `Exact` ref by name, the positional a range over version tags. `commit:` is a revision (continuous space, `at`). |
+| steam | `SteamScheme` | Refused beyond `Any` and `Exact`: the universe is one branch's current buildid (`branch:` rides the source coordinate as `<app>/<branch>`, read by `SteamBranch`), so there is no range to pick over until a build history exists. `buildid:` is an exact assertion that fails loudly when it is no longer the branch tip — the failure names the current tip and the two ways out (bump `buildid:`, or drop it to follow the branch). A branch the app does not publish is the repository's `BranchNotFoundError`, naming the branches it does. |
+| url, egs, xcode, wwise, image | — (no scheme) | Refused beyond `Any`, with no options: the address is the whole ask. url's universe is an observable-now singleton (egs, Epic's BuildPatchTool zip, is a url universe under its own symbol so pinning it contributes the `deploy egs` channel); xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). A url `tag:` is a display label riding materialization; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
 
-**The constraint standard is a shape plus an interpreter, never a
-grammar.** Every constraint in the system is a dev-shaped hash whose keys
-the integration's `VersionScheme` owns (`{ "version" => "^3.6" }`,
-`{ "tag" => "v1.0" }`, `{}` = unconstrained); repositories mint that shape
-at the `find` seam, normalizing whatever syntax the upstream manifest used
-— constraints cross the system boundary exactly once. A universal
-constraint grammar across semver/PEP 440/buildids would be a lie, so
-cross-ecosystem capability grows by widening the scheme algebra (a future
-`intersect`), never by translating vocabularies. Dev-native territory
-(no upstream scheme to inherit) defaults to SemVer via `SemverScheme`.
+The language is dev's; the meaning of a version string is each
+channel's. `Requirement` keeps the version as written (brew's `3.11.4_1`
+is no rubygems version, and parses), and only `~>` demands a version
+rubygems can bump. Repositories translate upstream syntax into the
+language at the `find` seam (ficsit's `^3.12.0` arrives as
+`>= 3.12.0, < 4.0.0`), so a requirement crosses the system boundary
+exactly once. Dev-native territory with no upstream scheme to inherit
+orders by semver (`SemverScheme`).
 
-Scheme parse failures split by whose fault they are:
-`VersionScheme::InvalidConstraintError` (the user's declaration is wrong —
-propagates) vs `VersionScheme::InvalidVersionError` (the universe contains
-a version that ignores the ecosystem's conventions — the Resolver skips
-that candidate).
+Scheme failures split by whose fault they are:
+`VersionScheme::InvalidRequirementError` (the requirement names a version
+this channel cannot read — the declaration is wrong, and it propagates)
+vs `VersionScheme::InvalidVersionError` (the universe contains a version
+that ignores the ecosystem's conventions — the Resolver skips that
+candidate). `Resolver::UnsupportedRequirementError` is the channel
+declining a form (`supports?`) or a universe declining one it supports in
+general (`refusal`); both name the declaration and what the channel takes.
+
+Design notes: [ADR-0015](DECISIONS.md#adr-0015--one-requirement-language-for-every-declaration).
 
 ## Integrity regimes
 
@@ -526,22 +556,26 @@ resolution.
    — no I/O; the address is verified at install. Facts are unconditional
    — never read install instructions, which don't reach this seam. State
    your transitive regime by construction: build the `Declarations`
-   variant your ecosystem warrants, normalizing upstream constraint
-   syntax into dev's shape as you do (no upstream scheme means SemVer).
+   variant your ecosystem warrants, translating upstream requirement
+   syntax into dev's `Requirement` as you do (no upstream scheme means
+   SemVer).
    Raise a subclass of `Repository::PackageNotFoundError` when the
    identity doesn't exist. Never pick a version.
-2. **Scheme** — subclass `VersionScheme` with your ecosystem's
-   `satisfies?`/`sort`, nesting
-   `InvalidConstraintError`/`InvalidVersionError` under the shared bases.
-   Override `unsatisfied` only when your ecosystem can say *why* nothing
-   matched better than the Resolver's generic message — a fact-matching
-   scheme naming the fact that moved (Steam's branch tip); a range scheme
-   leaves it alone.
-   If the constraint names one exact coordinate, `ExactScheme(key:)`
-   probably already covers you. Every ecosystem with a constraint grammar
-   states its real semantics — there is no satisfies-everything scheme; an
-   ecosystem with *no* grammar registers `scheme: nil` and only the empty
-   constraint is legal against it.
+2. **Scheme** — if your ecosystem has a total order over its versions,
+   subclass `RangeScheme` and supply `comparison_key` (a coordinate read
+   into something `<=>`-comparable, raising your nested
+   `InvalidVersionError` for what it cannot read); `satisfies?` and
+   `sort` follow from it. Otherwise subclass `VersionScheme`: state the
+   forms you take with `supports?`/`supported` and implement
+   `satisfies?`/`sort` for them. Override `refusal` when a form you take
+   in general cannot be answered over a particular universe (a
+   one-version brew family), and `unsatisfied` only when your ecosystem
+   can say *why* nothing matched better than the Resolver's generic
+   message (Steam's moved branch tip). If your tool solves, add `render`
+   for the Locker to hand it the requirement in its own type. Every
+   ecosystem states its real semantics — there is no satisfies-everything
+   scheme; an ecosystem whose address is the whole ask registers
+   `scheme: nil`, and only `Any` with no options is legal against it.
 3. **Locker** — only if the ecosystem's own tool must own the whole-set
    solve (transitive co-resolution you can't reproduce): subclass
    `Locker`, make the tool materialize its lock, and have the repository
@@ -561,7 +595,7 @@ resolution.
 Two models for whole-set dependency resolution:
 
 - **A. dev-owned** — dev enumerates universes (`find`), evaluates
-  constraints (schemes), and picks versions, including joint constraint
+  requirements (schemes), and picks versions, including joint requirement
   satisfaction across the graph. Full control; enables cross-project
   resolution of another repo's `dependencies.rb`; requires implementing
   real dependency solving per ecosystem.

@@ -17,13 +17,15 @@ require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
 require_relative "steam_app_build"
+require_relative "steam_branch"
 require_relative "steam_channel_options"
 require_relative "steam_cmd"
 
 module Dev
   module Deps
     # Reports a Steam application's universe (e.g. the Satisfactory Dedicated
-    # Server): every branch's current buildid.
+    # Server): one branch's current buildid, the branch being part of the
+    # source coordinate (SteamBranch).
     #
     # The "version" is the Steam buildid, resolved via SteamCMD's
     # +app_info_print. There is no content hash — Steam exposes no stable
@@ -92,36 +94,46 @@ module Dev
         @ui = ui
       end
 
-      # Report a Steam app's universe: the current buildid of every branch,
-      # one version per branch.
+      # The branch the source names is not one the app publishes.
+      class BranchNotFoundError < PackageNotFoundError; end
+
+      # Report a Steam branch's universe: its current buildid, the one
+      # version there is.
       #
       # Steam exposes no build history, but branch tips ARE enumerable: one
-      # +app_info_print call reports every branch's current buildid.
-      # The branch a buildid is the tip of rides metadata as
-      # a fact for SteamScheme's branch selection. No digest: Steam publishes
+      # +app_info_print call reports every branch's current buildid, and
+      # the source's branch is picked out of them. The app and branch ride
+      # metadata as facts for the integration. No digest: Steam publishes
       # no stable per-build hash; integrity is SteamCMD's app_update …
       # validate at install. No source either (see the class doc): a
       # buildid is an observation of the tip, not a reference SteamCMD
       # installs by.
       #
-      # @param id [PackageId] source is the Steam app id
-      # @return [Package] one version per branch
+      # @param id [PackageId] source is the SteamBranch coordinate, `<app>/<branch>`
+      # @return [Package] the branch tip
+      # @raise [BranchNotFoundError] if the app publishes no such branch,
+      #   naming the branches it does
       # @raise [SteamCmd::SteamCmdError] if querying the app fails
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
-        app = T.must(id.source)
-        versions = resolve_branches(app).map do |branch, build_id|
-          PackageVersion.new(
-            version: build_id,
-            metadata: { "app" => app, "branch" => branch },
-            # Steam depots are self-contained by construction: SteamCMD
-            # delivers the complete installed tree.
-            declarations: Declarations::Resolved.new([]),
-          )
+        coordinate = SteamBranch.parse(T.must(id.source))
+        tips = resolve_branches(coordinate.app)
+        build_id = tips[coordinate.branch]
+        if build_id.nil?
+          published = tips.sort.map { |branch, tip| "#{branch} #{tip}" }
+          raise BranchNotFoundError,
+            "#{id.name}: Steam publishes no `#{coordinate.branch}` branch of app #{coordinate.app} " \
+              "(branches: #{published.join(", ")})"
         end
-        raise PackageNotFoundError, "no branches with a buildid for Steam app #{app}" if versions.empty?
 
-        Package.new(id: id, versions: versions)
+        version = PackageVersion.new(
+          version: build_id,
+          metadata: { "app" => coordinate.app, "branch" => coordinate.branch },
+          # Steam depots are self-contained by construction: SteamCMD
+          # delivers the complete installed tree.
+          declarations: Declarations::Resolved.new([]),
+        )
+        Package.new(id: id, versions: [version])
       end
 
       # Upload the shipments as one Steam build: one depot per archive, the
