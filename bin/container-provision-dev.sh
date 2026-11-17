@@ -5,8 +5,8 @@
 # when the container's `dev version` differs from the host's — never by
 # hand, never at image build. The tap only ever carries the latest formula,
 # so the exact version comes from the tap's history: the commit whose
-# Formula/dev-core.rb points at v<version>.tar.gz is checked out and
-# installed from. Linuxbrew lives in the container's own prefix
+# Formula/dev-core.rb points at the release's dev-core-<version>.zip (the
+# asset `dev deploy brew` writes) is checked out and installed from. Linuxbrew lives in the container's own prefix
 # volume: a container whose image carries no brew — the base image is OS
 # + Wine + user — gets Homebrew installed there first, once per volume; an
 # image that still bakes Linuxbrew in (bin/docker-install-build-deps.sh)
@@ -77,7 +77,7 @@ git_tap() {
 
 git_tap fetch --quiet origin
 
-asset="v${version}.tar.gz"
+asset="dev-core-${version}.zip"
 sha=""
 for candidate in $(git_tap log --all --format=%H -S"$asset" -- Formula/dev-core.rb); do
   if git_tap show "$candidate:Formula/dev-core.rb" | grep -q "$asset"; then
