@@ -44,7 +44,15 @@ jobs:
     name: "${{ inputs.verbs }}"
     runs-on: [self-hosted, "${{ inputs.runner }}"]
     steps:
+      # `clean: false`: on a persistent runner (a box) the checkout is the
+      # build's working tree — the container mounts it rather than fetching
+      # a copy — so the gitignored build state (`Intermediate/`, `Binaries/`,
+      # the DDC) survives from one run to the next, as it does in any
+      # developer's checkout; tracked files are still reset to the snapshot.
+      # Harmless on a hosted runner, whose disk is fresh per job.
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       # A self-hosted service's PATH is the unit's, not a login shell's:
       # put the brew prefix that holds dev on it when one does.
