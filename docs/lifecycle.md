@@ -652,7 +652,7 @@ When a verb runs, for the selected build:
 | image *I* | neither; `lifecycle.runner` set | **remote** to that label |
 | image *I* | neither; the repo's enrolled runner online | **remote** to the enrolled runner |
 | image *I* | neither; nothing standing | **remote** to the project's **container** of *I*. The container is brought up by `dev up`; a verb that reaches for it while the engine is down is refused before anything is pushed. |
-| any | inside an Actions job, and the row above is remote | refused: a job never dispatches a job |
+| any | inside an Actions job, and the row above is a runner | refused: a job never dispatches a job |
 
 **The enrolled runner** is what bare `dev runner register` makes: a runner
 at the repo's scope carrying the repo's name as label. It is available
@@ -669,13 +669,16 @@ decided when the verb runs; help never asks the forge.
 
 A verb that leaves the machine:
 
-1. pushes the working tree as a snapshot branch ([the sync
-   step](#the-sync-step));
-2. prints one dim line — `→ on <runner>, snapshot <sha>`, or `→ in
+1. is refused, before anything leaves, by a host that cannot take it:
+   a runner asked from inside an Actions job, a container whose engine
+   is down;
+2. delivers the working tree to the host — today, on either host, by
+   pushing it as a snapshot branch ([the sync step](#the-sync-step));
+3. prints one dim line — `→ on <runner>, snapshot <sha>`, or `→ in
    <image> (container), snapshot <sha>` — so the next output is known to
    be another host's;
-3. runs the verb there and returns with its verdict;
-4. deletes the branch.
+4. runs the verb there and returns with its verdict;
+5. deletes the branch.
 
 **On a runner**, dev dispatches its generic workflow on the snapshot
 branch. The project copies it verbatim from `share/workflows/dev-lifecycle.yml`
@@ -730,10 +733,13 @@ the build: from a runner, as the workflow artifact the job uploaded; from
 the container on a Mac, by `docker cp`. On a Linux host the container's
 data root is the host's, so the artifact is already there.
 
-**A verb inside an Actions job never dispatches again.** A runner that
-finds itself not to be the build's environment is misprovisioned, and
-the verb says so rather than dispatching onto itself or between two
-runners forever.
+**A verb inside an Actions job never dispatches to a runner.** A runner
+that finds itself not to be the build's environment is misprovisioned,
+and the runner transport says so — naming the runner it would have left
+for — rather than dispatching onto itself or between two runners
+forever. The container is not a runner: a job that reaches for the
+project's container of its image runs there, the way `dev up` already
+fills that container's workspace from a job's own checkout.
 
 ### The sync step
 

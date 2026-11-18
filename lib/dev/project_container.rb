@@ -13,7 +13,7 @@ require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/lifecycle/gh"
-require "dev/lifecycle/snapshot"
+require "dev/lifecycle/workspace"
 
 module Dev
   # The project's build container as the build host it is: where a
@@ -21,9 +21,10 @@ module Dev
   # machine for a container of the project's image. One way in, for every
   # caller — a `docker exec` (a persisted image's service container, or a
   # named one `dev up` is provisioning) or a one-shot `docker run --rm`
-  # — and the same program inside: the container brings its workspace to
-  # the snapshot it is handed and runs the command there
-  # (ContainerWorkspace). The container's verdict is the process's exit
+  # — and the same program inside, over the workspace the transport
+  # delivered (Lifecycle::Workspace): for a snapshot, the container brings
+  # its own checkout to it and runs the command there (ContainerWorkspace).
+  # The container's verdict is the process's exit
   # status, returned, not interpreted: each caller knows what a nonzero
   # means for it.
   #
@@ -133,21 +134,21 @@ module Dev
       raise EngineUnavailableError, "the container engine does not answer; `dev up` brings it up"
     end
 
-    # Run a command in a container of the image at the snapshot: the
+    # Run a command in a container of the image over the workspace: the
     # persisted image's service container (created or restarted warm), a
     # one-shot container otherwise.
     #
     # @param image [EnvironmentImage] the command's environment
     # @param argv [Array<String>] the command, run in the workspace
-    # @param snapshot [Lifecycle::Snapshot] the pushed tree the workspace is brought to
+    # @param workspace [Lifecycle::Workspace] what the container holds of the tree
     # @return [Integer] the container process's exit status
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
     # @raise [RepoUnresolvedError]
-    sig { params(image: EnvironmentImage, argv: T::Array[String], snapshot: Lifecycle::Snapshot).returns(Integer) }
-    def run(image, argv:, snapshot:)
+    sig { params(image: EnvironmentImage, argv: T::Array[String], workspace: Lifecycle::Workspace).returns(Integer) }
+    def run(image, argv:, workspace:)
       @resources_check.check!(engine: client.engine, hint: @engine_hint)
       image_tag = client.ensure_environment_image!(image, publish: publish_image?)
-      shell_cmd = workspace.script(snapshot:, repo:, argv:)
+      shell_cmd = script(workspace, argv)
       invocation = if image.persist
         container = client.ensure_service!(image_tag, project_root: @project_root, volumes: image.volumes)
         client.docker_exec_command(container, shell_cmd:, env: run_env(image))
@@ -158,19 +159,19 @@ module Dev
     end
 
     # Run a command in a running container the caller already holds (the
-    # one `dev up` is provisioning), at the snapshot.
+    # one `dev up` is provisioning), over the workspace.
     #
     # @param container [String] the running container's name
     # @param image [EnvironmentImage] the container's image, whose `run_env` rides in
     # @param argv [Array<String>] the command, run in the workspace
-    # @param snapshot [Lifecycle::Snapshot]
+    # @param workspace [Lifecycle::Workspace] what the container holds of the tree
     # @return [Integer] the container process's exit status
     # @raise [RepoUnresolvedError]
     sig do
-      params(container: String, image: EnvironmentImage, argv: T::Array[String], snapshot: Lifecycle::Snapshot).returns(Integer)
+      params(container: String, image: EnvironmentImage, argv: T::Array[String], workspace: Lifecycle::Workspace).returns(Integer)
     end
-    def exec_in(container, image:, argv:, snapshot:)
-      shell_cmd = workspace.script(snapshot:, repo:, argv:)
+    def exec_in(container, image:, argv:, workspace:)
+      shell_cmd = script(workspace, argv)
       client.execute(client.docker_exec_command(container, shell_cmd:, env: run_env(image)))
     end
 
@@ -204,9 +205,30 @@ module Dev
       @client ||= BuildContainer.new(engine: ContainerEngine.resolve)
     end
 
+    # The shell program the container runs for one invocation, by the shape
+    # of what it holds: a snapshot is fetched into the container's own
+    # checkout, and the command becomes the process there.
+    #
+    # @param workspace [Lifecycle::Workspace]
+    # @param argv [Array<String>] the command to exec in the workspace
+    # @return [String] `sh -c` material
+    # @raise [RepoUnresolvedError]
+    sig { params(workspace: Lifecycle::Workspace, argv: T::Array[String]).returns(String) }
+    def script(workspace, argv)
+      case workspace
+      when Lifecycle::Workspace::Snapshot
+        container_workspace.script(snapshot: workspace.snapshot, repo:, argv:)
+      else
+        # simplecov:disable — the sealed workspace has no second shape yet;
+        # T.absurd keeps the static proof.
+        T.absurd(workspace)
+        # simplecov:enable
+      end
+    end
+
     # @return [ContainerWorkspace] the container's checkout, under its data root
     sig { returns(ContainerWorkspace) }
-    def workspace
+    def container_workspace
       @workspace ||= ContainerWorkspace.new(project_root: @project_root, data_root: client.data_root_mount)
     end
 

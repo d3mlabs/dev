@@ -132,7 +132,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     end
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     resolver = Dev::Cli::DispatchResolver.new(
-      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings,
     )
     Dev::Cli::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
@@ -368,7 +368,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "`--runner` sends `package <build>#{suffix}` to the label; nothing is built, packaged or reported here" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
 
     When
     execute(command, "cellbound-3d-release", *extra, "--runner", "linux-pool")

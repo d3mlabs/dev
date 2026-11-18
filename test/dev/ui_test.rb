@@ -25,7 +25,7 @@ class Dev::NoUiTest < Minitest::Test
     Expect
     Dev::Ui::CROSSING_PREFIX == "→ "
     assert_output("→ on ue-engine-hosted, snapshot 0123456789ab\n") do
-      ui.print_remote_crossing(destination: "on ue-engine-hosted", snapshot: "0123456789ab")
+      ui.print_remote_crossing(destination: "on ue-engine-hosted", workspace: "snapshot 0123456789ab")
     end
   end
 

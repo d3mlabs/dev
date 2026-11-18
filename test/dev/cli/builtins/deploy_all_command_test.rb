@@ -108,7 +108,7 @@ class Dev::Cli::Builtins::DeployAllCommandTest < Minitest::Test
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     remote = ScriptedRemote.new(root: @project, ui: @ui)
-    resolver = Dev::Cli::DispatchResolver.new(host_rule:, remotes: remote.remotes, enrolled: NoneEnrolled.new, settings:, inside_job: false)
+    resolver = Dev::Cli::DispatchResolver.new(host_rule:, remotes: remote.remotes, enrolled: NoneEnrolled.new, settings:)
     deployments = Dev::Lifecycle::GithubDeployments.new(gh: @gh)
     release_archives = Dev::Lifecycle::ReleaseArchives.new(releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), store:, targets:)
     ports = Dev::Lifecycle::Ports.new(project_root: @project, publishers: { "steam" => @steam })

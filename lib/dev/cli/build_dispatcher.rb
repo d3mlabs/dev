@@ -83,7 +83,6 @@ module Dev
       #   platform this machine is not, asked to run here
       # @raise [DispatchResolver::ConflictingDispatchFlagsError]
       # @raise [DispatchResolver::NoContainerForHostError]
-      # @raise [DispatchResolver::DispatchFromJobError]
       # @raise [HostRule::ContainerDriftError]
       sig { params(build: Lifecycle::Build, runner: T.nilable(String), container: T::Boolean).returns(Dispatch) }
       def dispatch_for(build, runner: nil, container: false)

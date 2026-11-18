@@ -20,11 +20,12 @@ require "support/fake_gh"
 require "tmpdir"
 
 # The sealed dispatch: Native yields for the env and hands it back as
-# Run(env); Remote carries the verb over a real snapshot branch (a temp
-# bare origin) through a transport whose far side is scripted — the forge
-# (FakeGh) for the Actions runner, the engine (FakeContainerEngine) for
-# the local container — and never asks for the env: the seam runs on the
-# host.
+# Run(env); Remote runs the one caller shape over the seam — refuse,
+# deliver the checkout as a workspace, print the crossing, run — through
+# a transport whose far side is scripted (the forge, FakeGh, for the
+# Actions runner; the engine, FakeContainerEngine, for the local
+# container) and whose delivery is real: a snapshot branch on a temp
+# bare origin. It never asks for the env: the seam runs on the host.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::DispatchTest < Minitest::Test
   include SorbetHelper
@@ -58,7 +59,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
       .answers(["run", "view"], with: GREEN)
     out = StringIO.new
     ui = Dev::NoUi.new
-    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:, out:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:)
+    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:, out:), root:, ui:)
     resolved = false
     heads_at_dispatch = nil
     heads = -> { remote_heads(origin) }
@@ -88,7 +89,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     FileUtils.rm_rf(workspace)
   end
 
-  test "the crossing line names the transport's destination and the snapshot's short sha" do
+  test "the crossing line names the transport's destination and the workspace it delivered: the snapshot's short sha" do
     Given
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, _origin = checkout_with_origin(workspace)
@@ -99,16 +100,16 @@ class Dev::Cli::DispatchTest < Minitest::Test
       .answers(["run", "watch"], with: "")
       .answers(["run", "view"], with: GREEN)
     ui = typed_mock(Dev::Ui)
-    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:)
+    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:), root:, ui:)
     crossing = nil
-    ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
+    ui.expects(:print_remote_crossing).with { |destination:, workspace:| crossing = [destination, workspace] }
 
     When
     remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { flunk("the env was resolved") }
 
     Then
     crossing.fetch(0) == "on ue-engine-hosted"
-    crossing.fetch(1).match?(/\A\h{12}\z/)
+    crossing.fetch(1).match?(/\Asnapshot \h{12}\z/)
 
     Cleanup
     FileUtils.rm_rf(workspace)
@@ -119,7 +120,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, origin = checkout_with_origin(workspace)
     gh = FakeGh.new(root:)
-    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Ui))
+    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:), root:, ui: typed_mock(Dev::Ui))
 
     When
     remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { nil }
@@ -145,7 +146,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
       .answers(["run", "list"], with: [RUN])
       .answers(["run", "watch"], with: "")
       .answers(["run", "view"], with: RUN.merge("status" => "completed", "conclusion" => "failure"))
-    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:, out: StringIO.new), sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new)
+    remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:, out: StringIO.new), root:, ui: Dev::NoUi.new)
 
     When
     capture_stdout { remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["package", "x"])) { nil } }
@@ -172,10 +173,10 @@ class Dev::Cli::DispatchTest < Minitest::Test
     end
     ui = typed_mock(Dev::Ui)
     crossing = nil
-    ui.expects(:print_remote_crossing).with { |destination:, snapshot:| crossing = [destination, snapshot] }
+    ui.expects(:print_remote_crossing).with { |destination:, workspace:| crossing = [destination, workspace] }
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: "gho_host"),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui:,
+      root:, ui:,
     )
 
     When
@@ -197,7 +198,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     script.include?("fetch -q --no-tags https://github.com/o/r.git #{branch}")
     script.include?("git reset -q --hard #{heads_at_exec.fetch(branch)}")
     script.end_with?("exec dev build cellbound-3d-win64-dev\n")
-    crossing.fetch(1) == heads_at_exec.fetch(branch)[0, 12]
+    crossing.fetch(1) == "snapshot #{heads_at_exec.fetch(branch)[0, 12]}"
     remote_heads(origin).keys == ["refs/heads/main"]
 
     Cleanup
@@ -211,7 +212,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     engine = recording_engine
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: false), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
+      root:, ui: Dev::NoUi.new,
     )
 
     When
@@ -237,7 +238,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     engine = recording_engine(&->(args) { args.fetch(0) == "exec" ? 3 : true })
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
+      root:, ui: Dev::NoUi.new,
     )
 
     When
@@ -264,7 +265,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     out = StringIO.new
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil, host_os:, out:),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: Dev::NoUi.new,
+      root:, ui: Dev::NoUi.new,
     )
     invocation = Dev::Lifecycle::VerbInvocation.new(
       words: ["package", "cellbound-3d-win64-dev"], fetch: Dev::Lifecycle::ArtifactFetch.new(name: "cellbound-3d-win64-dev", into:),
@@ -297,7 +298,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     engine = FakeContainerEngine.new(capture_result: "")
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
-      sync: Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new), ui: typed_mock(Dev::Ui),
+      root:, ui: typed_mock(Dev::Ui),
     )
 
     When
@@ -372,11 +373,21 @@ class Dev::Cli::DispatchTest < Minitest::Test
 
   private
 
+  # The sync step over a real checkout, its failed-delete report kept
+  # off the terminal.
+  def quiet_sync_for
+    ->(root) { Dev::Lifecycle::SnapshotSync.new(root:, out: StringIO.new) }
+  end
+
+  # The runner transport outside an Actions job, whatever the suite's own
+  # environment says.
   def transport(gh, root:, out: StringIO.new)
     Dev::Cli::Transport::ActionsRunner.new(
       runner: "ue-engine-hosted",
       runs: Dev::Lifecycle::WorkflowRuns.new(gh:, sleeper: ->(_seconds) { nil }),
       workflow: Dev::Lifecycle::LifecycleWorkflow.new(root:),
+      sync_for: quiet_sync_for,
+      inside_job: false,
       out:,
     )
   end
@@ -396,7 +407,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
       github_token: Dev::ContainerGithubToken.new(source: -> { token }),
       repo_resolver: -> { "o/r" },
     )
-    Dev::Cli::Transport::LocalContainer.new(image:, containers:, out:)
+    Dev::Cli::Transport::LocalContainer.new(image:, containers:, sync_for: quiet_sync_for, out:)
   end
 
   def image(persist:)

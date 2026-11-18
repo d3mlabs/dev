@@ -51,9 +51,9 @@ module Dev
         @cli_ui.puts(@cli_ui.fmt("{{bold:#{command}}}"))
       end
 
-      sig { override.params(destination: String, snapshot: String).void }
-      def print_remote_crossing(destination:, snapshot:)
-        @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{destination}, snapshot #{snapshot}}}"))
+      sig { override.params(destination: String, workspace: String).void }
+      def print_remote_crossing(destination:, workspace:)
+        @cli_ui.puts(@cli_ui.fmt("{{gray:#{CROSSING_PREFIX}#{destination}, #{workspace}}}"))
       end
 
       sig { override.params(question: String).returns(T.nilable(String)) }

@@ -55,6 +55,7 @@ require_relative "lifecycle/snapshot_branches"
 require_relative "lifecycle/job_checkout"
 require_relative "lifecycle/workflow_triggers"
 require_relative "lifecycle/snapshot_sync"
+require_relative "lifecycle/workspace"
 require_relative "lifecycle/artifact_fetch"
 require_relative "lifecycle/verb_invocation"
 require_relative "lifecycle/shipped_workflow"
@@ -78,10 +79,11 @@ module Dev
   # release lives on the forge (GithubReleases) and is read back for
   # `deploy --release` by ReleaseArchives.
   #
-  # A verb that leaves the machine goes through SnapshotSync, which pushes
-  # the working tree to a snapshot branch, runs the dispatch and deletes the
-  # branch. The operator's view is docs/lifecycle.md; the class map is
-  # docs/lifecycle-architecture.md.
+  # A verb that leaves the machine is handed a Workspace — what the host
+  # holds of the tree — by its transport; the Actions runner delivers one
+  # through SnapshotSync, which pushes the working tree to a snapshot
+  # branch, yields and deletes the branch. The operator's view is
+  # docs/lifecycle.md; the class map is docs/lifecycle-architecture.md.
   module Lifecycle
   end
 end

@@ -37,6 +37,7 @@ require "dev/cli/project_manifest"
 require "dev/cli/project_manifest_loader"
 require "dev/cli/project_publishers"
 require "dev/cli/remote_dispatches"
+require "dev/cli/transport"
 require "dev/runner_registry"
 require "dev/runner_setup"
 
@@ -93,11 +94,12 @@ module Dev
 
       # The build hosts a run can leave this machine for, made once per run
       # and shared by the command runner and the lifecycle verbs: the
-      # project's container (ProjectContainer) and the sync step that carries
-      # the tree to any remote (Lifecycle::SnapshotSync).
+      # project's container (ProjectContainer) and the sync step a transport
+      # that pushes a snapshot branch delivers the tree by
+      # (Transport::SyncFor).
       class RemoteHosts < T::Struct
         const :containers, ProjectContainer
-        const :sync, Lifecycle::SnapshotSync
+        const :sync_for, Transport::SyncFor
       end
 
       # Builds the remote hosts over a project; injected so tests hand in a
@@ -127,7 +129,7 @@ module Dev
         hosts_factory: lambda { |project|
           RemoteHosts.new(
             containers: ProjectContainer.new(project_root: project.root, engine_hint: project.engine),
-            sync: Lifecycle::SnapshotSync.new(root: project.root),
+            sync_for: Transport::DEFAULT_SYNC_FOR,
           )
         },
         deployments_factory: ->(root) { Lifecycle::GithubDeployments.new(gh: Lifecycle::Gh.new(root:)) },
@@ -387,7 +389,7 @@ module Dev
           project_root: project.root,
           host_rule: @host_rule,
           containers: hosts.containers,
-          sync: hosts.sync,
+          sync_for: hosts.sync_for,
         )
         builtin_executor = BuiltinExecutor.new
         project_executor = ProjectExecutor.new(command_runner:)
@@ -541,7 +543,7 @@ module Dev
       def lifecycle_builtins(manifest, project, bindings, ui:, hosts:)
         targets = manifest.targets.values
         selector = BuildSelector.new(targets:)
-        remotes = RemoteDispatches.new(root: project.root, ui:, out: @out, sync: hosts.sync, containers: hosts.containers)
+        remotes = RemoteDispatches.new(root: project.root, ui:, out: @out, sync_for: hosts.sync_for, containers: hosts.containers)
         resolver = DispatchResolver.new(host_rule: @host_rule, remotes:)
         dispatcher = BuildDispatcher.new(placements: bindings.targets, resolver:)
         listing = BuildListing.new(targets:, dispatcher:)

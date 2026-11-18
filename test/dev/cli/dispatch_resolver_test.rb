@@ -28,7 +28,9 @@ require "tmpdir"
 # remote side is real too — a Settings over a temp config file, an
 # EnrolledRunnerLookup over a scripted registry — so the order native →
 # `--runner` → `--container` → setting → enrolled → local container is
-# read off the actual collaborators.
+# read off the actual collaborators. Whether the host chosen can carry
+# the verb from here is the transport's refusal, not the resolver's
+# (TransportTest: a verb inside an Actions job never leaves for a runner).
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::DispatchResolverTest < Minitest::Test
   include SorbetHelper
@@ -76,7 +78,7 @@ class Dev::Cli::DispatchResolverTest < Minitest::Test
     self.class.image(name: name, apt: apt)
   end
 
-  def resolver(inside_container: false, standing: nil, enrolled_online: false, inside_job: false)
+  def resolver(inside_container: false, standing: nil, enrolled_online: false)
     host_rule = Dev::Cli::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: inside_container,
     )
@@ -87,8 +89,9 @@ class Dev::Cli::DispatchResolverTest < Minitest::Test
       root: @dir, ui: typed_mock(Dev::Ui), out: StringIO.new,
       runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
       containers: Dev::ProjectContainer.new(project_root: @dir),
+      inside_job: false,
     )
-    Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: enrolled, settings: settings, inside_job: inside_job)
+    Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: enrolled, settings: settings)
   end
 
   test "a build placed on the host is native wherever dev runs" do
@@ -243,33 +246,5 @@ class Dev::Cli::DispatchResolverTest < Minitest::Test
 
     Then
     raises Dev::Cli::HostRule::ContainerDriftError
-  end
-
-  test "a verb inside an Actions job never leaves: #{what} is DispatchFromJobError naming the host and the misprovisioning" do
-    Given "a runner that is not the build's environment"
-    placement = Dev::Cli::Placement::Image.new(image: image)
-
-    When
-    resolver(standing: standing, inside_job: true).resolve(placement, subject: "cellbound-3d-win64-dev", runner: forced, container: forced_container)
-
-    Then
-    error = raises(Dev::Cli::DispatchResolver::DispatchFromJobError)
-    error.message.include?("`cellbound-3d-win64-dev` would leave this Actions job for #{to}")
-    error.message.include?("a job never dispatches a job")
-
-    Where
-    what                      | standing           | forced       | forced_container | to
-    "the resolved runner"     | "ue-engine-hosted" | nil          | false            | "runner `ue-engine-hosted`"
-    "a forced `--runner`"     | "ue-engine-hosted" | "win64-pool" | false            | "runner `win64-pool`"
-    "the resolved container"  | nil                | nil          | false            | "a container of cellbound-3d-linux"
-    "a forced `--container`"  | nil                | nil          | true             | "a container of cellbound-3d-linux"
-  end
-
-  test "inside an Actions job that is the build's environment, the verb is native as anywhere else" do
-    Given
-    File.write(@marker, image.marker)
-
-    Expect
-    resolver(inside_job: true).resolve(Dev::Cli::Placement::Image.new(image: image), subject: "x") == Dev::Cli::Dispatch::Native.new
   end
 end

@@ -12,11 +12,13 @@ require "support/fake_gh"
 # boundaries scripted: the forge (FakeGh — a dispatch, a listed run, a
 # watched run, a green verdict, and the download when asked) and the
 # snapshot push (a SnapshotSync that yields one canned snapshot and
-# touches no git). The real Dispatch::Remote, Transport::ActionsRunner,
-# WorkflowRuns and LifecycleWorkflow run between them, so a verb test
-# asserts what crossed — the invocation words the host would run — off
-# the argv the forge saw. The project root must carry the workflow
-# (install_workflow) or the dispatch refuses, as it would.
+# touches no git, handed to every transport as its sync step). The real
+# Dispatch::Remote, Transport::ActionsRunner, WorkflowRuns and
+# LifecycleWorkflow run between them, so a verb test asserts what
+# crossed — the invocation words the host would run — off the argv the
+# forge saw. The project root must carry the workflow (install_workflow)
+# or the dispatch refuses, as it would; the dispatch runs outside an
+# Actions job whatever the suite's own environment says.
 class ScriptedRemote
   RUN = { "databaseId" => 42, "url" => "https://github.com/o/r/actions/runs/42", "status" => "queued", "conclusion" => nil }.freeze
   GREEN = RUN.merge("status" => "completed", "conclusion" => "success").freeze
@@ -39,6 +41,9 @@ class ScriptedRemote
 
   attr_reader :gh, :sync, :out
 
+  # The crossing line's workspace half for the canned snapshot.
+  WORKSPACE = "snapshot #{SHA[0, 12]}".freeze
+
   # @param root [Pathname] the project root the workflow is looked up under
   # @param ui [Dev::Ui] where the crossing line prints
   # @param downloads [Boolean] whether the forge also answers `run download`
@@ -55,11 +60,17 @@ class ScriptedRemote
     @ui = ui
   end
 
+  # @return [Proc] the sync step every transport is handed: the canned one, whatever the tree
+  def sync_for
+    ->(_root) { @sync }
+  end
+
   # @return [Dev::Cli::RemoteDispatches] what the resolver builds dispatches from
   def remotes
     Dev::Cli::RemoteDispatches.new(
-      root: @root, ui: @ui, out: @out, sync: @sync,
+      root: @root, ui: @ui, out: @out, sync_for:,
       runs: Dev::Lifecycle::WorkflowRuns.new(gh: @gh, sleeper: ->(_seconds) { nil }),
+      inside_job: false,
     )
   end
 

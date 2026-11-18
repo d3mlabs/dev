@@ -6,6 +6,7 @@ require "dev/build_container"
 require "dev/container_deps_installer"
 require "dev/container_github_token"
 require "dev/environment_image"
+require "dev/lifecycle/workspace"
 require "dev/project_container"
 require "pathname"
 require "support/fake_container_engine"
@@ -15,13 +16,13 @@ class ContainerDepsInstallerTest < Minitest::Test
   ROOT = Pathname("/src/myapp")
   SHA = "0123456789abcdef0123456789abcdef01234567"
 
-  test "install! runs dev deps install in the container's workspace at the snapshot, with the run_env injected" do
+  test "install! runs dev deps install in the container's workspace over the snapshot delivered, with the run_env injected" do
     Given "an engine that succeeds, a host with no gh login, and an image with a resolvable run_env"
     engine = FakeContainerEngine.new
     ENV["WWISE_TOKEN"] = "t0k"
 
     When "installing"
-    installer(engine, token: nil).install!("dev-myapp-abc", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), snapshot: snapshot)
+    installer(engine, token: nil).install!("dev-myapp-abc", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), workspace: workspace)
 
     Then "one docker exec, the env named (bare -e, the value in the spawn env — dev#317), the workspace program fetching the snapshot then exec'ing the builtin"
     engine.runs.size == 1
@@ -41,7 +42,7 @@ class ContainerDepsInstallerTest < Minitest::Test
     engine = FakeContainerEngine.new
 
     When "installing"
-    installer(engine, token: "gho_secret").install!("dev-myapp-abc", image: image, snapshot: snapshot)
+    installer(engine, token: "gho_secret").install!("dev-myapp-abc", image: image, workspace: workspace)
 
     Then "the exec names GH_TOKEN; the value rides the spawn env and appears on no argv"
     engine.runs.first[0, 4] == ["exec", "-e", "GH_TOKEN", "dev-myapp-abc"]
@@ -54,7 +55,7 @@ class ContainerDepsInstallerTest < Minitest::Test
     engine = FakeContainerEngine.new { |_args| 2 }
 
     When "installing"
-    installer(engine, token: nil).install!("dev-myapp-abc", image: image, snapshot: snapshot)
+    installer(engine, token: nil).install!("dev-myapp-abc", image: image, workspace: workspace)
 
     Then "the failure is typed and names the container"
     error = raises Dev::ContainerDepsInstaller::InstallFailedError
@@ -82,5 +83,10 @@ class ContainerDepsInstallerTest < Minitest::Test
 
   def snapshot
     @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
+  end
+
+  # The checkout as the container's transport delivers it today: the snapshot.
+  def workspace
+    Dev::Lifecycle::Workspace::Snapshot.new(snapshot)
   end
 end

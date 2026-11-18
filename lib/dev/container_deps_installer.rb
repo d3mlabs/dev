@@ -3,13 +3,13 @@
 
 require "sorbet-runtime"
 require "dev/environment_image"
-require "dev/lifecycle/snapshot"
+require "dev/lifecycle/workspace"
 require "dev/project_container"
 
 module Dev
   # Runs the project's dependency install inside its build container:
-  # `dev deps install`, as the container's own dev, in the container's
-  # workspace at a snapshot of the checkout (ProjectContainer).
+  # `dev deps install`, as the container's own dev, over the workspace the
+  # transport delivered the checkout as (ProjectContainer).
   # The container is a build host with its own data root, so
   # this is the install of the whole linux lock — toolchain, gh trees,
   # gems — into the container's volumes, and the lisps it writes land in
@@ -44,12 +44,12 @@ module Dev
     #
     # @param container [String] the running container's name
     # @param image [EnvironmentImage] the container's image, whose `run_env` the install carries
-    # @param snapshot [Lifecycle::Snapshot] the checkout the install reads, pushed
+    # @param workspace [Lifecycle::Workspace] the checkout as the container holds it
     # @return [void]
     # @raise [InstallFailedError] when the install exits nonzero
-    sig { params(container: String, image: EnvironmentImage, snapshot: Lifecycle::Snapshot).void }
-    def install!(container, image:, snapshot:)
-      status = @containers.exec_in(container, image:, argv: INSTALL, snapshot:)
+    sig { params(container: String, image: EnvironmentImage, workspace: Lifecycle::Workspace).void }
+    def install!(container, image:, workspace:)
+      status = @containers.exec_in(container, image:, argv: INSTALL, workspace:)
       raise InstallFailedError.new(container:) unless status.zero?
     end
   end

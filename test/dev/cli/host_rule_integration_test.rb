@@ -194,7 +194,7 @@ class HostRuleIntegrationTest < Minitest::Test
         project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
         github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
       ),
-      sync: ScriptedRemote::CannedSync.new,
+      sync_for: ->(_root) { ScriptedRemote::CannedSync.new },
     )
   end
 

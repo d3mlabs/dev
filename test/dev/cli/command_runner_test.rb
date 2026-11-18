@@ -49,8 +49,9 @@ class CommandRunnerTest < Minitest::Test
   # A containerized runner over a real ProjectContainer whose
   # engine-injected BuildContainer client is handed back, so tests stub
   # the client instance (the image step is a registry boundary) and read
-  # what reached the engine off the fake. The snapshot step is canned
-  # (CannedSync: one snapshot, no git); the repo gh would name is "o/r".
+  # what reached the engine off the fake. The sync step the container's
+  # transport delivers the tree by is canned (CannedSync: one snapshot, no
+  # git); the repo gh would name is "o/r".
   # The project is on the lock's pins alone (lock_images). The marker is
   # the host rule's fact: absent unless a test writes one (`marker:` a
   # path under the project root). The engine-floor gate passes unless a
@@ -63,7 +64,8 @@ class CommandRunnerTest < Minitest::Test
       project_root: @project_root, client:, engine_hint:, resources_check:, github_token:, repo_resolver: -> { "o/r" },
     )
     runner = Dev::Cli::CommandRunner.new(
-      ui: @ui, project_root: @project_root, host_rule: host_rule(marker:, inside_container:), containers:, sync:,
+      ui: @ui, project_root: @project_root, host_rule: host_rule(marker:, inside_container:), containers:,
+      sync_for: ->(_root) { sync },
     )
     [runner, client]
   end
@@ -414,13 +416,15 @@ class CommandRunnerTest < Minitest::Test
 
   # --- Container execution ---
   #
-  # A command in a container crosses as a snapshot (ADR-0008): the sync
-  # step yields one, the container is handed the workspace program that
-  # fetches it and ends in the command, and the container's exit status
-  # becomes the process's own — Kernel.exit in exec mode, where a host
-  # command would have exec-replaced the process.
+  # A command in a container crosses through the container's transport
+  # (Transport::LocalContainer), which delivers the tree as a workspace —
+  # today a snapshot (ADR-0008): its sync step yields one, the container
+  # is handed the workspace program that fetches it and ends in the
+  # command, and the container's exit status becomes the process's own —
+  # Kernel.exit in exec mode, where a host command would have
+  # exec-replaced the process.
 
-  test "run resolves a pinned image through ensure_environment_image! and runs in it over a snapshot: the one image, no key needed" do
+  test "run resolves a pinned image through ensure_environment_image! and runs in it over the workspace its transport delivered: the one image, no key needed" do
     Given "a lock pinning one image"
     lock_images("myapp-linux")
     engine = FakeContainerEngine.new
@@ -438,7 +442,7 @@ class CommandRunnerTest < Minitest::Test
     When
     runner.exec_into(cmd)
 
-    Then "the tree was synced for the container, the engine ran the invocation, and the status was exited with"
+    Then "the transport synced the tree for the container, the engine ran the invocation, and the status was exited with"
     sync.synced == ["container"]
     engine.runs.last == ["run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"]
     0 * Kernel.exec(any_parameters)
@@ -646,7 +650,7 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "one dim crossing line is printed when a command enters a container — its destination and the snapshot — and none on a host or native run" do
+  test "one dim crossing line is printed when a command enters a container — its destination and the workspace delivered — and none on a host or native run" do
     Given "two images; a host provisioned from one; a command on each, and one on the host"
     lock_images("snappy-linux", "snappy-server")
     server = images.named("snappy-server")
@@ -663,9 +667,9 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(command("./bin/editor.sh", environment: "host"))
 
     Then "the crossing into snappy-linux's container is the one line"
-    1 * @ui.print_remote_crossing(destination: "in snappy-linux (container)", snapshot: ScriptedRemote::SHA[0, 12])
-    0 * @ui.print_remote_crossing(destination: includes("snappy-server"), snapshot: anything)
-    0 * @ui.print_remote_crossing(destination: includes("host"), snapshot: anything)
+    1 * @ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: ScriptedRemote::WORKSPACE)
+    0 * @ui.print_remote_crossing(destination: includes("snappy-server"), workspace: anything)
+    0 * @ui.print_remote_crossing(destination: includes("host"), workspace: anything)
 
     Cleanup
     Dir.chdir(@original_cwd)

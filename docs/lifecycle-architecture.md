@@ -35,6 +35,7 @@ One class per noun, none playing two roles.
 | Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once, assets uploaded with `--clobber`, downloaded back by name. Through `gh`. |
 | Release archives | `Lifecycle::ReleaseArchives` | A cut release read back for `deploy --release`: `release.json` downloaded fresh, the selected archives downloaded into `.releases/<tag>/` and verified against its digests; a verified file is not fetched again, a failing one is removed and refused. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a remote host reaches it: a commit through a temporary index (`Lifecycle::SnapshotCommit`) on a `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as the dispatch needs it. `Lifecycle::SnapshotSync` runs the step; `Lifecycle::SnapshotBranches` prunes the leftovers; `Lifecycle::WorkflowTriggers` reads the project's workflows for the `on: push` refusal. |
+| Workspace | `Lifecycle::Workspace` | What a build host holds of the project tree while a verb runs there, as the transport delivered it; sealed, one shape today: `Workspace::Snapshot`, the pushed snapshot the host fetches, named on the crossing line as `snapshot <sha>`. |
 | Verb invocation | `Lifecycle::VerbInvocation` | A verb as a remote host runs it: the words after `dev` with the build fully qualified and the dispatch flags consumed, plus what to bring back (`Lifecycle::ArtifactFetch`: the workflow artifact's name and the store directory it lands in). |
 | Workflow run | `Lifecycle::WorkflowRun` | One run of the generic workflow as the forge lists it: id, page, status, conclusion. `Lifecycle::WorkflowRuns` is its client over `gh` (dispatch, locate, watch, view, download); `Lifecycle::LifecycleWorkflow` is the contract of the workflow file: name, inputs, dev's shipped copy. |
 | Shipped workflow | `Lifecycle::ShippedWorkflow` | A workflow dev ships under `share/workflows/` as a project carries it at `.github/workflows/<name>`: dev's copy, the project's, whether it is in place, and the `cp` a refusal names. `LifecycleWorkflow` and `Deps::RubygemsPublisher` (`dev-publish-rubygems.yml`) each hold one. |
@@ -142,13 +143,28 @@ reads, so `Lifecycle::Gh#capture` spawns gh with colour off
 `Dev::Cli::DispatchResolver` owns the flags `--runner` and `--container`
 and the decision table in
 [Dispatch resolution](lifecycle.md#dispatch-resolution). Every verb's
-`before` hands its dispatch a `VerbInvocation` beside the env; the
-transport then runs natively, through the generic workflow
-(`WorkflowRuns`) or by `docker exec` into the project's container. The
-remote forms are wrapped in `SnapshotSync`, which pushes the branch,
-yields, and deletes it however the block ended. The fan-out
-`deploy --release V` (`DeployAllCommand`) takes the same dispatch flags
-and runs each channel's deploy as a child invocation.
+`before` hands its dispatch a `VerbInvocation` beside the env; the verb
+then runs natively or leaves through a `Dev::Cli::Transport`.
+
+A transport keeps one contract, and `Dispatch::Remote` is its one
+caller: `assert_ready!` refuses, before anything leaves the machine,
+what the transport cannot carry; `with_workspace(tree)` delivers the
+project tree to the host for the block's duration and yields what the
+host now holds of it as a `Lifecycle::Workspace`; `run(invocation,
+workspace:)` runs the verb there. Both transports today deliver a
+snapshot: `Transport::ActionsRunner` and `Transport::LocalContainer`
+build a `SnapshotSync` over the tree inside `with_workspace`, which
+pushes the branch, yields `Workspace::Snapshot`, and deletes the branch
+however the block ended. `ActionsRunner#run` dispatches the generic
+workflow (`WorkflowRuns`) on the snapshot's branch and watches the run;
+`LocalContainer#run` is a `docker exec` into the project's container,
+which fetches the snapshot itself (`ProjectContainer` reads the
+workspace for the program). The same two steps carry a project command
+to the container (`CommandRunner#run_in_container`) and `dev up`'s
+in-container install (`ContainerUpCommand`), so no caller constructs a
+`SnapshotSync` of its own. The fan-out `deploy --release V`
+(`DeployAllCommand`) takes the same dispatch flags and runs each
+channel's deploy as a child invocation.
 
 ## Adding a port implementation
 
