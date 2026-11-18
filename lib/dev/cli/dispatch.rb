@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "pathname"
 require "dev/lifecycle"
 require "dev/ui"
 require_relative "transport"
@@ -147,15 +148,17 @@ module Dev
       end
 
       # The verb runs on a host that has the build's environment, reached
-      # through a Transport: the working tree crosses as
-      # a snapshot branch for the dispatch's duration (Lifecycle::SnapshotSync
-      # — refused first if a project workflow would run on the push), one
-      # dim line says where the verb went and from which commit, the
-      # transport runs the invocation there and returns with its verdict,
-      # and the artifact stays in that host's data root unless the
-      # invocation asked for it back. Nothing of the stage is left here:
-      # the outcome is Done, and the env is never resolved — the seam it
-      # would feed runs on the host, over the host's tree and store.
+      # through a Transport — the one caller shape over the seam: the
+      # transport refuses first if it cannot carry the verb, delivers the
+      # checkout to its host as a workspace for the dispatch's duration
+      # (however that host needs it: a runner fetches a snapshot branch the
+      # sync step pushed), one dim line says where the verb went and what
+      # the host holds of the tree, the transport runs the invocation there
+      # and returns with its verdict, and the artifact stays in that host's
+      # data root unless the invocation asked for it back. Nothing of the
+      # stage is left here: the outcome is Done, and the env is never
+      # resolved — the seam it would feed runs on the host, over the
+      # host's tree and store.
       class Remote
         extend T::Sig
         extend T::Helpers
@@ -166,15 +169,19 @@ module Dev
         attr_reader :transport
 
         # @param transport [Transport] how the host is reached
-        # @param sync [Lifecycle::SnapshotSync] the sync step over the project's checkout
+        # @param root [Pathname] the project's checkout, the tree the transport delivers
         # @param ui [Ui] where the crossing line prints
-        sig(:final) { params(transport: Transport, sync: Lifecycle::SnapshotSync, ui: Ui).void }
-        def initialize(transport:, sync:, ui:)
+        sig(:final) { params(transport: Transport, root: Pathname, ui: Ui).void }
+        def initialize(transport:, root:, ui:)
           @transport = transport
-          @sync = sync
+          @root = root
           @ui = ui
         end
 
+        # @raise [Transport::ActionsRunner::DispatchFromJobError],
+        #   [Lifecycle::LifecycleWorkflow::WorkflowMissingError],
+        #   [ProjectContainer::EngineUnavailableError] and the transport's
+        #   other refusals, before anything leaves the machine
         # @raise [Lifecycle::WorkflowTriggers::UnfilteredPushTriggerError] and
         #   the sync step's other refusals, before anything is pushed
         # @raise [Transport::ActionsRunner::RemoteVerbFailedError],
@@ -188,9 +195,9 @@ module Dev
         def dispatch(invocation, &blk)
           _ = blk
           @transport.assert_ready!
-          @sync.sync(runner: @transport.runner) do |snapshot|
-            @ui.print_remote_crossing(destination: @transport.destination, snapshot: snapshot.short_sha)
-            @transport.run(invocation, snapshot:)
+          @transport.with_workspace(@root) do |workspace|
+            @ui.print_remote_crossing(destination: @transport.destination, workspace: workspace.description)
+            @transport.run(invocation, workspace:)
           end
           Outcome::Done[T.type_parameter(:Env)].new
         end

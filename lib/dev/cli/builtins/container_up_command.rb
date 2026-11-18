@@ -1,18 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "pathname"
 require "stringio"
 require "dev/cli/builtins/container_command"
 require "dev/cli/builtins/service_up"
 require "dev/container_deps_installer"
 require "dev/container_dev_provisioner"
 require "dev/container_user_aligner"
-require "dev/container_workspace"
 require "dev/engine_provisioner"
 require "dev/environment_image"
 require "dev/cli/host_rule"
-require "dev/lifecycle/snapshot_sync"
+require "dev/cli/transport"
 require "dev/project_container"
 require "dev/cli/project_images"
 
@@ -46,11 +44,11 @@ module Dev
       # resolves the image so the registry has it for the hosts that do need
       # it, and still starts no container.
       #
-      # The container works on its own checkout, not the host's: its
-      # dependency install reads the lock from a
-      # snapshot of this tree, pushed for the install's duration
-      # (Lifecycle::SnapshotSync) and fetched into the container's workspace
-      # by the container itself (ProjectContainer).
+      # The container's dependency install reads the lock from the tree as
+      # the container's transport delivers it (Transport::LocalContainer)
+      # for the install's duration: today a snapshot of this checkout,
+      # pushed and fetched into the container's own workspace by the
+      # container itself (ProjectContainer).
       class ContainerUpCommand < ContainerCommand
         extend T::Sig
         include ServiceUp
@@ -66,13 +64,6 @@ module Dev
           T::Hash[Symbol, String],
         )
 
-        # The sync step a caller gets by default: the lifecycle's snapshot
-        # sync over the checkout.
-        DEFAULT_SYNC_FOR = T.let(
-          ->(root) { Dev::Lifecycle::SnapshotSync.new(root:) },
-          T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotSync),
-        )
-
         # @param container_client [Dev::BuildContainer, nil]
         # @param engine_provisioner [Dev::EngineProvisioner] the sizing step
         # @param user_aligner [Dev::ContainerUserAligner, nil] makes the
@@ -86,8 +77,8 @@ module Dev
         #   containers (ProjectContainer over the client) when not injected
         # @param out [IO, StringIO]
         # @param host_rule [Dev::Cli::HostRule] whether an image's work runs here
-        # @param sync_for [Proc] the sync step over a checkout — the project
-        #   is known at `up`, not here, so a factory stands in for the instance
+        # @param sync_for [Proc] the sync step the container's transport
+        #   delivers the checkout by (Transport::SyncFor)
         sig do
           params(
             container_client: T.nilable(Dev::BuildContainer),
@@ -97,12 +88,12 @@ module Dev
             deps_installer: T.nilable(Dev::ContainerDepsInstaller),
             out: T.any(IO, StringIO),
             host_rule: Dev::Cli::HostRule,
-            sync_for: T.proc.params(root: Pathname).returns(Dev::Lifecycle::SnapshotSync),
+            sync_for: Transport::SyncFor,
           ).void
         end
         def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
                        user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
-                       host_rule: Dev::Cli::HostRule.new, sync_for: DEFAULT_SYNC_FOR)
+                       host_rule: Dev::Cli::HostRule.new, sync_for: Transport::DEFAULT_SYNC_FOR)
           super(container_client:, out:)
           @engine_provisioner = engine_provisioner
           @user_aligner = user_aligner
@@ -110,6 +101,7 @@ module Dev
           @deps_installer = deps_installer
           @host_rule = host_rule
           @sync_for = sync_for
+          @containers = T.let(nil, T.nilable(Dev::ProjectContainer))
         end
 
         sig { override.returns(String) }
@@ -247,12 +239,12 @@ module Dev
 
         # What a running container needs before a command runs in it: a user
         # that can write its data root, the host's dev, then its own install
-        # of the lock (the container is a build host) — read from a
-        # snapshot of this checkout it fetches for itself.
+        # of the lock (the container is a build host) — read from the
+        # checkout as its transport delivers it.
         #
         # @param name [String] the running container
         # @param image [EnvironmentImage] whose `run_env` the install carries
-        # @param project [ProjectContext] the checkout the snapshot is of
+        # @param project [ProjectContext] the checkout the install reads
         # @return [void]
         sig { params(name: String, image: EnvironmentImage, project: ProjectContext).void }
         def provision_inside!(name, image, project:)
@@ -269,10 +261,13 @@ module Dev
           # Dependencies install where they are consumed: with the container's
           # dev current, its side of the install runs there (gems against the
           # store Ruby, container-scoped brew deps), over the lock as this
-          # tree has it — a snapshot pushed for the install's duration, the
-          # branch named for the container (ContainerWorkspace::RUNNER).
-          @sync_for.call(project.root).sync(runner: Dev::ContainerWorkspace::RUNNER) do |snapshot|
-            deps_installer(project).install!(name, image:, snapshot:)
+          # tree has it — delivered to the container by its transport for
+          # the install's duration, and run in the container the caller
+          # holds (the install's exec, not the transport's run: `cold_up`'s
+          # one-shot container is the one that just received dev).
+          transport = Transport::LocalContainer.new(image:, containers: containers(project), sync_for: @sync_for, out: @out)
+          transport.with_workspace(project.root) do |workspace|
+            deps_installer(project).install!(name, image:, workspace:)
           end
           @out.puts "dev: container deps installed"
         end
@@ -293,9 +288,17 @@ module Dev
         # @return [Dev::ContainerDepsInstaller]
         sig { params(project: ProjectContext).returns(Dev::ContainerDepsInstaller) }
         def deps_installer(project)
-          @deps_installer ||= Dev::ContainerDepsInstaller.new(
-            containers: Dev::ProjectContainer.new(project_root: project.root, client:, engine_hint: project.engine),
-          )
+          @deps_installer ||= Dev::ContainerDepsInstaller.new(containers: containers(project))
+        end
+
+        # The way into the project's containers, over this command's client:
+        # what the transport and the install share.
+        #
+        # @param project [ProjectContext]
+        # @return [Dev::ProjectContainer]
+        sig { params(project: ProjectContext).returns(Dev::ProjectContainer) }
+        def containers(project)
+          @containers ||= Dev::ProjectContainer.new(project_root: project.root, client:, engine_hint: project.engine)
         end
       end
     end

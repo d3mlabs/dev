@@ -88,7 +88,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     resolver = Dev::Cli::DispatchResolver.new(
-      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings,
     )
     Dev::Cli::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
@@ -185,7 +185,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
   test "`--runner` sends the verb to the label as `build <build>` over the snapshot, builds nothing here, and prints the crossing" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", snapshot: ScriptedRemote::SHA[0, 12])
+    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
 
     When
     execute(command, "cellbound-3d-release", "--runner", "linux-pool")

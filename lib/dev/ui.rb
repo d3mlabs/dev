@@ -51,17 +51,16 @@ module Dev
     def print_header(command); end
 
     # The one line about where a command or verb runs, printed only at
-    # a crossing — when it leaves this machine for a build host over a
-    # snapshot of the tree: where it went
-    # and from which commit, `→ on ue-engine-hosted, snapshot
-    # 3f2a1c9d8e7b`, `→ in snappy-linux (container), snapshot …`. Dim: a
-    # note under the header, not a header. Native and host runs print
-    # nothing.
+    # a crossing — when it leaves this machine for a build host: where it
+    # went and what that host holds of the tree, `→ on ue-engine-hosted,
+    # snapshot 3f2a1c9d8e7b`, `→ in snappy-linux (container), snapshot …`.
+    # Dim: a note under the header, not a header. Native and host runs
+    # print nothing.
     #
     # @param destination [String] the transport's name for where (Transport#destination)
-    # @param snapshot [String] the snapshot's short sha
-    sig { abstract.params(destination: String, snapshot: String).void }
-    def print_remote_crossing(destination:, snapshot:); end
+    # @param workspace [String] the host's workspace as it names itself (Lifecycle::Workspace#description)
+    sig { abstract.params(destination: String, workspace: String).void }
+    def print_remote_crossing(destination:, workspace:); end
 
     # Ask for a secret at the terminal, input hidden. nil when there is
     # no terminal to ask at (a pipe, CI): the caller falls back to its
@@ -157,9 +156,9 @@ module Dev
       out.puts(command)
     end
 
-    sig { override.params(destination: String, snapshot: String).void }
-    def print_remote_crossing(destination:, snapshot:)
-      out.puts("#{CROSSING_PREFIX}#{destination}, snapshot #{snapshot}")
+    sig { override.params(destination: String, workspace: String).void }
+    def print_remote_crossing(destination:, workspace:)
+      out.puts("#{CROSSING_PREFIX}#{destination}, #{workspace}")
     end
 
     sig { override.params(question: String).returns(T.nilable(String)) }

@@ -3,12 +3,12 @@
 
 module Dev
   # Whether this dev process runs inside a GitHub Actions job — the
-  # generic lifecycle workflow's, or any other. One fact with one reader:
-  # a lifecycle verb that would leave the machine from inside a job is a
-  # job dispatching a job. The verb got there because a runner
-  # was told to run it; a runner that then finds itself not to be the
-  # build's environment is misprovisioned, and the answer is to say so,
-  # not to re-dispatch — once onto itself, or forever between two.
+  # generic lifecycle workflow's, or any other. One fact, read where the
+  # job changes what dev does: the Actions transport refuses to carry a
+  # verb out of a job (Cli::Transport::ActionsRunner — a job dispatching
+  # a job would hide a misprovisioned runner behind a loop), and the job's
+  # own checkout and repo name stand in for what dev would otherwise push
+  # or ask gh for (Lifecycle::JobCheckout, ProjectContainer).
   #
   # Read from GitHub's own marker, `GITHUB_ACTIONS=true`, which every job
   # carries on every runner kind; declared by the runner, never inferred

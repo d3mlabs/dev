@@ -27,9 +27,9 @@ class Dev::Cli::UiImplTest < Minitest::Test
     1 * @cli_ui.puts(anything)
   end
 
-  test "#print_remote_crossing prints the one dim line about leaving for a build host at a snapshot: #{destination}" do
+  test "#print_remote_crossing prints the one dim line about leaving for a build host and what it holds of the tree: #{destination}" do
     When
-    @ui.print_remote_crossing(destination: destination, snapshot: "0123456789ab")
+    @ui.print_remote_crossing(destination: destination, workspace: "snapshot 0123456789ab")
 
     Then
     1 * @cli_ui.fmt("{{gray:→ #{destination}, snapshot 0123456789ab}}")

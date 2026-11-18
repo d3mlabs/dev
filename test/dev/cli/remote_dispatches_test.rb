@@ -19,11 +19,11 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::RemoteDispatchesTest < Minitest::Test
   include SorbetHelper
 
-  test "actions_runner wires a Remote dispatch whose transport carries the label, over the one sync step and forge client" do
+  test "actions_runner wires a Remote dispatch over the project root whose transport carries the label, over the sync step and forge client" do
     Given
     root = Pathname("/nonexistent/checkout")
     remotes = Dev::Cli::RemoteDispatches.new(
-      root:, ui: typed_mock(Dev::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root:)),
+      root:, ui: typed_mock(Dev::Ui), out: StringIO.new, runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root:)), inside_job: false,
     )
 
     When
@@ -36,11 +36,11 @@ class Dev::Cli::RemoteDispatchesTest < Minitest::Test
     remotes.actions_runner("other").transport.runner == "other"
   end
 
-  test "local_container wires a Remote dispatch whose transport is the project's container of the image, over the same sync step" do
+  test "local_container wires a Remote dispatch over the project root whose transport is the project's container of the image, over the same sync step" do
     Given
     root = Pathname("/nonexistent/checkout")
     containers = Dev::ProjectContainer.new(project_root: root, client: Dev::BuildContainer.new(engine: FakeContainerEngine.new))
-    remotes = Dev::Cli::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui), out: StringIO.new, containers:)
+    remotes = Dev::Cli::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui), out: StringIO.new, containers:, inside_job: false)
     image = Dev::EnvironmentImage.new(
       name: "snappy-linux", from: "ghcr.io/d3mlabs/unreal-engine-build-base", from_digest: "a" * 64,
       platform: "linux/amd64", apt: [], registry: "ghcr.io/d3mlabs",
@@ -60,7 +60,7 @@ class Dev::Cli::RemoteDispatchesTest < Minitest::Test
     Given
     root = Pathname("/nonexistent/checkout")
 
-    dispatch = Dev::Cli::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui)).actions_runner("box")
+    dispatch = Dev::Cli::RemoteDispatches.new(root:, ui: typed_mock(Dev::Ui), inside_job: false).actions_runner("box")
 
     When "dispatching from a root without the workflow"
     dispatch.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { flunk("the env was resolved") }

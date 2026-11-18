@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/actions_job_context"
 require "dev/enrolled_runner_lookup"
 require "dev/settings"
 require_relative "flag"
@@ -38,10 +37,11 @@ module Dev
     # The same rule CommandRunner places a project command by, read for a
     # verb: the verb never enters a container itself — its seam is a port in
     # this process — so a non-native image is not "run it in a container"
-    # but "run the verb where the image is". And a verb already running in
-    # an Actions job never leaves: a runner that finds itself not to be the
-    # build's environment is misprovisioned, and a job dispatching a job
-    # would hide that behind a loop.
+    # but "run the verb where the image is". Whether the host chosen can
+    # carry the verb from here is the transport's to refuse
+    # (Transport#assert_ready!): a verb already inside an Actions job never
+    # leaves for a runner, and the Actions transport is the one that says
+    # so.
     class DispatchResolver
       extend T::Sig
 
@@ -64,31 +64,24 @@ module Dev
       # run a container of.
       class NoContainerForHostError < RuntimeError; end
 
-      # A verb inside an Actions job would leave the machine: the runner is
-      # not the build's environment.
-      class DispatchFromJobError < RuntimeError; end
-
       # @param host_rule [HostRule] whether an image's work runs on this
       #   machine — the same instance the command runner and `dev help` read
       # @param remotes [RemoteDispatches] builds the dispatch for a host chosen here
       # @param enrolled [EnrolledRunnerLookup] whether the repo's enrolled runner is online
       # @param settings [Settings] the standing `lifecycle.runner`
-      # @param inside_job [Boolean] whether this dev runs inside an Actions job
       sig do
         params(
           host_rule: HostRule,
           remotes: RemoteDispatches,
           enrolled: EnrolledRunnerLookup,
           settings: Settings,
-          inside_job: T::Boolean,
         ).void
       end
-      def initialize(host_rule:, remotes:, enrolled: EnrolledRunnerLookup.new, settings: Settings.new, inside_job: ActionsJobContext.inside?)
+      def initialize(host_rule:, remotes:, enrolled: EnrolledRunnerLookup.new, settings: Settings.new)
         @host_rule = host_rule
         @remotes = remotes
         @enrolled = enrolled
         @settings = settings
-        @inside_job = inside_job
       end
 
       # Where a verb over a build placed at +placement+ executes.
@@ -101,14 +94,13 @@ module Dev
       # @raise [ConflictingDispatchFlagsError] when both flags are given
       # @raise [NoContainerForHostError] when `--container` meets a `host` placement
       # @raise [HostRule::ContainerDriftError] inside a container that is not the image's
-      # @raise [DispatchFromJobError] when the verb would leave an Actions job
       # @raise [RunnerRegistry::QueryError] when GitHub cannot say whether the enrolled runner is online
       sig { params(placement: Placement, subject: String, runner: T.nilable(String), container: T::Boolean).returns(Dispatch) }
       def resolve(placement, subject:, runner: nil, container: false)
         if runner && container
           raise ConflictingDispatchFlagsError, "`#{subject}`: #{RUNNER_FLAG} #{runner} and #{CONTAINER_FLAG} name two hosts for one verb; pick one"
         end
-        return actions_runner(runner, subject:) if runner
+        return @remotes.actions_runner(runner) if runner
 
         case placement
         when Placement::Host
@@ -118,7 +110,7 @@ module Dev
 
           Dispatch::Native.new
         when Placement::Image
-          container ? force_container(placement.image, subject:) : resolve_image(placement.image, subject:)
+          container ? force_container(placement.image) : resolve_image(placement.image)
         else
           # simplecov:disable — the sealed placement has no third shape;
           # T.absurd keeps the static proof.
@@ -130,17 +122,15 @@ module Dev
       private
 
       # @param image [EnvironmentImage] the build's environment
-      # @param subject [String]
       # @return [Dispatch]
       # @raise [HostRule::ContainerDriftError]
-      # @raise [DispatchFromJobError]
-      sig { params(image: EnvironmentImage, subject: String).returns(Dispatch) }
-      def resolve_image(image, subject:)
+      sig { params(image: EnvironmentImage).returns(Dispatch) }
+      def resolve_image(image)
         @host_rule.assert_container_is!(image) if @host_rule.inside_container?
         return Dispatch::Native.new unless @host_rule.enters_container?(image)
 
         label = @settings.lifecycle_runner || @enrolled.available&.label
-        label ? actions_runner(label, subject:) : local_container(image, subject:)
+        label ? @remotes.actions_runner(label) : @remotes.local_container(image)
       end
 
       # `--container`: the image's container, unless this dev already runs
@@ -148,49 +138,14 @@ module Dev
       # native (a container that is not the image's is drift, refused).
       #
       # @param image [EnvironmentImage]
-      # @param subject [String]
       # @return [Dispatch]
       # @raise [HostRule::ContainerDriftError]
-      # @raise [DispatchFromJobError]
-      sig { params(image: EnvironmentImage, subject: String).returns(Dispatch) }
-      def force_container(image, subject:)
-        return local_container(image, subject:) unless @host_rule.inside_container?
+      sig { params(image: EnvironmentImage).returns(Dispatch) }
+      def force_container(image)
+        return @remotes.local_container(image) unless @host_rule.inside_container?
 
         @host_rule.assert_container_is!(image)
         Dispatch::Native.new
-      end
-
-      # @param label [String]
-      # @param subject [String]
-      # @return [Dispatch::Remote]
-      # @raise [DispatchFromJobError]
-      sig { params(label: String, subject: String).returns(Dispatch::Remote) }
-      def actions_runner(label, subject:)
-        assert_leaving!(subject:, to: "runner `#{label}`")
-        @remotes.actions_runner(label)
-      end
-
-      # @param image [EnvironmentImage]
-      # @param subject [String]
-      # @return [Dispatch::Remote]
-      # @raise [DispatchFromJobError]
-      sig { params(image: EnvironmentImage, subject: String).returns(Dispatch::Remote) }
-      def local_container(image, subject:)
-        assert_leaving!(subject:, to: "a container of #{image.name}")
-        @remotes.local_container(image)
-      end
-
-      # @param subject [String]
-      # @param to [String] where the verb would go
-      # @return [void]
-      # @raise [DispatchFromJobError]
-      sig { params(subject: String, to: String).void }
-      def assert_leaving!(subject:, to:)
-        return unless @inside_job
-
-        raise DispatchFromJobError,
-          "`#{subject}` would leave this Actions job for #{to}: a job never dispatches a job — " \
-            "this runner is not the build's environment (#{@host_rule.host}); provision it from the image, or name a runner that is"
       end
     end
   end

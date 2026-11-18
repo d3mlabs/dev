@@ -79,7 +79,7 @@ class Dev::Cli::BuildDispatcherTest < Minitest::Test
       containers: Dev::ProjectContainer.new(project_root: @dir),
     )
     settings = Dev::Settings.new(config_path: (@dir / "config.yml").to_s, system_config_path: (@dir / "none.yml").to_s)
-    resolver = Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false)
+    resolver = Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: NoneEnrolled.new, settings: settings)
     Dev::Cli::BuildDispatcher.new(placements: placements, resolver: resolver)
   end
 

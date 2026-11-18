@@ -156,7 +156,7 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s), inside_container: false)
     settings = Dev::Settings.new(config_path: (@root / "config.yml").to_s, system_config_path: (@root / "none.yml").to_s)
     resolver = Dev::Cli::DispatchResolver.new(
-      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings, inside_job: false,
+      host_rule: host_rule, remotes: @remote.remotes, enrolled: NoneEnrolled.new, settings: settings,
     )
     Dev::Cli::Builtins::DeployCommand.new(
       channel: channel,
@@ -471,7 +471,7 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     @remote.sync.synced == ["gamebox"]
     shipped == []
     @gh.calls == []
-    @out.string == "→ on gamebox, snapshot #{ScriptedRemote::SHA[0, 12]}\n"
+    @out.string == "→ on gamebox, #{ScriptedRemote::WORKSPACE}\n"
   end
 
   test "a channel whose protocol has no placement bound is refused even under `--runner`" do

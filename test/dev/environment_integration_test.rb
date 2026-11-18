@@ -128,8 +128,8 @@ class EnvironmentIntegrationTest < Minitest::Test
     exec!(runner, ["editor"])
 
     Then
-    1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", snapshot: ScriptedRemote::SHA[0, 12])
-    0 * ui.print_remote_crossing(destination: includes("host"), snapshot: anything)
+    1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: ScriptedRemote::WORKSPACE)
+    0 * ui.print_remote_crossing(destination: includes("host"), workspace: anything)
   end
 
   test "dev help shows each project command's environment on this machine; builtins are not annotated" do
@@ -357,7 +357,7 @@ class EnvironmentIntegrationTest < Minitest::Test
         project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
         github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
       ),
-      sync: ScriptedRemote::CannedSync.new,
+      sync_for: ->(_root) { ScriptedRemote::CannedSync.new },
     )
   end
 

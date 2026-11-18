@@ -10,6 +10,7 @@ require "dev/engine_resources_check"
 require "dev/environment_image"
 require "dev/lifecycle/snapshot"
 require "dev/lifecycle/snapshot_branch"
+require "dev/lifecycle/workspace"
 require "dev/project_container"
 require "fileutils"
 require "pathname"
@@ -53,7 +54,7 @@ class Dev::ProjectContainerTest < Minitest::Test
     subject = containers(engine, token: "gho_host", hint:, check:)
 
     When
-    status = capture_stdout { subject.run(image(run_env: { "WWISE_TOKEN" => "wwise/token" }), argv: ["dev", "build", "x"], snapshot:) }
+    status = capture_stdout { subject.run(image(run_env: { "WWISE_TOKEN" => "wwise/token" }), argv: ["dev", "build", "x"], workspace:) }
 
     Then "the inspect, the volumes, then the run: -e WWISE_TOKEN -e GH_TOKEN on argv, both values in the spawn env, the program ending in the command"
     status == 4
@@ -77,7 +78,7 @@ class Dev::ProjectContainerTest < Minitest::Test
     subject = containers(engine)
 
     When
-    status = capture_stdout { subject.run(image(persist: true), argv: ["dev", "build", "x"], snapshot:) }
+    status = capture_stdout { subject.run(image(persist: true), argv: ["dev", "build", "x"], workspace:) }
 
     Then "one exec against the service, the program as its command; no `docker run`"
     status == 0
@@ -93,7 +94,7 @@ class Dev::ProjectContainerTest < Minitest::Test
     ENV["WWISE_TOKEN"] = "t0k"
 
     When
-    status = containers(engine).exec_in("dev-myapp-cold-1", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), argv: ["dev", "deps", "install"], snapshot:)
+    status = containers(engine).exec_in("dev-myapp-cold-1", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), argv: ["dev", "deps", "install"], workspace:)
 
     Then
     status == 2
@@ -118,8 +119,8 @@ class Dev::ProjectContainerTest < Minitest::Test
 
     When "two commands run"
     before = calls
-    subject.exec_in("c", image:, argv: ["true"], snapshot:)
-    subject.exec_in("c", image:, argv: ["true"], snapshot:)
+    subject.exec_in("c", image:, argv: ["true"], workspace:)
+    subject.exec_in("c", image:, argv: ["true"], workspace:)
 
     Then
     before == 0
@@ -129,7 +130,7 @@ class Dev::ProjectContainerTest < Minitest::Test
 
   test "a checkout gh names no repo for is RepoUnresolvedError: the container has nowhere to fetch from" do
     When
-    containers(FakeContainerEngine.new, repo_resolver: -> { "\n" }).exec_in("c", image:, argv: ["true"], snapshot:)
+    containers(FakeContainerEngine.new, repo_resolver: -> { "\n" }).exec_in("c", image:, argv: ["true"], workspace:)
 
     Then
     error = raises Dev::ProjectContainer::RepoUnresolvedError
@@ -145,7 +146,7 @@ class Dev::ProjectContainerTest < Minitest::Test
     subject = containers(engine, client:)
 
     When
-    subject.run(image, argv: ["true"], snapshot:)
+    subject.run(image, argv: ["true"], workspace:)
 
     Then
     engine.runs.last.first == "run"
@@ -292,6 +293,11 @@ class Dev::ProjectContainerTest < Minitest::Test
 
   def snapshot
     @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
+  end
+
+  # The tree as the container's transport delivers it today: the snapshot.
+  def workspace
+    Dev::Lifecycle::Workspace::Snapshot.new(snapshot)
   end
 
   def capture_stdout
