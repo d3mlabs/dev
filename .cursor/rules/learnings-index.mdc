@@ -90,6 +90,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  skips), a checkout's pins and gems are whoever runs `dev up` there
  (a human through the owner with their password, the agent never).
  → .cursor/skills/learnings/state-kind-before-identity-rule/
+- [architecture/shipped-workflow-verbatim] A workflow dev ships
+ (`share/workflows`) is committed verbatim by every adopting project: a
+ repo-specific fact enters as a dispatch input or a `vars.*` variable, never
+ an edit to the copy, and the verb needing it checks presence through
+ `Lifecycle::ShippedWorkflow`.
+ → .cursor/skills/learnings/shipped-workflow-verbatim/
 
 ## toolchain
 
