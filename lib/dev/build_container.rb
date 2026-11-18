@@ -145,6 +145,29 @@ module Dev
     LINUXBREW_MOUNT = EnvironmentImage::LINUXBREW_PREFIX
     LINUXBREW_VOLUME = "dev-linuxbrew"
 
+    # The checkout is bind-mounted into every container dev creates, at
+    # its own host path: one tree, the same absolute path on both sides,
+    # so what a verb inside writes — a build's intermediates, a lock the
+    # install rewrote — is the host's checkout, as it is, with nothing
+    # committed, pushed or fetched to get it there. The verb's working
+    # directory is the checkout (`-w`).
+    #
+    # One directory of the tree is per side: shadowenv's. An activation
+    # lisp names one build host's prefixes (`/opt/homebrew` against
+    # Linuxbrew's; the host's compiler flags), so the container must not
+    # read the host's `.shadowenv.d`, nor write into it. The container's
+    # is a dev-owned, gitignored sibling in the checkout, keyed by side as
+    # the venv link is (`.venv` / `.venv-container`, dev#399), and
+    # bind-mounted over the host's at the one path shadowenv reads: inside,
+    # `.shadowenv.d` *is* `.shadowenv.d-container`, and every lisp writer
+    # (ShadowenvFile) writes its own side's directory without knowing. Both
+    # directories are created on the host before the mount, by the host's
+    # user: docker makes a missing mount source or target itself, as root,
+    # and a root-owned directory in the checkout is one neither side can
+    # write.
+    SHADOWENV_DIR = ".shadowenv.d"
+    CONTAINER_SHADOWENV_DIR = ".shadowenv.d-container"
+
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }
     attr_reader :engine
@@ -360,17 +383,16 @@ module Dev
       end
     end
 
-    # Build a docker run command for executing a shell command in a one-shot
-    # container of the image. The container mounts its own data root and
-    # the declared volumes, and nothing of the checkout: the project it
-    # works on is the snapshot it fetches into
-    # its workspace under that data root (ContainerWorkspace), so the
-    # shell command is what reaches it, from the working directory the
-    # image declares.
+    # Build a docker run command for executing a command in a one-shot
+    # container of the image. The container mounts its own data root, the
+    # checkout at its own path (CONTAINER_SHADOWENV_DIR over the host's
+    # shadowenv directory) and the declared volumes, and runs the command,
+    # word for word, in the checkout: no shell between, so nothing is
+    # quoted on the way in.
     #
     # @param image_tag    [String]   full image:tag reference
-    # @param project_root [Pathname] the checkout, for the label contract
-    # @param shell_cmd    [String]   command to run inside the container
+    # @param project_root [Pathname] the checkout: mounted, the working directory, the label contract
+    # @param argv         [Array<String>] the command to run inside the container
     # @param volumes      [Array<String>] extra "host:container" mounts; host
     #   paths may use ~ (e.g. "~/.dev/engines/unreal-engine-css:/ue")
     # @param env          [Hash{String => String}] env vars to inject (named
@@ -380,24 +402,26 @@ module Dev
       params(
         image_tag: String,
         project_root: Pathname,
-        shell_cmd: String,
+        argv: T::Array[String],
         volumes: T::Array[String],
         env: T::Hash[String, String],
       ).returns(Invocation)
     end
-    def docker_run_command(image_tag, project_root:, shell_cmd:, volumes: [], env: {})
+    def docker_run_command(image_tag, project_root:, argv:, volumes: [], env: {})
       container_env = container_env(env)
-      argv = [
+      run_argv = [
         "run", "--rm",
         *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
         *data_root_flags,
+        *checkout_flags(project_root),
         *volume_flags(volumes),
         *env_flags(container_env),
+        *workdir_flags(project_root),
         image_tag,
-        "sh", "-c", shell_cmd,
+        *argv,
       ]
-      Invocation.new(argv: argv, env: container_env)
+      Invocation.new(argv: run_argv, env: container_env)
     end
 
     # Spawn an invocation through the engine and wait for it.
@@ -533,6 +557,36 @@ module Dev
       end
     end
 
+    # The checkout's mounts: the tree at its own path, and the container's
+    # shadowenv directory over the host's (see CONTAINER_SHADOWENV_DIR).
+    # Both shadowenv directories are made on the host first, so the mount
+    # finds them owned by the host's user rather than making them as root.
+    # The path is the checkout's canonical one (workspace_path), the one
+    # its container is named for.
+    #
+    # @param project_root [Pathname] the checkout
+    # @return [Array<String>] docker `-v` flags
+    # @raise [LocalMountsUnsupportedError] when the engine cannot see local paths
+    sig { params(project_root: Pathname).returns(T::Array[String]) }
+    def checkout_flags(project_root)
+      assert_local_mounts!
+      checkout = Pathname(self.class.workspace_path(project_root))
+      host_shadowenv = checkout / SHADOWENV_DIR
+      container_shadowenv = checkout / CONTAINER_SHADOWENV_DIR
+      FileUtils.mkdir_p([host_shadowenv, container_shadowenv])
+      ["-v", "#{checkout}:#{checkout}", "-v", "#{container_shadowenv}:#{host_shadowenv}"]
+    end
+
+    # The working directory a command inside runs from: the mounted
+    # checkout, at the path the host knows it by.
+    #
+    # @param project_root [Pathname] the checkout
+    # @return [Array<String>] docker `-w` flag
+    sig { params(project_root: Pathname).returns(T::Array[String]) }
+    def workdir_flags(project_root)
+      ["-w", self.class.workspace_path(project_root)]
+    end
+
     # --- persistent service container (the image block's `persist`) ------
 
     # Ensure the long-lived service container for image_tag exists and is running,
@@ -620,28 +674,29 @@ module Dev
       end
     end
 
-    # Build a `docker exec` command running shell_cmd inside the service
-    # container, with docker_run_command's `-e` env handling. The marker and
-    # data root are the container's since its creation, so only the
-    # per-command env is named here; the working directory is the
-    # container's own (the image's), the command moving into its workspace
-    # itself (ContainerWorkspace).
+    # Build a `docker exec` command running a command inside the service
+    # container, with docker_run_command's `-e` env handling. The marker,
+    # data root and mounts are the container's since its creation, so only
+    # the per-command env is named here; the working directory is the
+    # mounted checkout, as a one-shot run's is.
     #
-    # @param container [String] running container name
-    # @param shell_cmd [String]
-    # @param env       [Hash{String => String}] env vars to inject (named
+    # @param container    [String] running container name
+    # @param project_root [Pathname] the checkout the container mounts: the working directory
+    # @param argv         [Array<String>] the command to run inside the container
+    # @param env          [Hash{String => String}] env vars to inject (named
     #   on argv, valued in the invocation's env)
     # @return [Invocation] the docker exec args and the env they need
     sig do
       params(
         container: String,
-        shell_cmd: String,
+        project_root: Pathname,
+        argv: T::Array[String],
         env: T::Hash[String, String],
       ).returns(Invocation)
     end
-    def docker_exec_command(container, shell_cmd:, env: {})
-      argv = ["exec", *env_flags(env), container, "sh", "-c", shell_cmd]
-      Invocation.new(argv: argv, env: env)
+    def docker_exec_command(container, project_root:, argv:, env: {})
+      exec_argv = ["exec", *env_flags(env), *workdir_flags(project_root), container, *argv]
+      Invocation.new(argv: exec_argv, env: env)
     end
 
     # Remove every container for this checkout — the current tag's and any
@@ -786,11 +841,11 @@ module Dev
       @engine.run(["start", name], out: File::NULL, err: File::NULL)
     end
 
-    # Create the detached, idle service container: its own data root and any
-    # extra volumes (e.g. the engine) — nothing of the checkout, which it
-    # fetches as snapshots into its workspace — the
-    # label contract, the inside marker (inherited by every `docker exec`),
-    # and `sleep infinity` so it stays up.
+    # Create the detached, idle service container: its own data root, the
+    # checkout at its own path (its shadowenv directory the container's,
+    # see CONTAINER_SHADOWENV_DIR), any extra volumes (e.g. the engine),
+    # the label contract, the inside marker (inherited by every `docker
+    # exec`), and `sleep infinity` so it stays up.
     #
     # `--init`: docker's init (tini) is PID 1 and `sleep` its child. Every
     # `docker exec` runs under PID 1, and a process whose parent exits is
@@ -811,6 +866,7 @@ module Dev
         "run", "-d", "--init", *(one_shot ? ["--rm"] : []), "--name", name,
         *self.class.label_flags(image_tag, project_root),
         *data_root_flags,
+        *checkout_flags(project_root),
         *volume_flags(volumes),
         *env_flags(env),
         image_tag,

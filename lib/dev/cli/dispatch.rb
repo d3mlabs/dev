@@ -152,7 +152,8 @@ module Dev
       # transport refuses first if it cannot carry the verb, delivers the
       # checkout to its host as a workspace for the dispatch's duration
       # (however that host needs it: a runner fetches a snapshot branch the
-      # sync step pushed), one dim line says where the verb went and what
+      # sync step pushed, the container mounts the checkout itself), one
+      # dim line says where the verb went and what
       # the host holds of the tree, the transport runs the invocation there
       # and returns with its verdict, and the artifact stays in that host's
       # data root unless the invocation asked for it back. Nothing of the

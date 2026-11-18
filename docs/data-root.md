@@ -47,7 +47,6 @@ Design notes:
 | `artifacts/<project>/<build>/` | `install/`, the archive, and `build-id.json` from `dev build` / `dev package` |
 | `artifacts/<project>/.<channel>/` | A deploy channel's scratch |
 | `artifacts/<project>/.releases/v<version>/` | Verified downloads of a release's archives |
-| `workspaces/<checkout>-<id>/` | A container's own checkout of a snapshot |
 
 Trees are keyed by version and immutable: two projects locking the same
 release share one tree, and switching branches never reinstalls. A tree is
@@ -78,8 +77,9 @@ Reclaims what no current lock names:
 - **Tool caches** — left alone by default; dropped whole with
   `--tool-caches`. Losing one costs a re-fetch, never correctness.
 - **Snapshot branches** — `dev/build/<runner>/<id>` branches on `origin`
-  older than seven days, left by a remote dispatch that died. An `origin`
-  that cannot be reached is reported and skipped.
+  older than seven days, left by a runner dispatch that died (the
+  container mounts the checkout and mints none). An `origin` that cannot
+  be reached is reported and skipped.
 
 Venvs are not lock-named and are left alone. A workflow or cron only
 schedules `dev cache gc`; a self-hosted runner typically runs it at the end

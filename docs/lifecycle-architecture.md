@@ -34,8 +34,8 @@ One class per noun, none playing two roles.
 | Part list | `Lifecycle::PartList` | A split archive's `MANIFEST`: `<sha256>  <part>` per line, the shape `sha256sum -c` reads. Written by the archive, renamed by the release assets, read back by the release download. |
 | Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once, assets uploaded with `--clobber`, downloaded back by name. Through `gh`. |
 | Release archives | `Lifecycle::ReleaseArchives` | A cut release read back for `deploy --release`: `release.json` downloaded fresh, the selected archives downloaded into `.releases/<tag>/` and verified against its digests; a verified file is not fetched again, a failing one is removed and refused. |
-| Snapshot | `Lifecycle::Snapshot` | The working tree as a remote host reaches it: a commit through a temporary index (`Lifecycle::SnapshotCommit`) on a `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as the dispatch needs it. `Lifecycle::SnapshotSync` runs the step; `Lifecycle::SnapshotBranches` prunes the leftovers; `Lifecycle::WorkflowTriggers` reads the project's workflows for the `on: push` refusal. |
-| Workspace | `Lifecycle::Workspace` | What a build host holds of the project tree while a verb runs there, as the transport delivered it; sealed, one shape today: `Workspace::Snapshot`, the pushed snapshot the host fetches, named on the crossing line as `snapshot <sha>`. |
+| Snapshot | `Lifecycle::Snapshot` | The working tree as a runner reaches it: a commit through a temporary index (`Lifecycle::SnapshotCommit`) on a `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as the dispatch needs it. `Lifecycle::SnapshotSync` runs the step; `Lifecycle::SnapshotBranches` prunes the leftovers; `Lifecycle::WorkflowTriggers` reads the project's workflows for the `on: push` refusal. |
+| Workspace | `Lifecycle::Workspace` | What a build host holds of the project tree while a verb runs there, as the transport delivered it; sealed, two shapes: `Workspace::Snapshot`, the pushed snapshot a runner fetches (`snapshot <sha>` on the crossing line), and `Workspace::Mounted`, the checkout bind-mounted into the container at its own path (`the checkout, mounted`). Each side that runs in a workspace cases over the shapes and refuses the one that is not its delivery. |
 | Verb invocation | `Lifecycle::VerbInvocation` | A verb as a remote host runs it: the words after `dev` with the build fully qualified and the dispatch flags consumed, plus what to bring back (`Lifecycle::ArtifactFetch`: the workflow artifact's name and the store directory it lands in). |
 | Workflow run | `Lifecycle::WorkflowRun` | One run of the generic workflow as the forge lists it: id, page, status, conclusion. `Lifecycle::WorkflowRuns` is its client over `gh` (dispatch, locate, watch, view, download); `Lifecycle::LifecycleWorkflow` is the contract of the workflow file: name, inputs, dev's shipped copy. |
 | Step outputs | `Lifecycle::StepOutputs` | What `package` tells the Actions job it runs in (`GITHUB_OUTPUT`): the artifact's name and files, so the workflow uploads what `--fetch` downloads. Inert outside a job. |
@@ -150,18 +150,21 @@ caller: `assert_ready!` refuses, before anything leaves the machine,
 what the transport cannot carry; `with_workspace(tree)` delivers the
 project tree to the host for the block's duration and yields what the
 host now holds of it as a `Lifecycle::Workspace`; `run(invocation,
-workspace:)` runs the verb there. Both transports today deliver a
-snapshot: `Transport::ActionsRunner` and `Transport::LocalContainer`
-build a `SnapshotSync` over the tree inside `with_workspace`, which
-pushes the branch, yields `Workspace::Snapshot`, and deletes the branch
-however the block ended. `ActionsRunner#run` dispatches the generic
-workflow (`WorkflowRuns`) on the snapshot's branch and watches the run;
-`LocalContainer#run` is a `docker exec` into the project's container,
-which fetches the snapshot itself (`ProjectContainer` reads the
-workspace for the program). The same two steps carry a project command
-to the container (`CommandRunner#run_in_container`) and `dev up`'s
-in-container install (`ContainerUpCommand`), so no caller constructs a
-`SnapshotSync` of its own. The fan-out `deploy --release V`
+workspace:)` runs the verb there. Each transport delivers its own way:
+`Transport::ActionsRunner` builds a `SnapshotSync` over the tree inside
+`with_workspace`, which pushes the branch, yields `Workspace::Snapshot`,
+and deletes the branch however the block ended; `ActionsRunner#run`
+dispatches the generic workflow (`WorkflowRuns`) on the snapshot's
+branch and watches the run. `Transport::LocalContainer#with_workspace`
+yields the checkout itself as `Workspace::Mounted`; `LocalContainer#run`
+is a `docker exec` into the project's container, which `ProjectContainer`
+composes with the checkout bind-mounted at its own path and as the
+workdir (`BuildContainer#checkout_flags`, which also mounts the
+container's `.shadowenv.d-container/` over the host's `.shadowenv.d/`).
+The same two steps carry a project command to the container
+(`CommandRunner#run_in_container`) and `dev up`'s in-container install
+(`ContainerUpCommand`), so no caller constructs a `SnapshotSync` or a
+mount of its own. The fan-out `deploy --release V`
 (`DeployAllCommand`) takes the same dispatch flags and runs each
 channel's deploy as a child invocation.
 

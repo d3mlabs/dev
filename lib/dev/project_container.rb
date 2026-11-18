@@ -3,16 +3,13 @@
 
 require "pathname"
 require "sorbet-runtime"
-require "dev/actions_job_context"
 require "dev/build_container"
 require "dev/container_engine"
 require "dev/container_github_token"
-require "dev/container_workspace"
 require "dev/credentials"
 require "dev/engine_resources"
 require "dev/engine_resources_check"
 require "dev/environment_image"
-require "dev/lifecycle/gh"
 require "dev/lifecycle/workspace"
 
 module Dev
@@ -21,18 +18,17 @@ module Dev
   # machine for a container of the project's image. One way in, for every
   # caller — a `docker exec` (a persisted image's service container, or a
   # named one `dev up` is provisioning) or a one-shot `docker run --rm`
-  # — and the same program inside, over the workspace the transport
-  # delivered (Lifecycle::Workspace): for a snapshot, the container brings
-  # its own checkout to it and runs the command there (ContainerWorkspace).
-  # The container's verdict is the process's exit
-  # status, returned, not interpreted: each caller knows what a nonzero
-  # means for it.
+  # — over the workspace the transport delivered (Lifecycle::Workspace):
+  # the checkout itself, bind-mounted at its own path (BuildContainer),
+  # where the command runs as the process. The container's verdict is the
+  # process's exit status, returned, not interpreted: each caller knows
+  # what a nonzero means for it.
   #
   # What rides in: the image's resolved `run_env` (best-effort, so a
   # missing runtime secret never blocks a command that does not need it)
   # and the host's gh token as GH_TOKEN unless the run_env named one
-  # (ContainerGithubToken) — the fetch and whatever calls `gh` inside have
-  # the auth the host holds. Names on argv, values in the spawn env.
+  # (ContainerGithubToken) — whatever calls `gh` inside has the auth the
+  # host holds. Names on argv, values in the spawn env.
   #
   # The engine-floor gate (EngineResourcesCheck) is this path's
   # own: the project's `engine:` hint is measured against the engine once,
@@ -46,39 +42,9 @@ module Dev
     # `dev up` brings it up.
     class EngineUnavailableError < RuntimeError; end
 
-    # gh named no repo for the checkout (no `origin`, not a GitHub
-    # remote): the container has nowhere to fetch the snapshot from.
-    class RepoUnresolvedError < RuntimeError; end
-
-    # The gh query for the checkout's `owner/repo`.
-    REPO_QUERY = T.let(%w[repo view --json nameWithOwner -q .nameWithOwner].freeze, T::Array[String])
-
-    # The variable an Actions job carries its own `owner/repo` in.
-    JOB_REPOSITORY = "GITHUB_REPOSITORY"
-
-    class << self
-      extend T::Sig
-
-      # The repo resolver a caller gets by default. Inside an Actions job
-      # the job names its repo (`GITHUB_REPOSITORY`), and that is the
-      # answer: a `gh repo view` there would answer with whatever the
-      # job's GH_TOKEN can see, which is not always the repo it runs in
-      # (a release-pull token scoped to other repos). Anywhere else, gh in
-      # the checkout — asked when called, never at construction, so
-      # `dev help` pays no gh call.
-      #
-      # @param project_root [Pathname]
-      # @param env [Hash{String => String}] the environment to read, the
-      #   process's own by default
-      # @return [Proc] `-> { "owner/repo" }` (gh's answer keeps its newline)
-      sig { params(project_root: Pathname, env: T::Hash[String, String]).returns(T.proc.returns(String)) }
-      def default_repo_resolver(project_root, env: ENV.to_h)
-        job_repo = env[JOB_REPOSITORY].to_s
-        return -> { job_repo } if ActionsJobContext.inside?(env) && !job_repo.empty?
-
-        -> { Lifecycle::Gh.new(root: project_root).capture(REPO_QUERY) }
-      end
-    end
+    # The workspace handed in is not the mounted checkout — another
+    # transport's delivery, which this container has no way to run in.
+    class WorkspaceNotMountedError < ArgumentError; end
 
     # @param project_root [Pathname] the checkout the container works for
     # @param client [BuildContainer, nil] the engine-injected docker
@@ -87,10 +53,6 @@ module Dev
     # @param engine_hint [EngineResources::Hint, nil] the project's engine floor
     # @param resources_check [EngineResourcesCheck] the engine-vs-hint gate
     # @param github_token [ContainerGithubToken] the host's gh token, as GH_TOKEN inside
-    # @param repo_resolver [Proc] the checkout's repo as the forge spells it
-    #   (`owner/repo`) — the job's own inside Actions, `gh repo view` in the
-    #   checkout otherwise; called once, on the first run, never at
-    #   construction (a gh call at load would tax `dev help`)
     sig do
       params(
         project_root: Pathname,
@@ -98,20 +60,15 @@ module Dev
         engine_hint: T.nilable(EngineResources::Hint),
         resources_check: EngineResourcesCheck,
         github_token: ContainerGithubToken,
-        repo_resolver: T.proc.returns(String),
       ).void
     end
     def initialize(project_root:, client: nil, engine_hint: nil, resources_check: EngineResourcesCheck.new,
-                   github_token: ContainerGithubToken.new,
-                   repo_resolver: ProjectContainer.default_repo_resolver(project_root))
+                   github_token: ContainerGithubToken.new)
       @project_root = project_root
       @client = client
       @engine_hint = engine_hint
       @resources_check = resources_check
       @github_token = github_token
-      @repo_resolver = repo_resolver
-      @repo = T.let(nil, T.nilable(String))
-      @workspace = T.let(nil, T.nilable(ContainerWorkspace))
     end
 
     # Where a command or verb is going, for the crossing line.
@@ -123,7 +80,7 @@ module Dev
       "in #{image.name} (container)"
     end
 
-    # Refuse before anything is pushed when the engine is not up.
+    # Refuse before anything is run when the engine is not up.
     #
     # @return [void]
     # @raise [EngineUnavailableError]
@@ -143,17 +100,17 @@ module Dev
     # @param workspace [Lifecycle::Workspace] what the container holds of the tree
     # @return [Integer] the container process's exit status
     # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
-    # @raise [RepoUnresolvedError]
+    # @raise [WorkspaceNotMountedError]
     sig { params(image: EnvironmentImage, argv: T::Array[String], workspace: Lifecycle::Workspace).returns(Integer) }
     def run(image, argv:, workspace:)
+      checkout = mounted_path(workspace)
       @resources_check.check!(engine: client.engine, hint: @engine_hint)
       image_tag = client.ensure_environment_image!(image, publish: publish_image?)
-      shell_cmd = script(workspace, argv)
       invocation = if image.persist
-        container = client.ensure_service!(image_tag, project_root: @project_root, volumes: image.volumes)
-        client.docker_exec_command(container, shell_cmd:, env: run_env(image))
+        container = client.ensure_service!(image_tag, project_root: checkout, volumes: image.volumes)
+        client.docker_exec_command(container, project_root: checkout, argv:, env: run_env(image))
       else
-        client.docker_run_command(image_tag, project_root: @project_root, shell_cmd:, volumes: image.volumes, env: run_env(image))
+        client.docker_run_command(image_tag, project_root: checkout, argv:, volumes: image.volumes, env: run_env(image))
       end
       client.execute(invocation)
     end
@@ -166,13 +123,13 @@ module Dev
     # @param argv [Array<String>] the command, run in the workspace
     # @param workspace [Lifecycle::Workspace] what the container holds of the tree
     # @return [Integer] the container process's exit status
-    # @raise [RepoUnresolvedError]
+    # @raise [WorkspaceNotMountedError]
     sig do
       params(container: String, image: EnvironmentImage, argv: T::Array[String], workspace: Lifecycle::Workspace).returns(Integer)
     end
     def exec_in(container, image:, argv:, workspace:)
-      shell_cmd = script(workspace, argv)
-      client.execute(client.docker_exec_command(container, shell_cmd:, env: run_env(image)))
+      checkout = mounted_path(workspace)
+      client.execute(client.docker_exec_command(container, project_root: checkout, argv:, env: run_env(image)))
     end
 
     # Bring a directory of the container's store to the host's — what
@@ -205,43 +162,22 @@ module Dev
       @client ||= BuildContainer.new(engine: ContainerEngine.resolve)
     end
 
-    # The shell program the container runs for one invocation, by the shape
-    # of what it holds: a snapshot is fetched into the container's own
-    # checkout, and the command becomes the process there.
+    # The checkout the workspace mounts: the one shape this container runs
+    # in, read back from the sealed type in one place.
     #
     # @param workspace [Lifecycle::Workspace]
-    # @param argv [Array<String>] the command to exec in the workspace
-    # @return [String] `sh -c` material
-    # @raise [RepoUnresolvedError]
-    sig { params(workspace: Lifecycle::Workspace, argv: T::Array[String]).returns(String) }
-    def script(workspace, argv)
+    # @return [Pathname] the checkout's path, the same inside
+    # @raise [WorkspaceNotMountedError] for a workspace another transport delivered
+    sig { params(workspace: Lifecycle::Workspace).returns(Pathname) }
+    def mounted_path(workspace)
       case workspace
+      when Lifecycle::Workspace::Mounted
+        workspace.path
       when Lifecycle::Workspace::Snapshot
-        container_workspace.script(snapshot: workspace.snapshot, repo:, argv:)
+        raise WorkspaceNotMountedError,
+          "the container runs in the mounted checkout, not #{workspace.description}: a snapshot branch is a runner's delivery"
       else
-        # simplecov:disable — the sealed workspace has no second shape yet;
-        # T.absurd keeps the static proof.
         T.absurd(workspace)
-        # simplecov:enable
-      end
-    end
-
-    # @return [ContainerWorkspace] the container's checkout, under its data root
-    sig { returns(ContainerWorkspace) }
-    def container_workspace
-      @workspace ||= ContainerWorkspace.new(project_root: @project_root, data_root: client.data_root_mount)
-    end
-
-    # @return [String] `owner/repo`
-    # @raise [RepoUnresolvedError]
-    # @raise [Lifecycle::Gh::CommandFailedError]
-    sig { returns(String) }
-    def repo
-      @repo ||= begin
-        resolved = @repo_resolver.call.strip
-        raise RepoUnresolvedError, "gh named no repo for #{@project_root}; the container fetches the snapshot from the checkout's GitHub remote" if resolved.empty?
-
-        resolved
       end
     end
 

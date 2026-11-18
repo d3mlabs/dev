@@ -14,10 +14,11 @@ module Dev
   # user), not of what the files say — so a user who has never trusted a
   # directory cannot run its shadowenv however current its activation files
   # are. That user is real: the `builder` of a freshly created build
-  # container, whose home (and key) is new while the bind-mounted
-  # `.shadowenv.d` already carries the `_container` lisps a previous
-  # container wrote. The activation writers trust only after a write they
-  # made, so with nothing to rewrite nobody trusted, and the first
+  # container, whose home (and key) is new while the container's shadowenv
+  # directory, mounted from the checkout (BuildContainer), already carries
+  # the lisps a previous container wrote. The activation writers trust
+  # only after a write they made, so with nothing to rewrite nobody
+  # trusted, and the first
   # `shadowenv exec` of the install — bundler's — was refused: `directory
   # contains untrusted shadowenv program`. Provisioning therefore trusts up
   # front, unconditionally: making the project's shadowenv runnable for

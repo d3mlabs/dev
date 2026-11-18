@@ -3,21 +3,18 @@
 
 require "fileutils"
 require "pathname"
-require "dev/container_context"
 
 module Dev
-  # The one writer of a project's activation lisps, aware of which side of
-  # the build container this dev is on.
+  # The one writer of a project's activation lisps.
   #
   # `.shadowenv.d/` lives in the project, and the project is bind-mounted
-  # into the build container: one directory serves two build hosts whose
-  # prefixes differ (`/opt/homebrew` against Linuxbrew's). An activation
-  # written inside the container therefore goes to a `_container` sibling
-  # of the host's file, wrapped in a `when-let` on the inside marker
-  # (ContainerContext) so it is inert on the host, and shadowenv's lexical
-  # load order (`510_ruby.lisp` before `510_ruby_container.lisp`) lets it
-  # override the host's values inside. Neither side ever rewrites the
-  # other's file, so one checkout serves both.
+  # into the build container — but not that directory: an activation names
+  # one build host's prefixes (`/opt/homebrew` against Linuxbrew's), so
+  # each side of the container has a shadowenv directory of its own, and
+  # the container's is mounted over the host's at the one path shadowenv
+  # reads (BuildContainer::CONTAINER_SHADOWENV_DIR). A writer on either
+  # side therefore writes `.shadowenv.d/<file>` and reaches its own side's
+  # directory; neither side ever sees the other's lisps.
   #
   # Writers decide the content; this module only places it, skips a write
   # that would change nothing, and trusts the directory after a change.
@@ -26,53 +23,25 @@ module Dev
 
     module_function
 
-    # Write an activation lisp for this side, when it differs from what the
-    # project already has, then trust shadowenv.
+    # Write an activation lisp, when it differs from what the project
+    # already has, then trust shadowenv.
     #
     # @param project_root [String, Pathname] project root (`.shadowenv.d` lives there)
-    # @param filename [String] the host-side file, e.g. "510_ruby.lisp"
+    # @param filename [String] the lisp's file name, e.g. "510_ruby.lisp"
     # @param body [String] the lisp source
-    # @param inside [Boolean] whether this dev runs inside the build container
     # @return [Boolean] true when the file was (re)written, false when already current
-    sig do
-      params(
-        project_root: T.any(String, Pathname),
-        filename: String,
-        body: String,
-        inside: T::Boolean,
-      ).returns(T::Boolean)
-    end
-    def write!(project_root:, filename:, body:, inside: ContainerContext.inside?)
-      content = inside ? container_body(body) : body
-      target = inside ? container_filename(filename) : filename
+    sig { params(project_root: T.any(String, Pathname), filename: String, body: String).returns(T::Boolean) }
+    def write!(project_root:, filename:, body:)
       shadowenv_d = Pathname.new(project_root) / ".shadowenv.d"
-      lisp_path = shadowenv_d / target
-      return false if lisp_path.file? && lisp_path.read == content
+      lisp_path = shadowenv_d / filename
+      return false if lisp_path.file? && lisp_path.read == body
 
       FileUtils.mkdir_p(shadowenv_d)
-      lisp_path.write(content)
+      lisp_path.write(body)
       Dir.chdir(project_root.to_s) do
         Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
       end
       true
-    end
-
-    # The container-side sibling of a host-side file.
-    #
-    # @param filename [String] e.g. "510_ruby.lisp"
-    # @return [String] e.g. "510_ruby_container.lisp"
-    sig { params(filename: String).returns(String) }
-    def container_filename(filename)
-      filename.sub(/\.lisp\z/, "_container.lisp")
-    end
-
-    # The body gated on the inside marker: inert wherever the marker is unset.
-    #
-    # @param body [String] the lisp source
-    # @return [String]
-    sig { params(body: String).returns(String) }
-    def container_body(body)
-      "(when-let ((inside (env/get \"#{ContainerContext::MARKER}\")))\n#{body})\n"
     end
   end
 end

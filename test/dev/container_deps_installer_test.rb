@@ -14,9 +14,8 @@ require "support/fake_container_engine"
 transform!(RSpock::AST::Transformation)
 class ContainerDepsInstallerTest < Minitest::Test
   ROOT = Pathname("/src/myapp")
-  SHA = "0123456789abcdef0123456789abcdef01234567"
 
-  test "install! runs dev deps install in the container's workspace over the snapshot delivered, with the run_env injected" do
+  test "install! runs dev deps install in the mounted checkout, with the run_env injected" do
     Given "an engine that succeeds, a host with no gh login, and an image with a resolvable run_env"
     engine = FakeContainerEngine.new
     ENV["WWISE_TOKEN"] = "t0k"
@@ -24,20 +23,15 @@ class ContainerDepsInstallerTest < Minitest::Test
     When "installing"
     installer(engine, token: nil).install!("dev-myapp-abc", image: image(run_env: { "WWISE_TOKEN" => "wwise/token" }), workspace: workspace)
 
-    Then "one docker exec, the env named (bare -e, the value in the spawn env — dev#317), the workspace program fetching the snapshot then exec'ing the builtin"
-    engine.runs.size == 1
-    engine.runs.first[0, 4] == ["exec", "-e", "WWISE_TOKEN", "dev-myapp-abc"]
-    engine.runs.first[4, 2] == ["sh", "-c"]
-    engine.runs.first.last.include?("fetch -q --no-tags https://github.com/o/r.git #{snapshot.branch.ref}")
-    engine.runs.first.last.include?("git reset -q --hard #{SHA}")
-    engine.runs.first.last.end_with?("exec dev deps install\n")
+    Then "one docker exec, the env named (bare -e, the value in the spawn env — dev#317), the checkout the workdir, the builtin the command"
+    engine.runs == [["exec", "-e", "WWISE_TOKEN", "-w", ROOT.to_s, "dev-myapp-abc", "dev", "deps", "install"]]
     engine.run_envs == [{ "WWISE_TOKEN" => "t0k" }]
 
     Cleanup
     ENV.delete("WWISE_TOKEN")
   end
 
-  test "install! hands the host's gh token to the container as GH_TOKEN: the container fetches the snapshot and its own private releases (ADR-0008)" do
+  test "install! hands the host's gh token to the container as GH_TOKEN: the install fetches its own private releases with it (ADR-0008)" do
     Given "an engine that succeeds and a host whose gh is logged in"
     engine = FakeContainerEngine.new
 
@@ -45,7 +39,7 @@ class ContainerDepsInstallerTest < Minitest::Test
     installer(engine, token: "gho_secret").install!("dev-myapp-abc", image: image, workspace: workspace)
 
     Then "the exec names GH_TOKEN; the value rides the spawn env and appears on no argv"
-    engine.runs.first[0, 4] == ["exec", "-e", "GH_TOKEN", "dev-myapp-abc"]
+    engine.runs.first[0, 3] == ["exec", "-e", "GH_TOKEN"]
     engine.runs.first.none? { |part| part.include?("gho_secret") }
     engine.run_envs == [{ "GH_TOKEN" => "gho_secret" }]
   end
@@ -69,7 +63,6 @@ class ContainerDepsInstallerTest < Minitest::Test
       project_root: ROOT,
       client: Dev::BuildContainer.new(engine:, host_os: "darwin"),
       github_token: Dev::ContainerGithubToken.new(source: -> { token }),
-      repo_resolver: -> { "o/r\n" },
     )
     Dev::ContainerDepsInstaller.new(containers:)
   end
@@ -81,12 +74,10 @@ class ContainerDepsInstallerTest < Minitest::Test
     )
   end
 
-  def snapshot
-    @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
-  end
-
-  # The checkout as the container's transport delivers it today: the snapshot.
+  # The checkout as the container's transport delivers it: mounted at its
+  # own path (the exec names no mount — the container has it since its
+  # creation — so the path need not exist here).
   def workspace
-    Dev::Lifecycle::Workspace::Snapshot.new(snapshot)
+    Dev::Lifecycle::Workspace::Mounted.new(ROOT)
   end
 end

@@ -14,7 +14,8 @@ module Dev
       # `dev cache gc [--keep N] [--tool-caches]`: reclaim stale tree
       # versions, the engine's stale Linuxbrew prefix volumes, the tags of
       # the lock's images that the lock no longer names, and the snapshot
-      # branches of remote dispatches older than the retention; with
+      # branches of dispatches to runners older than the retention (the
+      # container mounts the checkout and mints none); with
       # `--tool-caches`, also drop the tools' download caches whole. A leaf
       # of the `cache` group.
       class CacheGcCommand < BuiltinCommand
@@ -51,7 +52,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Reclaim stale tree versions, build images, prefix volumes and snapshot branches"
+          "Reclaim stale tree versions, build images, prefix volumes and runner snapshot branches"
         end
 
         sig { override.returns(Command::Category) }

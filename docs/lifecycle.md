@@ -654,13 +654,14 @@ A verb that leaves the machine:
 1. is refused, before anything leaves, by a host that cannot take it:
    a runner asked from inside an Actions job, a container whose engine
    is down;
-2. delivers the working tree to the host — today, on either host, by
-   pushing it as a snapshot branch ([the sync step](#the-sync-step));
+2. delivers the working tree to the host — a runner is pushed a
+   snapshot branch ([the sync step](#the-sync-step)); the container
+   mounts the checkout itself ([in the container](#in-the-container));
 3. prints one dim line — `→ on <runner>, snapshot <sha>`, or `→ in
-   <image> (container), snapshot <sha>` — so the next output is known to
-   be another host's;
+   <image> (container), the checkout, mounted` — so the next output is
+   known to be another host's;
 4. runs the verb there and returns with its verdict;
-5. deletes the branch.
+5. on a runner, deletes the branch.
 
 **On a runner**, dev dispatches its generic workflow on the snapshot
 branch. The project copies it verbatim from `share/workflows/dev-lifecycle.yml`
@@ -682,15 +683,20 @@ streams it to the terminal; the dispatch prints the run's page first. A
 run that does not complete successfully is the verb's failure, naming the
 verb, the label, GitHub's conclusion and the page.
 
+<a id="in-the-container"></a>
 **In the container**, the verb runs by `docker exec` into the project's
 persisted container (a one-shot `docker run --rm` for a non-persisted
-image). The container fetches the snapshot into a workspace of its own
-under its data root, `/var/lib/dev/workspaces/<checkout>-<id>`, kept
-between dispatches so ignored build state (`Intermediate/`, `Binaries/`,
-the DDC) stays warm, resets to the snapshot and runs `dev <verb>` there.
-Nothing of the host's checkout is mounted. The container's exit status is
-the verdict, and its output is the terminal's directly. `dev up` fills
-the same workspace, so the first verb finds it warm.
+image). The checkout is bind-mounted into the container **at its own
+host path** and is the working directory, so `dev <verb>` runs over the
+same tree the operator edits — uncommitted changes, ignored build state
+(`Intermediate/`, `Binaries/`, the DDC) and all — and every absolute
+path a build tool records reads the same from both sides. Nothing is
+pushed, no token is needed for the tree, and a Mac with no network
+builds in its container. The one thing the host's checkout does not
+share is `.shadowenv.d/`: its lisps bind the host's interpreters, so the
+container's own, `.shadowenv.d-container/` (ignored, written by `dev up`
+inside), is mounted over it. The container's exit status is the verdict,
+and its output is the terminal's directly.
 
 **The invocation** the host runs is the one typed, with the build fully
 qualified (never a default the host would resolve differently), the
@@ -720,14 +726,15 @@ that finds itself not to be the build's environment is misprovisioned,
 and the runner transport says so — naming the runner it would have left
 for — rather than dispatching onto itself or between two runners
 forever. The container is not a runner: a job that reaches for the
-project's container of its image runs there, the way `dev up` already
-fills that container's workspace from a job's own checkout.
+project's container of its image runs there, over the job's own checkout
+mounted, the way `dev up` already installs that container's dependencies.
 
 ### The sync step
 
-What a remote host builds is the operator's working tree, uncommitted
-changes included. The one transport every host has to it is the
-project's GitHub remote. Before a dispatch:
+What a runner builds is the operator's working tree, uncommitted changes
+included. The one transport a runner has to it is the project's GitHub
+remote; the container needs none, since it mounts the checkout. Before
+a dispatch to a runner:
 
 1. **Refuse while nothing has left the machine** if a project workflow
    would run on the push. An `on: push` with no `branches`,
@@ -749,20 +756,8 @@ project's GitHub remote. Before a dispatch:
 
 A branch that outlives its dispatch (a killed dev, a lost connection, a
 read-only credential) is pruned by `dev cache gc` once older than seven
-days, read from its name ([Data root](data-root.md#dev-cache-gc)).
-
-**Inside an Actions job, the checkout is the snapshot.** A job is given
-a commit at a ref — `GITHUB_SHA` at `GITHUB_REF`, `refs/pull/<n>/merge`
-for a pull request, a branch for a push — and `actions/checkout` puts
-that commit at HEAD, so the tree is already on the forge. When HEAD is
-`GITHUB_SHA` and `git status --porcelain` is empty (ignored files do not
-count; they never enter a snapshot), the sync step hands the container
-that commit at the job's ref and pushes nothing — a job's default
-`GITHUB_TOKEN` is `contents: read`, which could not push a branch
-anyway. A job whose steps have changed the tree before `dev` runs (a
-generated file, a modified lock) pushes as above, and a refused push
-then also says what differed, so the fix is read from the error rather
-than from the token.
+days, read from its name ([Data root](data-root.md#dev-cache-gc)). Only
+runner dispatches mint branches; the container mints none.
 
 A snapshot-branch build is unreviewed code running on the host as its
 job user: the same trust a self-hosted runner already extends to the

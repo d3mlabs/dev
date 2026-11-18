@@ -89,18 +89,18 @@ class EnvironmentIntegrationTest < Minitest::Test
     created = @engine.runs.find(&method(:service_create?))
     mounts = created.each_cons(2).select { |flag, _| flag == "-v" }.map(&:last)
 
-    Then "build is a one-shot run of the linux image; test-server an exec into the server image's persistent container, created with its volume — both through the engine, each the workspace program ending in the command, nothing exec'd"
+    Then "build is a one-shot run of the linux image; test-server an exec into the server image's persistent container, created with its volume and the checkout mounted — both through the engine, each the command in the checkout, nothing exec'd"
+    checkout = Dev::BuildContainer.workspace_path(@root)
     execs.empty?
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
-    run[-4, 3] == [linux.ref, "sh", "-c"]
-    run.last.end_with?("exec sh -c ./bin/build.sh\n")
+    run.last(4) == [linux.ref, "sh", "-c", "./bin/build.sh"]
+    run.each_cons(2).include?(["-w", checkout])
     exec = @engine.runs.find { |verb, *_rest| verb == "exec" }
-    exec[0, 4] == ["exec", Dev::BuildContainer.service_container_name(server.ref, @root), "sh", "-c"]
-    exec.last.end_with?("exec sh -c ./bin/test-server.sh\n")
+    exec == ["exec", "-w", checkout, Dev::BuildContainer.service_container_name(server.ref, @root), "sh", "-c", "./bin/test-server.sh"]
     created.include?(server.ref)
     mounts.include?("/e:/ue")
-    mounts.none? { |spec| spec.start_with?(@root.to_s) }
+    mounts.include?("#{checkout}:#{checkout}")
   end
 
   test "environment: host runs the command here, whatever the lock pins" do
@@ -128,7 +128,7 @@ class EnvironmentIntegrationTest < Minitest::Test
     exec!(runner, ["editor"])
 
     Then
-    1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: ScriptedRemote::WORKSPACE)
+    1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: "the checkout, mounted")
     0 * ui.print_remote_crossing(destination: includes("host"), workspace: anything)
   end
 
@@ -349,13 +349,13 @@ class EnvironmentIntegrationTest < Minitest::Test
   end
 
   # The project's container over the fake engine — a host whose gh holds
-  # no login, so the developer's own token never enters an expected argv;
-  # the repo named without gh — and a sync step that pushes nothing.
+  # no login, so the developer's own token never enters an expected argv
+  # — and, for the runner transport, a sync step that pushes nothing.
   def remote_hosts(project)
     Dev::Cli::Runner::RemoteHosts.new(
       containers: Dev::ProjectContainer.new(
         project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
-        github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
+        github_token: Dev::ContainerGithubToken.new(source: -> { nil }),
       ),
       sync_for: ->(_root) { ScriptedRemote::CannedSync.new },
     )

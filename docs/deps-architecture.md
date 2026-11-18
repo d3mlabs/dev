@@ -346,10 +346,11 @@ which activates the store path). `ShadowenvPath`
 renders the PATH files: a `provide` record names the activated set, the
 file is rewritten only when the set changed, and an integration that
 knows no project (an image bootstrap, a test) activates nothing.
-`ShadowenvFile` places every activation file for the side of the build
-container that wrote it: the project's `.shadowenv.d/` is bind-mounted,
-so the container writes a `_container` sibling gated on the inside
-marker, inert on the host and overriding inside, and neither side
+`ShadowenvFile` writes every activation file into the project's
+`.shadowenv.d/` and trusts it; which side's directory that is, the mount
+decides — the container has the host's `.shadowenv.d-container/` mounted
+over `.shadowenv.d/` (`BuildContainer::CONTAINER_SHADOWENV_DIR`), so the
+two sides write the same filenames into two directories and neither
 rewrites the other's file. `dev deps path` stays the answer for a script
 that needs the absolute path rather than PATH.
 

@@ -46,14 +46,14 @@ module Dev
     # here, silently. An image means the project's container of it, reached
     # as a remote that happens to be local, through the same transport the
     # lifecycle verbs take there (Transport::LocalContainer): the transport
-    # delivers the tree to the container as a workspace for the command's
-    # duration, one dim line says so (`→ in <image> (container), snapshot
-    # <sha>`), and the container runs the command in that workspace
-    # (ProjectContainer), with the image's resolved `run_env` and the
-    # host's gh token as GH_TOKEN. The container path always waits — the
-    # workspace is taken back after — and the container's exit status
-    # becomes dev's own: exec_into exits with it, run_waiting raises
-    # CommandFailedError over it.
+    # delivers the tree to the container as a workspace — the checkout,
+    # bind-mounted at its own path — one dim line says so (`→ in <image>
+    # (container), the checkout, mounted`), and the container runs the
+    # command in that workspace (ProjectContainer), with the image's
+    # resolved `run_env` and the host's gh token as GH_TOKEN. The container
+    # path always waits, and the container's exit status becomes dev's
+    # own: exec_into exits with it, run_waiting raises CommandFailedError
+    # over it.
     #
     # Inside a dev-managed container (HostRule#inside_container?) there is no
     # further container to reach for: every command runs directly at the
@@ -128,24 +128,20 @@ module Dev
       #   and whether this dev already runs inside a container
       # @param containers [Dev::ProjectContainer] the way into the project's
       #   containers (the one instance the lifecycle verbs share)
-      # @param sync_for [Proc] the sync step the container transport
-      #   delivers the tree by (Transport::SyncFor)
       sig do
         params(
           ui: Dev::Ui,
           project_root: Pathname,
           host_rule: Dev::Cli::HostRule,
           containers: Dev::ProjectContainer,
-          sync_for: Transport::SyncFor,
         ).void
       end
       def initialize(ui:, project_root:, host_rule: Dev::Cli::HostRule.new,
-                     containers: Dev::ProjectContainer.new(project_root:), sync_for: Transport::DEFAULT_SYNC_FOR)
+                     containers: Dev::ProjectContainer.new(project_root:))
         @ui = ui
         @project_root = project_root
         @host_rule = host_rule
         @containers = containers
-        @sync_for = sync_for
       end
 
       # Hand the process over to the command: exec-replace, the right shape
@@ -229,7 +225,7 @@ module Dev
       # The crossing: the one moment the mental model can be wrong, so the
       # one line dev prints about where a command runs (a native or host run
       # prints nothing beyond the footer). The container's transport
-      # delivers the tree as a workspace for the command's duration; the
+      # delivers the tree as a workspace — the mounted checkout; the
       # container runs the command in it — the shell command, where a verb
       # would be `dev <words>` — and its exit status is the verdict here.
       # The transport's readiness probe is not asked: this path's one
@@ -244,7 +240,7 @@ module Dev
       # @raise [EngineResourcesCheck::UndersizedEngineError] when the engine falls short of the project's floor
       sig { params(image: EnvironmentImage, shell_command: String, wait: T::Boolean).void }
       def run_in_container(image, shell_command, wait:)
-        transport = Transport::LocalContainer.new(image:, containers: @containers, sync_for: @sync_for)
+        transport = Transport::LocalContainer.new(image:, containers: @containers)
         status = transport.with_workspace(@project_root) do |workspace|
           @ui.print_remote_crossing(destination: transport.destination, workspace: workspace.description)
           @containers.run(image, argv: ["sh", "-c", shell_command], workspace:)

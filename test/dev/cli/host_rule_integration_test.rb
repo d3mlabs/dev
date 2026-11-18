@@ -28,8 +28,8 @@ require "yaml"
 # checkout pinning one image. What decides where a command runs is the
 # host's /etc/dev/environment marker against the lock — not the platform.
 # The process boundaries are faked (engine, exec, the marker's path, the
-# snapshot push and the repo gh would name); everything between dev.yml
-# and the argv dev would exec — or hand the engine — is real.
+# runner's snapshot push); everything between dev.yml and the argv dev
+# would exec — or hand the engine — is real.
 transform!(RSpock::AST::Transformation)
 class HostRuleIntegrationTest < Minitest::Test
   include SorbetHelper
@@ -83,24 +83,24 @@ class HostRuleIntegrationTest < Minitest::Test
     @engine.runs.empty?
   end
 
-  test "a Linux host on the image's platform but provisioned from nothing runs the command inside — the host's data root bind-mounted, the checkout not: the container fetches the snapshot" do
+  test "a Linux host on the image's platform but provisioned from nothing runs the command inside — the host's data root and the checkout bind-mounted at their own paths" do
     Given "no marker"
     image = lock
+    checkout = Dev::BuildContainer.workspace_path(@root)
     execs = record_execs
     Kernel.expects(:exit).with(0).once
 
     When
     exec!(runner, ["build"])
 
-    Then "one docker run of the lock's image through the engine; the host's data root at its own path is the one bind mount; DEV_DATA_ROOT named on argv, valued in the spawn env; the command at the end of the workspace program"
+    Then "one docker run of the lock's image through the engine; the data root, the checkout and the container's shadowenv directory are the bind mounts; the checkout the workdir; DEV_DATA_ROOT named on argv, valued in the spawn env; the command last"
     execs.empty?
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
     run.include?(image.ref)
-    run[-3, 2] == ["sh", "-c"]
-    run.last.include?("fetch -q --no-tags https://github.com/o/r.git refs/heads/dev/build/container/")
-    run.last.end_with?("exec sh -c ./bin/build.sh\n")
-    bind_mounts(run) == ["#{@data_root}:#{@data_root}"]
+    run.last(3) == ["sh", "-c", "./bin/build.sh"]
+    bind_mounts(run) == ["#{@data_root}:#{@data_root}", "#{checkout}:#{checkout}", "#{checkout}/.shadowenv.d-container:#{checkout}/.shadowenv.d"]
+    run.each_cons(2).include?(["-w", checkout])
     run.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
     @engine.run_envs.fetch(@engine.runs.index(run))["DEV_DATA_ROOT"] == @data_root
   end
@@ -187,12 +187,12 @@ class HostRuleIntegrationTest < Minitest::Test
   end
 
   # The project's container over the fake engine (a host whose gh holds no
-  # login, the repo named without gh) and a sync step that pushes nothing.
+  # login) and, for the runner transport, a sync step that pushes nothing.
   def remote_hosts(project)
     Dev::Cli::Runner::RemoteHosts.new(
       containers: Dev::ProjectContainer.new(
         project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
-        github_token: Dev::ContainerGithubToken.new(source: -> { nil }), repo_resolver: -> { "o/r" },
+        github_token: Dev::ContainerGithubToken.new(source: -> { nil }),
       ),
       sync_for: ->(_root) { ScriptedRemote::CannedSync.new },
     )

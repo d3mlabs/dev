@@ -366,5 +366,5 @@ re-resolves it every time, and the lock's header says so.
 Committed: `dependencies.rb`, `deps.lock`, `.ruby-version`, and the
 generated `Gemfile` / `Gemfile.lock` when gems are declared.
 
-Gitignored: `.shadowenv.d/`, `.venv`, `.venv-container`, `build/_deps/`.
+Gitignored: `.shadowenv.d/`, `.shadowenv.d-container/`, `.venv`, `.venv-container`, `build/_deps/`.
 Full list: [deps-channels.md](deps-channels.md#what-the-checkout-carries-and-gitignores).
