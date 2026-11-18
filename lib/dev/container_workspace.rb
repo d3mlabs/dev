@@ -55,8 +55,8 @@ module Dev
     # workspace to the snapshot, then become the command there. `sh -c`
     # material, every value quoted.
     #
-    # @param snapshot [Lifecycle::Snapshot] the pushed tree
-    # @param repo [String] the forge's `owner/repo`, where the snapshot branch is
+    # @param snapshot [Lifecycle::Snapshot] the tree, at the ref the forge serves it
+    # @param repo [String] the forge's `owner/repo`, where the snapshot is
     # @param argv [Array<String>] the command to exec in the workspace
     # @return [String]
     sig { params(snapshot: Lifecycle::Snapshot, repo: String, argv: T::Array[String]).returns(String) }
@@ -68,7 +68,7 @@ module Dev
         cd #{workspace}
         [ -d .git ] || git -c advice.defaultBranchName=false init -q
         git -c credential.helper= -c #{Shellwords.escape("credential.helper=#{GH_CREDENTIAL_HELPER}")} \\
-          fetch -q --no-tags #{Shellwords.escape(fetch_url(repo))} #{Shellwords.escape(snapshot.branch.ref)}
+          fetch -q --no-tags #{Shellwords.escape(fetch_url(repo))} #{Shellwords.escape(snapshot.ref)}
         git reset -q --hard #{Shellwords.escape(snapshot.sha)}
         git clean -qfd
         exec #{argv.shelljoin}

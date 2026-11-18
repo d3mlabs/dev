@@ -26,6 +26,19 @@ class Dev::ContainerWorkspaceTest < Minitest::Test
     Dev::ContainerWorkspace::RUNNER == "container"
   end
 
+  test "a checked-out snapshot is fetched by the job's own ref" do
+    Given
+    snapshot = Dev::Lifecycle::Snapshot.checked_out(sha: SHA, ref: "refs/pull/338/merge")
+    workspace = Dev::ContainerWorkspace.new(project_root: ROOT, data_root: "/var/lib/dev")
+
+    When
+    script = workspace.script(snapshot:, repo: "d3mlabs/snappy", argv: ["dev", "up"])
+
+    Then
+    script.include?("fetch -q --no-tags https://github.com/d3mlabs/snappy.git refs/pull/338/merge")
+    script.include?("git reset -q --hard #{SHA}")
+  end
+
   test "two checkouts of one project get two workspaces: neither can hijack the other's" do
     Expect
     Dev::ContainerWorkspace.new(project_root: Pathname("/a/snappy"), data_root: "/var/lib/dev").path !=

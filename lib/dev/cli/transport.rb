@@ -81,6 +81,10 @@ module Dev
         # carries the verb, the label and the run's page.
         class RemoteVerbFailedError < RuntimeError; end
 
+        # The snapshot was handed over as an Actions job's own checkout,
+        # which has no branch to dispatch a workflow on.
+        class NotPushedError < RuntimeError; end
+
         sig(:final) { override.returns(String) }
         attr_reader :runner
 
@@ -116,8 +120,13 @@ module Dev
         sig(:final) { override.params(invocation: Lifecycle::VerbInvocation, snapshot: Lifecycle::Snapshot).void }
         def run(invocation, snapshot:)
           workflow = Lifecycle::LifecycleWorkflow::FILE_NAME
-          @runs.dispatch(workflow:, ref: snapshot.branch.name, inputs: @workflow.inputs(invocation, runner: @runner))
-          run = @runs.locate(workflow:, branch: snapshot.branch)
+          # A verb inside an Actions job never dispatches (ActionsJobContext),
+          # so the snapshot here is always a pushed one with a branch.
+          branch = snapshot.branch
+          raise NotPushedError, "a checked-out snapshot (#{snapshot.ref}) has no branch to dispatch on" if branch.nil?
+
+          @runs.dispatch(workflow:, ref: branch.name, inputs: @workflow.inputs(invocation, runner: @runner))
+          run = @runs.locate(workflow:, branch:)
           @out.puts "dispatched `dev #{invocation}` on #{@runner}: #{run.url}"
           finished = @runs.watch(run)
           unless finished.succeeded?
