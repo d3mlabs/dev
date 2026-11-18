@@ -251,6 +251,45 @@ class Dev::ProjectContainerTest < Minitest::Test
     nil
   end
 
+  test "inside an Actions job the default repo resolver reads GITHUB_REPOSITORY and never asks gh" do
+    Given "a job's environment naming the repo"
+    root = Pathname("/proj")
+    env = { "GITHUB_ACTIONS" => "true", "GITHUB_REPOSITORY" => "d3mlabs/cellbound-3d" }
+    Dev::Lifecycle::Gh.expects(:new).never
+
+    When "resolving the default"
+    resolved = Dev::ProjectContainer.default_repo_resolver(root, env:).call
+
+    Then "the job's repo is the answer"
+    resolved == "d3mlabs/cellbound-3d"
+
+    Cleanup
+    nil
+  end
+
+  test "a job without GITHUB_REPOSITORY, or no job at all, falls back to gh" do
+    Given "an environment that does not name the repo"
+    root = Pathname("/proj")
+    gh = typed_mock(Dev::Lifecycle::Gh)
+    Dev::Lifecycle::Gh.expects(:new).with(root: root).once.returns(gh)
+    gh.expects(:capture).with(Dev::ProjectContainer::REPO_QUERY).once.returns("d3mlabs/demo\n")
+
+    When "resolving the default"
+    resolved = Dev::ProjectContainer.default_repo_resolver(root, env:).call
+
+    Then "gh answers"
+    resolved == "d3mlabs/demo\n"
+
+    Cleanup
+    nil
+
+    Where
+    label                        | env
+    "a job naming no repo"       | { "GITHUB_ACTIONS" => "true" }
+    "a repo named outside a job" | { "GITHUB_REPOSITORY" => "d3mlabs/demo" }
+    "neither"                    | {}
+  end
+
   def snapshot
     @snapshot ||= Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner: Dev::ContainerWorkspace::RUNNER))
   end
