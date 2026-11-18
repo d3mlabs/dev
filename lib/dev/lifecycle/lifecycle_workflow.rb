@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "shipped_workflow"
 require_relative "verb_invocation"
 
 module Dev
@@ -18,14 +19,6 @@ module Dev
       class WorkflowMissingError < RuntimeError; end
 
       FILE_NAME = "dev-lifecycle.yml"
-      # Where a project carries it, relative to its root.
-      PROJECT_PATH = T.let(Pathname(".github/workflows") / FILE_NAME, Pathname)
-      # dev's own copy, relative to this file (lib/dev/lifecycle/ → the
-      # repo or libexec root), the installed location under brew.
-      SOURCE = T.let(
-        Pathname(File.expand_path(File.join(T.must(__dir__), "..", "..", "..", "share", "workflows", FILE_NAME))),
-        Pathname,
-      )
 
       VERBS_INPUT = "verbs"
       RUNNER_INPUT = "runner"
@@ -35,12 +28,19 @@ module Dev
       sig { params(root: Pathname).void }
       def initialize(root:)
         @root = root
+        @shipped = T.let(ShippedWorkflow.new(file_name: FILE_NAME, root:), ShippedWorkflow)
       end
 
       # @return [Pathname] the project's copy
       sig { returns(Pathname) }
       def path
-        @root / PROJECT_PATH
+        @shipped.path
+      end
+
+      # @return [Pathname] dev's own copy
+      sig { returns(Pathname) }
+      def source
+        @shipped.source
       end
 
       # Refuse before anything leaves the machine when the project carries
@@ -50,11 +50,11 @@ module Dev
       # @raise [WorkflowMissingError]
       sig { void }
       def assert_installed!
-        return if path.file?
+        return if @shipped.installed?
 
         raise WorkflowMissingError,
-          "#{@root} has no #{PROJECT_PATH}: the remote dispatch runs dev's generic workflow from the project's checkout — " \
-            "copy it in and commit it (mkdir -p #{PROJECT_PATH.dirname} && cp #{SOURCE} #{PROJECT_PATH})"
+          "#{@root} has no #{@shipped.project_path}: the remote dispatch runs dev's generic workflow from the project's checkout — " \
+            "copy it in and commit it (#{@shipped.copy_instruction})"
       end
 
       # The dispatch's inputs for one invocation on one runner label.

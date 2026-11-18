@@ -1,0 +1,113 @@
+# The rubygems publish workflow dev ships.
+#
+# A project copies this file verbatim to
+# `.github/workflows/dev-publish-rubygems.yml` and commits it (a `dev deploy
+# rubygems` from a project without it names the `cp`, source path
+# included). It ships the gems of a release to rubygems.org under trusted
+# publishing: the job's OIDC token is exchanged for a push key that lives
+# for this job, so no API key is stored anywhere.
+#
+# `dev release <version>` creates the GitHub release and then uploads the
+# archives and `release.json`; `release: published` fires at the creation,
+# so the job waits for `release.json` before it deploys. The manual trigger
+# publishes a version whose release already carries its assets (a failed
+# job, a trusted publisher registered late).
+#
+# On rubygems.org, once: a trusted publisher on the gem for this repository
+# and the workflow file name `dev-publish-rubygems.yml` — a pending one for
+# a gem not yet pushed. A first push must name the account that owns the
+# new gem: the repository or organization variable `RUBYGEMS_OWNER` holds
+# that account's rubygems.org handle or id, and is left unset otherwise.
+name: dev publish rubygems
+run-name: "dev deploy rubygems --release ${{ inputs.version || github.ref_name }}"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "release version to publish (e.g. 1.2.0); its GitHub release must carry the .gem and release.json"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  deployments: write
+
+jobs:
+  publish:
+    name: "rubygems ${{ inputs.version || github.ref_name }}"
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version a manual run names, else the published release's tag
+      # without its `v`. The input rides the environment, never the script
+      # text.
+      - name: Resolve the version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Homebrew + dev on the stock image, then `dev up`: the data root and
+      # the lock's Ruby and gems.
+      - uses: d3mlabs/dev/up@main
+
+      - name: Wait for the release assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if gh release view "v$VERSION" --json assets --jq '.assets[].name' | grep -qx 'release.json'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::release v$VERSION carries no release.json after 5 minutes — did dev release finish?"
+          exit 1
+
+      # The exchange by hand: rubygems.org takes the owning account on the
+      # exchange for a gem that does not exist yet, which the
+      # configure-rubygems-credentials action has no input for. The key
+      # lands in GEM_HOST_API_KEY, the first link of dev's credential chain.
+      - name: Exchange the OIDC token for a push key
+        shell: bash
+        env:
+          RUBYGEMS_OWNER: ${{ vars.RUBYGEMS_OWNER }}
+        run: |
+          set -euo pipefail
+          jwt=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=rubygems.org" | jq -r .value)
+          request=$(jq -n --arg jwt "$jwt" --arg owner "$RUBYGEMS_OWNER" \
+            '{jwt: $jwt} + (if $owner == "" then {} else {owner: $owner} end)')
+          response=$(curl -sS -X POST https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token \
+            -H 'Content-Type: application/json' -d "$request")
+          key=$(jq -r '.rubygems_api_key // empty' <<<"$response")
+          if [ -z "$key" ]; then
+            echo "::error::trusted publisher exchange failed: $(jq -c 'del(.rubygems_api_key)' <<<"$response")"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "GEM_HOST_API_KEY=$key" >> "$GITHUB_ENV"
+
+      # The release's gems, downloaded and verified against release.json,
+      # pushed in order; the deploy recorded as a GitHub Deployment.
+      - name: Publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: dev deploy rubygems --release "$VERSION"

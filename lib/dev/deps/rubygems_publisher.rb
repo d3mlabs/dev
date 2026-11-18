@@ -8,6 +8,7 @@ require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/shell"
 require "dev/lifecycle/shipment"
+require "dev/lifecycle/shipped_workflow"
 require "dev/lifecycle/track"
 
 module Dev
@@ -25,6 +26,12 @@ module Dev
     # env and never on argv. The archive is read-only input and nothing
     # lands in the scratch.
     #
+    # The project publishes from the workflow dev ships
+    # (`share/workflows/dev-publish-rubygems.yml`), which runs this verb on
+    # a hosted runner with a trusted-publishing key in `GEM_HOST_API_KEY`.
+    # A project carrying no copy of it is refused with the copy named, as
+    # the remote dispatch refuses without its workflow.
+    #
     # The project root (where `gem` runs), the shell and the credential
     # provider are fixed for a checkout and constructor-owned; the
     # shipments are per call.
@@ -35,6 +42,9 @@ module Dev
       # Asked to ship a working artifact: rubygems.org has no track that
       # is not live.
       class TestingTrackUnsupportedError < RuntimeError; end
+
+      # The project carries no copy of the publish workflow.
+      class PublishWorkflowMissingError < RuntimeError; end
 
       # A shipped archive is not a `.gem`: the target's packager does not
       # produce what this channel uploads.
@@ -54,6 +64,9 @@ module Dev
       # environment overrides the stored credential the way it does for gem.
       API_KEY_ENV_VAR = "GEM_HOST_API_KEY"
       API_KEY_URL = "https://rubygems.org/profile/api_keys/new"
+      # The workflow dev ships for this channel, under the name the project
+      # carries it by.
+      WORKFLOW_FILE_NAME = "dev-publish-rubygems.yml"
 
       # @param project_root [Pathname] where `gem push` runs
       # @param shell [Lifecycle::Shell] the process boundary
@@ -63,6 +76,7 @@ module Dev
         @project_root = project_root
         @shell = shell
         @credentials = credentials
+        @workflow = T.let(Lifecycle::ShippedWorkflow.new(file_name: WORKFLOW_FILE_NAME, root: project_root), Lifecycle::ShippedWorkflow)
       end
 
       # Push every shipped gem, in order. The whole set is checked before
@@ -75,6 +89,7 @@ module Dev
       # @param scratch [Pathname] unused: nothing is materialised
       # @return [Lifecycle::Receipt] the gems pushed, by file name
       # @raise [TestingTrackUnsupportedError]
+      # @raise [PublishWorkflowMissingError]
       # @raise [NotAGemError]
       # @raise [PushFailedError] at the first gem rubygems.org refuses
       # @raise [Credentials::MissingCredentialError] on a non-interactive miss of the API key
@@ -87,6 +102,7 @@ module Dev
       def publish(shipments, channel:, track:, scratch:)
         _ = scratch
         refuse_testing!(track, channel)
+        assert_workflow_installed!(channel)
         shipments.each { |shipment| assert_gem!(shipment, channel) }
         env = { API_KEY_ENV_VAR => api_key }
         shipments.each { |shipment| push(shipment, env:) }
@@ -112,6 +128,18 @@ module Dev
           "channel '#{channel}' ships to rubygems.org, which has no testing track: a pushed version is live and can " \
             "never be reused — cut a release and deploy that (`dev release <version>`, then " \
             "`dev deploy #{channel} --release <version>`)"
+      end
+
+      # @param channel [Lifecycle::Channel]
+      # @raise [PublishWorkflowMissingError]
+      sig { params(channel: Lifecycle::Channel).void }
+      def assert_workflow_installed!(channel)
+        return if @workflow.installed?
+
+        raise PublishWorkflowMissingError,
+          "#{@project_root} has no #{@workflow.project_path}: `deploy #{channel}` publishes a release from the project's " \
+            "copy of dev's publish workflow, which runs it under rubygems.org trusted publishing — copy it in and commit " \
+            "it (#{@workflow.copy_instruction})"
       end
 
       # @param shipment [Lifecycle::Shipment]

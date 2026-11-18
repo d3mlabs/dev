@@ -127,7 +127,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
     Then
     error = raises(Dev::Lifecycle::LifecycleWorkflow::WorkflowMissingError)
     error.message.include?("#{root} has no .github/workflows/dev-lifecycle.yml")
-    error.message.include?("cp #{Dev::Lifecycle::LifecycleWorkflow::SOURCE} .github/workflows/dev-lifecycle.yml")
+    error.message.include?("cp #{Dev::Lifecycle::LifecycleWorkflow.new(root:).source} .github/workflows/dev-lifecycle.yml")
     gh.calls.empty?
     remote_heads(origin).keys == ["refs/heads/main"]
 
@@ -412,7 +412,8 @@ class Dev::Cli::DispatchTest < Minitest::Test
   end
 
   def install_workflow(root)
-    Dev::Lifecycle::LifecycleWorkflow.new(root:).path.tap { |path| path.dirname.mkpath }.write(Dev::Lifecycle::LifecycleWorkflow::SOURCE.read)
+    workflow = Dev::Lifecycle::LifecycleWorkflow.new(root:)
+    workflow.path.tap { |path| path.dirname.mkpath }.write(workflow.source.read)
   end
 
   def checkout_with_origin(workspace)

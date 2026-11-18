@@ -27,8 +27,8 @@ class Dev::Lifecycle::LifecycleWorkflowTest < Minitest::Test
 
     Expect
     workflow.path == @root / ".github" / "workflows" / "dev-lifecycle.yml"
-    Dev::Lifecycle::LifecycleWorkflow::SOURCE.file?
-    Dev::Lifecycle::LifecycleWorkflow::SOURCE.basename.to_s == "dev-lifecycle.yml"
+    workflow.source.file?
+    workflow.source == Dev::Lifecycle::ShippedWorkflow::SHARE_DIR / "dev-lifecycle.yml"
   end
 
   test "a project without the copy is refused with the copy named, source included" do
@@ -41,7 +41,7 @@ class Dev::Lifecycle::LifecycleWorkflowTest < Minitest::Test
     Then
     error = raises(Dev::Lifecycle::LifecycleWorkflow::WorkflowMissingError)
     error.message == "#{@root} has no .github/workflows/dev-lifecycle.yml: the remote dispatch runs dev's generic workflow from the " \
-      "project's checkout — copy it in and commit it (mkdir -p .github/workflows && cp #{Dev::Lifecycle::LifecycleWorkflow::SOURCE} " \
+      "project's checkout — copy it in and commit it (mkdir -p .github/workflows && cp #{workflow.source} " \
       ".github/workflows/dev-lifecycle.yml)"
   end
 
@@ -49,7 +49,7 @@ class Dev::Lifecycle::LifecycleWorkflowTest < Minitest::Test
     Given "the copy the refusal names"
     workflow = Dev::Lifecycle::LifecycleWorkflow.new(root: @root)
     workflow.path.dirname.mkpath
-    FileUtils.cp(Dev::Lifecycle::LifecycleWorkflow::SOURCE, workflow.path)
+    FileUtils.cp(workflow.source, workflow.path)
 
     When
     workflow.assert_installed!
@@ -74,7 +74,7 @@ class Dev::Lifecycle::LifecycleWorkflowTest < Minitest::Test
 
   test "the shipped workflow runs on workflow_dispatch alone, declares exactly the inputs dev sends, and runs on the self-hosted runners carrying the label" do
     Given
-    shipped = YAML.safe_load(Dev::Lifecycle::LifecycleWorkflow::SOURCE.read)
+    shipped = YAML.safe_load(Dev::Lifecycle::LifecycleWorkflow.new(root: @root).source.read)
     triggers = shipped.fetch(true) # YAML 1.1 reads a bare `on:` key as the boolean
     inputs = triggers.fetch("workflow_dispatch").fetch("inputs")
     job = shipped.fetch("jobs").values.first
