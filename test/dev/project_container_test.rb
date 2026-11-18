@@ -241,8 +241,8 @@ class Dev::ProjectContainerTest < Minitest::Test
     Dev::Lifecycle::Gh.expects(:new).with(root: root).once.returns(gh)
     gh.expects(:capture).with(Dev::ProjectContainer::REPO_QUERY).once.returns("d3mlabs/demo\n")
 
-    When "resolving the default"
-    resolved = Dev::ProjectContainer.default_repo_resolver(root).call
+    When "resolving the default, outside any job"
+    resolved = Dev::ProjectContainer.default_repo_resolver(root, env: {}).call
 
     Then "gh's answer comes back, as captured"
     resolved == "d3mlabs/demo\n"
