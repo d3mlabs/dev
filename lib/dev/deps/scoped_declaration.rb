@@ -3,6 +3,7 @@
 
 require "sorbet-runtime"
 require_relative "declaration"
+require_relative "requirement"
 require_relative "scope"
 require_relative "../value_equality"
 
@@ -29,7 +30,7 @@ module Dev
       extend T::Sig
       include Dev::ValueEquality::Derived
 
-      # @return [Declaration] the ask: name + integration + constraint + source
+      # @return [Declaration] the ask: name + integration + requirement + source
       sig { returns(Declaration) }
       attr_reader :declaration
 
@@ -102,10 +103,16 @@ module Dev
         declaration.integration
       end
 
-      # @return [Hash{String => Object}] the ask's constraint (delegated)
+      # @return [Requirement] the ask's requirement (delegated)
+      sig { returns(Requirement) }
+      def requirement
+        declaration.requirement
+      end
+
+      # @return [Hash{String => Object}] the ask's integration options (delegated)
       sig { returns(T::Hash[String, T.untyped]) }
-      def constraint
-        declaration.constraint
+      def options
+        declaration.options
       end
 
       # @return [String, nil] the ask's source coordinate (delegated)

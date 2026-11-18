@@ -3,10 +3,12 @@
 
 require "test_helper"
 require "dev/deps/package_version"
+require "dev/deps/requirement"
 require "dev/deps/git_scheme"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GitSchemeTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
   SHA = "abcdef1234567890abcdef1234567890abcdef12"
 
   def scheme
@@ -18,41 +20,61 @@ class Dev::Deps::GitSchemeTest < Minitest::Test
     Dev::Deps::PackageVersion.new(version: version, metadata: metadata)
   end
 
-  test "a tag constraint matches the version's ref fact, not the SHA" do
-    When "evaluating a tag against resolved SHAs carrying their refs"
-    match = scheme.satisfies?(pv(SHA, ref: "v1.17.0"), { "tag" => "v1.17.0" })
-    miss = scheme.satisfies?(pv(SHA, ref: "v1.16.0"), { "tag" => "v1.17.0" })
-    sha_is_not_a_ref = scheme.satisfies?(pv(SHA), { "tag" => SHA })
+  test "an exact ref matches the version's ref fact by name, not the SHA" do
+    Given "the ask a tag: keyword makes"
+    requirement = Requirement::Exact.new(version: "v1.17.0")
 
-    Then
-    match == true
-    miss == false
-    sha_is_not_a_ref == false
+    Expect
+    scheme.satisfies?(pv(SHA, ref: "v1.17.0"), requirement)
+    !scheme.satisfies?(pv(SHA, ref: "v1.16.0"), requirement)
+    !scheme.satisfies?(pv(SHA), Requirement::Exact.new(version: SHA))
   end
 
-  test "a branch constraint matches the same way — heads are enumerated refs too" do
-    When "evaluating a branch"
-    match = scheme.satisfies?(pv(SHA, ref: "main"), { "branch" => "main" })
-    miss = scheme.satisfies?(pv(SHA, ref: "develop"), { "branch" => "main" })
+  test "a branch is an exact ref the same way — heads are enumerated refs too" do
+    Given
+    requirement = Requirement::Exact.new(version: "main")
 
-    Then
-    match == true
-    miss == false
+    Expect
+    scheme.satisfies?(pv(SHA, ref: "main"), requirement)
+    !scheme.satisfies?(pv(SHA, ref: "develop"), requirement)
   end
 
-  test "no ref constraint satisfies anything" do
-    When "evaluating an unconstrained declaration"
-    result = scheme.satisfies?(pv(SHA), {})
+  test "a range reads the refs that are versions, v prefix aside" do
+    Given
+    requirement = Requirement.parse("~> 1.17")
 
-    Then
-    result == true
+    Expect
+    scheme.satisfies?(pv(SHA, ref: "v1.17.0"), requirement)
+    scheme.satisfies?(pv(SHA, ref: "1.18.2"), requirement)
+    !scheme.satisfies?(pv(SHA, ref: "v2.0.0"), requirement)
   end
 
-  test "sort preserves order — SHAs carry none" do
+  test "a ref that is no version is not a candidate for a range" do
+    When "ranging over a branch head"
+    scheme.satisfies?(pv(SHA, ref: "main"), Requirement.parse(">= 1"))
+
+    Then
+    raises Dev::Deps::TagScheme::InvalidVersionError
+  end
+
+  test "a version without a ref fact is not a candidate for a range" do
+    When
+    scheme.satisfies?(pv(SHA), Requirement.parse(">= 1"))
+
+    Then
+    raises Dev::Deps::TagScheme::InvalidVersionError
+  end
+
+  test "Any is satisfied by any ref" do
+    Expect
+    scheme.satisfies?(pv(SHA, ref: "v1.0.0"), Requirement::Any.new)
+  end
+
+  test "sort orders by the ref's version" do
     When "sorting"
-    sorted = scheme.sort(["b", "a"])
+    sorted = scheme.sort([pv("b" * 40, ref: "v1.10.0"), pv("a" * 40, ref: "v1.9.0")]).map { |v| v.metadata["ref"] }
 
     Then
-    sorted == ["b", "a"]
+    sorted == ["v1.9.0", "v1.10.0"]
   end
 end

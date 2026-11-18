@@ -26,8 +26,8 @@ class Dev::Deps::SteamRepositoryTest < Minitest::Test
     super
   end
 
-  def id
-    Dev::Deps::PackageId.new(integration: :steam, name: "SatisfactoryServer", source: "1690800")
+  def id(branch: "public")
+    Dev::Deps::PackageId.new(integration: :steam, name: "SatisfactoryServer", source: "1690800/#{branch}")
   end
 
   # A real zip of a one-file install, wrapped as the shipment deploy hands a publisher.
@@ -197,23 +197,43 @@ class Dev::Deps::SteamRepositoryTest < Minitest::Test
     !(@root / "store/.steam").exist?
   end
 
-  test "find reports every branch's current buildid, one version per branch" do
+  test "find reports the named branch's current buildid — the one version the coordinate's universe holds" do
     Given "an app with public and experimental branch tips"
     repo = Dev::Deps::SteamRepository.new
     Dev::Deps::SteamCmd.stubs(:resolve_branches)
                        .with(app: "1690800")
                        .returns({ "public" => "15321746", "experimental" => "15400000" })
 
-    When "finding"
-    package = repo.find(id)
+    When "finding each branch"
+    public_package = repo.find(id)
+    experimental_package = repo.find(id(branch: "experimental"))
 
-    Then "each branch tip is a version, its branch riding metadata as a fact"
-    package.versions.map(&:version).sort == ["15321746", "15400000"]
-    public_tip = package.version("15321746")
+    Then "each coordinate's universe is its branch tip, app and branch riding metadata as facts"
+    public_package.versions.map(&:version) == ["15321746"]
+    public_tip = public_package.version("15321746")
     public_tip.digest.nil?
     public_tip.source.nil?
     public_tip.metadata == { "app" => "1690800", "branch" => "public" }
-    package.version("15400000").metadata["branch"] == "experimental"
+    experimental_package.versions.map(&:version) == ["15400000"]
+    experimental_package.version("15400000").metadata["branch"] == "experimental"
+  end
+
+  test "find raises BranchNotFoundError for a branch the app does not publish, naming the ones it does" do
+    Given
+    repo = Dev::Deps::SteamRepository.new
+    Dev::Deps::SteamCmd.stubs(:resolve_branches).returns({ "public" => "26000000", "experimental" => "26100000" })
+
+    When "finding a beta branch"
+    repo.find(id(branch: "beta"))
+
+    Then
+    error = raises(Dev::Deps::SteamRepository::BranchNotFoundError)
+    error.message == "SatisfactoryServer: Steam publishes no `beta` branch of app 1690800 (branches: experimental 26100000, public 26000000)"
+  end
+
+  test "a missing branch is a PackageNotFoundError — the Resolver's Unresolved verdict, not a crash" do
+    Expect
+    Dev::Deps::SteamRepository::BranchNotFoundError.ancestors.include?(Dev::Deps::Repository::PackageNotFoundError)
   end
 
   test "find claims self-contained declarations — SteamCMD delivers the whole tree" do

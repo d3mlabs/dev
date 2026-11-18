@@ -21,7 +21,7 @@ class Dev::Deps::WwiseRepositoryTest < Minitest::Test
   end
 
   test "find refuses — enumerating Wwise versions needs an Audiokinetic login, and resolution never has one" do
-    Given "a constraint-shaped ask"
+    Given "a requirement-shaped ask"
     repo = Dev::Deps::WwiseRepository.new
 
     When "finding"

@@ -10,7 +10,7 @@ module Dev
     # aggregate a Repository returns from #find.
     #
     # Deliberately has no #satisfies?, #sort or #best_match. A Package states
-    # what exists; evaluating a constraint against a version is the
+    # what exists; evaluating a requirement against a version is the
     # integration's VersionScheme, and choosing among the satisfying versions
     # is the Resolver's policy. Keeping all three apart is what lets a new
     # ecosystem supply facts without also supplying selection logic, and lets

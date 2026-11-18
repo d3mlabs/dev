@@ -6,6 +6,8 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DSLTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
+
   test "cmake url: routes to the :url integration — the URL is the whole address" do
     When "defining a url-backed cmake dep"
     config = Dev::Deps.define do
@@ -16,14 +18,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "the url is the source; the tag is a display label, never a constraint"
+    Then "the url is the source; the tag is a display label, never a requirement"
     decls = config.declarations
     decls.size == 1
     decls[0].name == "boost"
     decls[0].integration == :url
     decls[0].scope.group == :app
     decls[0].source == "https://example.com/boost.tar.gz"
-    decls[0].constraint == {}
+    decls[0].requirement.any?
+    decls[0].options == {}
     decls[0].materialization["version_label"] == "boost-1.90.0"
   end
 
@@ -35,11 +38,11 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "the expanded URL lands as the source, not a constraint key"
+    Then "the expanded URL lands as the source, not an option; the tag is the requirement"
     decl = config.declarations[0]
     decl.source == "https://github.com/USCiLab/cereal"
-    !decl.constraint.key?("github")
-    !decl.constraint.key?("repo")
+    decl.options == {}
+    decl.requirement == Requirement::Exact.new(version: "v1.3.2")
   end
 
   test "github: shorthand with org only appends dep name" do
@@ -58,7 +61,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When "defining a luarocks dep"
     config = Dev::Deps.define do
       group :test do
-        luarocks "luaunit", ">=3.5"
+        luarocks "luaunit", ">= 3.5"
       end
     end
 
@@ -67,22 +70,23 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "luaunit"
     decl.integration == :luarocks
     decl.scope.group == :test
-    decl.constraint["constraint"] == ">=3.5"
+    decl.requirement == Requirement.parse(">= 3.5")
   end
 
   test "custom() produces ScopedDeclaration with arbitrary integration" do
     When "defining a custom integration dep"
     config = Dev::Deps.define do
       group :app do
-        custom "CombatMode", integration: :wow_curseforge, version: ">=1.0"
+        custom "CombatMode", ">= 1.0", integration: :wow_curseforge, release_type: "stable"
       end
     end
 
-    Then
+    Then "the requirement is the positional; the rest is the integration's options"
     decl = config.declarations[0]
     decl.name == "CombatMode"
     decl.integration == :wow_curseforge
-    decl.constraint["version"] == ">=1.0"
+    decl.requirement == Requirement.parse(">= 1.0")
+    decl.options == { "release_type" => "stable" }
   end
 
   test "lua_version() stores the lua version" do
@@ -101,7 +105,7 @@ class Dev::Deps::DSLTest < Minitest::Test
       register :wow_curseforge, "WoWCurseforgeIntegration"
 
       group :app do
-        wow_curseforge "CombatMode", version: ">=1.0"
+        wow_curseforge "CombatMode", ">= 1.0"
       end
     end
 
@@ -109,11 +113,12 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "CombatMode"
     decl.integration == :wow_curseforge
+    decl.requirement == Requirement.parse(">= 1.0")
     config.registered_integrations[:wow_curseforge] == "WoWCurseforgeIntegration"
   end
 
-  test "ficsit() produces ScopedDeclaration with ficsit integration" do
-    When "defining a ficsit mod dep"
+  test "ficsit() version: is ficsit.app's own range syntax, translated into dev's language" do
+    When "defining a ficsit mod dep the way SMR writes the range"
     config = Dev::Deps.define do
       group :app do
         ficsit "SML", version: "^3.12.0"
@@ -125,10 +130,34 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "SML"
     decl.integration == :ficsit
     decl.scope.group == :app
-    decl.constraint["version"] == "^3.12.0"
+    decl.requirement == Requirement.parse(">= 3.12.0, < 4.0.0")
   end
 
-  test "ficsit() without version constraint produces declaration with empty constraint" do
+  test "ficsit() takes the positional in dev's language" do
+    When
+    config = Dev::Deps.define do
+      group :app do
+        ficsit "SML", "~> 3.12"
+      end
+    end
+
+    Then
+    config.declarations[0].requirement == Requirement.parse("~> 3.12")
+  end
+
+  test "ficsit() refuses the requirement said twice" do
+    When "giving both the positional and version:"
+    Dev::Deps.define do
+      group :app do
+        ficsit "SML", "~> 3.12", version: "^3.12.0"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::TwoRequirementsError
+  end
+
+  test "ficsit() without a requirement asks Any" do
     When "defining a ficsit dep without version"
     config = Dev::Deps.define do
       group :app do
@@ -140,10 +169,11 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.name == "AreaActions"
     decl.integration == :ficsit
-    decl.constraint == {}
+    decl.requirement.any?
+    decl.options == {}
   end
 
-  test "ficsit() with target rides materialization, not the constraint" do
+  test "ficsit() with target rides materialization, not the options" do
     When "defining a ficsit dep with target"
     config = Dev::Deps.define do
       group :app do
@@ -153,9 +183,9 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "which artifact to fetch is an install instruction"
     decl = config.declarations[0]
-    decl.constraint["version"] == "^1.0"
+    decl.requirement == Requirement.parse(">= 1.0.0, < 2.0.0")
     decl.materialization["target"] == "LinuxServer"
-    !decl.constraint.key?("target")
+    !decl.options.key?("target")
   end
 
   test "ficsit() defaults the materialization target to the Windows game build" do
@@ -230,10 +260,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then "every member carries the group's host"
     config.declarations.size == 2
     config.declarations.all? { |d| d.scope.host == :darwin }
-    config.declarations.all? { |d| d.constraint["host"].nil? }
+    config.declarations.all? { |d| d.options["host"].nil? }
   end
 
-  test "per-declaration host: overrides the group and stays out of the constraint" do
+  test "per-declaration host: overrides the group and stays out of the options" do
     When "declaring a host-gated dep inside an ungated group"
     config = Dev::Deps.define do
       group :game do
@@ -248,7 +278,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then "the declaration carries the host as a first-class field only"
     decl = config.declarations[0]
     decl.scope.host == :linux
-    decl.constraint["host"].nil?
+    decl.options["host"].nil?
   end
 
   test "xcode() declares a pinned xcode toolchain dep as a revision" do
@@ -264,7 +294,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "xcode"
     decl.integration == :xcode
     decl.revision == "26.1.1"
-    decl.constraint == {}
+    decl.requirement.any?
     decl.scope.group == :build
   end
 
@@ -293,7 +323,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "Wwise"
     decl.integration == :wwise
     decl.revision == "2023.1.14.8770"
-    decl.constraint == {}
+    decl.requirement.any?
     decl.materialization == {
       "integration_version" => "2023.1.14.3555",
       "ue" => "5.6",
@@ -336,7 +366,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     :ue            | nil
   end
 
-  test "env block stamps env as a first-class field, not a constraint key" do
+  test "env block stamps env as a first-class field, not an option" do
     When "declaring a ci-scoped brew dep"
     config = Dev::Deps.define do
       group :build, host: :linux do
@@ -350,7 +380,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl = config.declarations[0]
     decl.scope.env == "ci"
     decl.scope.host == :linux
-    decl.constraint["env"].nil?
+    decl.options["env"].nil?
   end
 
   test "gh() produces ScopedDeclaration named after the repo basename" do
@@ -363,13 +393,14 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "slug is source, tag is the constraint, the rest is materialization"
+    Then "slug is source, tag is the exact requirement, the rest is materialization"
     decl = config.declarations[0]
     decl.name == "UnrealEngine"
     decl.integration == :gh
     decl.scope.group == :build
     decl.source == "satisfactorymodding/UnrealEngine"
-    decl.constraint == { "tag" => "5.6.1-css-83" }
+    decl.requirement == Requirement::Exact.new(version: "5.6.1-css-83")
+    decl.options == {}
     decl.materialization["asset_pattern"] == "UnrealEngine-CSS-Editor-Linux.tar.zst.*"
     !decl.materialization.key?("install_dir")
   end
@@ -391,7 +422,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.integration == :gh
     decl.scope.group == :game
     decl.source == "EpicGames/UnrealEngine"
-    decl.constraint == { "tag" => "5.6.1-release" }
+    decl.requirement == Requirement::Exact.new(version: "5.6.1-release")
     decl.materialization["build"] == "bin/build-ue.sh"
     !decl.materialization.key?("install_dir")
     !decl.materialization.key?("asset_pattern")
@@ -434,7 +465,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises ArgumentError
   end
 
-  test "gh sha: is an address — full SHA to the revision slot, constraint stays empty" do
+  test "gh sha: is an address — full SHA to the revision slot, requirement stays Any" do
     When "pinning a commit"
     config = Dev::Deps.define do
       group :app do
@@ -448,7 +479,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.integration == :gh
     decl.source == "nlohmann/json"
     decl.revision == "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
-    decl.constraint == {}
+    decl.requirement.any?
     decl.materialization == { "build" => "none" }
   end
 
@@ -477,7 +508,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises Dev::Deps::GroupDSL::AssetsAtCommitError
   end
 
-  test "gh rejects tag: alongside sha: — an address forgoes the selection a constraint asks for" do
+  test "gh rejects tag: alongside sha: — an address forgoes the selection a requirement asks for" do
     When "stating both"
     Dev::Deps.define do
       group :app do
@@ -487,7 +518,31 @@ class Dev::Deps::DSLTest < Minitest::Test
     end
 
     Then
-    raises Dev::Deps::Declaration::RevisionWithConstraintError
+    raises Dev::Deps::Declaration::RevisionWithRequirementError
+  end
+
+  test "gh takes a range over the repo's version tags as the positional" do
+    When
+    config = Dev::Deps.define do
+      group :app do
+        gh "json", "~> 3.11", github: "nlohmann/json", build: :none
+      end
+    end
+
+    Then
+    config.declarations[0].requirement == Requirement.parse("~> 3.11")
+  end
+
+  test "gh refuses the requirement said twice" do
+    When "giving both the positional and tag:"
+    Dev::Deps.define do
+      group :app do
+        gh "json", "~> 3.11", github: "nlohmann/json", tag: "v3.11.3", build: :none
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::TwoRequirementsError
   end
 
   test "gh rejects a dep naming neither tag: nor sha:" do
@@ -510,14 +565,15 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
-    Then "app id is source, branch is the constraint, install dir + platform materialize"
+    Then "app id and branch are the source, the requirement is Any, install dir + platform materialize"
     decl = config.declarations[0]
     decl.name == "SatisfactoryServer"
     decl.integration == :steam
     decl.scope.group == :integration
     decl.platform == "LinuxServer"
-    decl.source == "1690800"
-    decl.constraint == { "branch" => "public" }
+    decl.source == "1690800/public"
+    decl.requirement.any?
+    decl.options == {}
     !decl.materialization.key?("install_dir")
     decl.materialization["platform"] == "LinuxServer"
   end
@@ -530,8 +586,32 @@ class Dev::Deps::DSLTest < Minitest::Test
       end
     end
 
+    Then "the buildid is the exact requirement"
+    config.declarations[0].requirement == Requirement::Exact.new(version: "15321746")
+  end
+
+  test "steam() branch: lands in the source coordinate" do
+    When
+    config = Dev::Deps.define do
+      group :integration, platform: "LinuxServer" do
+        steam "SatisfactoryServer", app: 1690800, branch: "experimental"
+      end
+    end
+
     Then
-    config.declarations[0].constraint["buildid"] == "15321746"
+    config.declarations[0].source == "1690800/experimental"
+  end
+
+  test "steam() refuses the requirement said twice" do
+    When "giving both the positional and buildid:"
+    Dev::Deps.define do
+      group :integration do
+        steam "SatisfactoryServer", "= 15321746", app: 1690800, buildid: "15321746"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::TwoRequirementsError
   end
 
   test "install_dir: is refused with the migration spelled out — the store owns placement" do
@@ -558,10 +638,10 @@ class Dev::Deps::DSLTest < Minitest::Test
       egs "BuildPatchToolMirror", url: "https://mirror.example.com/BuildPatchTool.zip", host: :darwin
     end
 
-    Then "the url is the source, nothing is a constraint, and host: scopes the pin as for any verb"
+    Then "the url is the source, nothing is asked, and host: scopes the pin as for any verb"
     bare, mirrored = config.declarations
-    [bare.name, bare.integration, bare.source, bare.constraint, bare.materialization] ==
-      ["BuildPatchTool", :egs, Dev::Deps::BuildPatchTool::DOWNLOAD_URL, {}, {}]
+    [bare.name, bare.integration, bare.source, bare.requirement, bare.options, bare.materialization] ==
+      ["BuildPatchTool", :egs, Dev::Deps::BuildPatchTool::DOWNLOAD_URL, Requirement::Any.new, {}, {}]
     [mirrored.name, mirrored.source, mirrored.scope.host] == ["BuildPatchToolMirror", "https://mirror.example.com/BuildPatchTool.zip", :darwin]
   end
 
@@ -597,7 +677,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     wwise_error.message.include?("~/.dev/wwise/")
   end
 
-  test "brew with post_install carries the hook on the declaration, outside the constraint" do
+  test "brew with post_install carries the hook on the declaration, outside the options" do
     Given "a post_install callable"
     hook = ->(name, opts) {}
 
@@ -614,10 +694,10 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.integration == :brew
     decl.source == "d3mlabs/d3mlabs"
     decl.post_install == hook
-    decl.constraint == {}
+    decl.options == {}
   end
 
-  test "cmake commit: is an address — full SHA to the revision slot, constraint stays empty" do
+  test "cmake commit: is an address — full SHA to the revision slot, requirement stays Any" do
     When "pinning a commit"
     config = Dev::Deps.define do
       group :app do
@@ -629,7 +709,38 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     decl = config.declarations[0]
     decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
-    decl.constraint == {}
+    decl.requirement.any?
+  end
+
+  test "cmake tag: and branch: are exact refs; the positional ranges over version tags" do
+    When
+    config = Dev::Deps.define do
+      group :app do
+        cmake "fmt", github: "fmtlib/fmt", tag: "11.0.2"
+        cmake "spdlog", github: "gabime/spdlog", branch: "v1.x"
+        cmake "googletest", "~> 1.17", github: "google/googletest"
+      end
+    end
+
+    Then
+    config.declarations.map(&:requirement) == [
+      Requirement::Exact.new(version: "11.0.2"),
+      Requirement::Exact.new(version: "v1.x"),
+      Requirement.parse("~> 1.17"),
+    ]
+    config.declarations.map(&:options) == [{}, {}, {}]
+  end
+
+  test "cmake refuses the requirement said twice" do
+    When
+    Dev::Deps.define do
+      group :app do
+        cmake "fmt", "~> 11.0", github: "fmtlib/fmt", tag: "11.0.2"
+      end
+    end
+
+    Then
+    raises Dev::Deps::GroupDSL::TwoRequirementsError
   end
 
   test "cmake rejects a short commit — no more silent resolve-as-tag fallthrough" do
@@ -666,6 +777,81 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     raises Dev::Deps::GroupDSL::EmptyNameError
+  end
+
+  test "brew \"llvm@18\", version: \"18\" and \"~> 18.0\" are one declaration" do
+    When "spelling the 18 line three ways"
+    config = Dev::Deps.define do
+      group :build do
+        brew "llvm@18"
+        brew "llvm", version: "18"
+        brew "llvm", "~> 18.0"
+      end
+    end
+
+    Then "each is llvm asking ~> 18.0 — the suffix is sugar, never the name"
+    declarations = config.declarations.map(&:declaration)
+    declarations.uniq.size == 1
+    declarations[0].name == "llvm"
+    declarations[0].integration == :brew
+    declarations[0].requirement == Requirement.parse("~> 18.0")
+    declarations[0].options == {}
+  end
+
+  test "brew \"python@3.12\" asks the 3.12 line" do
+    When
+    config = Dev::Deps.define { brew "python@3.12" }
+
+    Then
+    config.declarations[0].name == "python"
+    config.declarations[0].requirement == Requirement.parse("~> 3.12.0")
+  end
+
+  test "brew refuses the requirement said twice: #{spelling}" do
+    When "a formula's line is spelled two ways at once"
+    Dev::Deps.define do
+      public_send(:brew, *args, **kwargs)
+    end
+
+    Then
+    raises Dev::Deps::BrewAsk::TwoRequirementsError
+
+    Where
+    spelling                  | args                   | kwargs
+    "@ suffix and version:"   | ["llvm@18"]            | { version: "18" }
+    "@ suffix and positional" | ["llvm@18", "~> 18.0"] | {}
+    "version: and positional" | ["llvm", "~> 18.0"]    | { version: "18" }
+  end
+
+  test "brew cask: routes to :cask and keeps the name whole — a versioned cask is its own name" do
+    When
+    config = Dev::Deps.define do
+      brew "temurin@21", cask: true
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.integration == :cask
+    decl.name == "temurin@21"
+    decl.requirement.any?
+  end
+
+  test "brew in an env block reads the same spellings" do
+    When
+    config = Dev::Deps.define do
+      group :build do
+        env :ci do
+          brew "llvm@18", tap: "d3mlabs/d3mlabs"
+        end
+      end
+    end
+
+    Then
+    decl = config.declarations[0]
+    decl.name == "llvm"
+    decl.requirement == Requirement.parse("~> 18.0")
+    decl.source == "d3mlabs/d3mlabs"
+    decl.scope.env == "ci"
   end
 
   test "brew raises EmptyNameError for empty name" do
@@ -725,7 +911,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     decl = config.declarations[0]
     decl.post_install == hook
-    !decl.constraint.key?("post_install")
+    !decl.options.key?("post_install")
   end
 
   test "post_install defaults to nil when not specified" do
@@ -845,7 +1031,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     declaration.name == "ruby"
     declaration.integration == :ruby
     declaration.source == "d3mlabs/d3mlabs"
-    declaration.constraint == { "version" => requirement }
+    declaration.requirement == Requirement.parse(requirement)
     declaration.scope.group == Dev::Deps::DSL::DEFAULT_GROUP
     # The tap is registered for the install, so no tap line is needed.
     config.taps.map(&:name) == ["d3mlabs/d3mlabs"]
@@ -878,7 +1064,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     declaration.name == "python"
     declaration.integration == :python
     declaration.source.nil?
-    declaration.constraint == { "version" => "3.12" }
+    declaration.requirement == Requirement.parse("~> 3.12.0")
     config.taps.empty?
   end
 

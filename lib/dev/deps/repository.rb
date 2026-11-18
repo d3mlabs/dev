@@ -12,9 +12,9 @@ module Dev
     # attached to them.
     #
     # Facts only — a Fowler-style repository. A Repository never sees a
-    # constraint, never selects a version, and has no lifecycle: it is fully
+    # requirement, never selects a version, and has no lifecycle: it is fully
     # functional from construction, a pure function of (id, datastore).
-    # Constraint evaluation belongs to the integration's VersionScheme,
+    # Requirement evaluation belongs to the integration's VersionScheme,
     # selection to the Resolver, and whole-set solves (bundle lock) to the
     # integration's Locker. See docs/deps-architecture.md.
     class Repository
@@ -31,7 +31,7 @@ module Dev
       # version the universe offers, with its facts.
       #
       # Identity in, universe out — nothing else crosses this seam. The
-      # declaration's constraint hash never reaches a repository (evaluation
+      # declaration's requirement never reaches a repository (evaluation
       # is VersionScheme's job, choosing is the Resolver's), source
       # coordinates ride PackageId#source, and install instructions
       # (ScopedDeclaration#materialization) are merged into the pin by the

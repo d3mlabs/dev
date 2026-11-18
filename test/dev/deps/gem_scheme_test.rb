@@ -3,10 +3,13 @@
 
 require "test_helper"
 require "dev/deps/package_version"
+require "dev/deps/requirement"
 require "dev/deps/gem_scheme"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GemSchemeTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
+
   def scheme
     Dev::Deps::GemScheme.new
   end
@@ -15,15 +18,15 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
     Dev::Deps::PackageVersion.new(version: version)
   end
 
-  test "#{version} against #{requirement.inspect} is #{expected}" do
+  test "#{version} against #{expression.inspect} is #{expected}" do
     When "evaluating the requirement under rubygems semantics"
-    result = scheme.satisfies?(pv(version), { "version" => requirement })
+    result = scheme.satisfies?(pv(version), Requirement.parse(expression))
 
     Then
     result == expected
 
     Where
-    version  | requirement       | expected
+    version  | expression        | expected
     "1.17.4" | "~> 1.17"         | true
     "2.0.0"  | "~> 1.17"         | false
     "1.17.4" | ">= 1.0, < 2.0"   | true
@@ -31,20 +34,51 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
     "1.17.4" | "1.17.4"          | true
     "1.17.5" | "1.17.4"          | false
     "1.0.0"  | ">= 1.0.0.beta"   | true
+    "1.0.1"  | "!= 1.0.0"        | true
+    "1.0.0"  | "!= 1.0.0"        | false
+    "1.0.5"  | "~> 1.0, >= 1.0.5" | true
+    "1.0.4"  | "~> 1.0, >= 1.0.5" | false
   end
 
-  test "an empty constraint is satisfied by anything" do
-    Expect "no version requirement means unconstrained"
-    scheme.satisfies?(pv("1.17.4"), {})
-    scheme.satisfies?(pv("1.17.4"), { "require" => false })
+  test "Any is satisfied by anything" do
+    Expect
+    scheme.satisfies?(pv("1.17.4"), Requirement::Any.new)
+  end
+
+  test "render translates #{expression.inspect} term for term into a Gem::Requirement" do
+    When "rendering for bundler"
+    rendered = scheme.render(Requirement.parse(expression))
+
+    Then "the tool's own type carries exactly what was written"
+    rendered == Gem::Requirement.new(gem_terms)
+
+    Where
+    expression       | gem_terms
+    "~> 1.17"        | ["~> 1.17"]
+    "= 4.0.1"        | ["= 4.0.1"]
+    ">= 1.0, < 2.0"  | [">= 1.0", "< 2.0"]
+    "~> 1.0, != 1.2" | ["~> 1.0", "!= 1.2"]
+  end
+
+  test "render of Any is rubygems' default requirement" do
+    Expect
+    scheme.render(Requirement::Any.new) == Gem::Requirement.default
+  end
+
+  test "gem supports every form of the language" do
+    Expect
+    scheme.supports?(Requirement::Any.new)
+    scheme.supports?(Requirement.parse("= 1"))
+    scheme.supports?(Requirement.parse("~> 1"))
+    scheme.supports?(Requirement.parse(">= 1, < 2"))
   end
 
   test "sorts by rubygems version ordering, prereleases below their release" do
     Given "versions out of order, one a prerelease"
-    versions = ["1.0.0", "1.0.0.beta", "0.9.0", "1.0.1"]
+    versions = ["1.0.0", "1.0.0.beta", "0.9.0", "1.0.1"].map { |v| pv(v) }
 
     When "sorting"
-    sorted = scheme.sort(versions)
+    sorted = scheme.sort(versions).map(&:version)
 
     Then
     sorted == ["0.9.0", "1.0.0.beta", "1.0.0", "1.0.1"]
@@ -52,17 +86,17 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
 
   test "rejects a version string rubygems cannot parse" do
     When "sorting garbage"
-    scheme.sort(["not a version"])
+    scheme.sort([pv("not a version")])
 
     Then
     raises Dev::Deps::GemScheme::InvalidVersionError
   end
 
-  test "rejects a requirement rubygems cannot parse" do
-    When "evaluating a malformed requirement"
-    scheme.satisfies?(pv("1.0.0"), { "version" => ">>>= nope" })
+  test "rejects a requirement version rubygems cannot read" do
+    When "evaluating a requirement over a brew revision"
+    scheme.satisfies?(pv("1.0.0"), Requirement.parse(">= 3.11.4_1"))
 
     Then
-    raises Dev::Deps::GemScheme::InvalidConstraintError
+    raises Dev::Deps::GemScheme::InvalidRequirementError
   end
 end

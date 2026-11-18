@@ -23,7 +23,7 @@ module Dev
     # `dev deps update <name>…` floats the named declarations and what they
     # pull in through integration needs, and decides the rest: a pin the
     # lock did not have is new; a pin whose declaration changed — another
-    # group, scope or source, or a constraint the locked version no longer
+    # group, scope or source, or a requirement the locked version no longer
     # satisfies — is re-resolved; an unchanged pin the lock records a
     # `source` for is kept, byte for byte; an unchanged pin without one
     # cannot be kept (nothing says what exactly it was) and is re-resolved,
@@ -107,7 +107,7 @@ module Dev
       end
 
       # @param schemes [Hash{Symbol => VersionScheme}] integration → its
-      #   constraint semantics (Registry.schemes), asked whether a locked
+      #   requirement semantics (Registry.schemes), asked whether a locked
       #   version still satisfies its declaration
       sig { params(schemes: T::Hash[Symbol, VersionScheme]).void }
       def initialize(schemes:)
@@ -287,7 +287,7 @@ module Dev
       # Whether the declaration still asks what the lock's pin answered:
       # same group, same scope (host, env), the same declared source, and
       # an ask the locked version still satisfies — the declaration's
-      # revision, or its constraint under the integration's scheme.
+      # revision, or its requirement under the integration's scheme.
       #
       # @param prior [Dependency] the lock's pin
       # @param ask [ScopedDeclaration] the declaration
@@ -323,7 +323,7 @@ module Dev
       end
 
       # Whether the locked version is what the declaration asks for: the
-      # revision it addresses, or a version its constraint admits.
+      # revision it addresses, or a version its requirement admits.
       #
       # @param prior [Dependency] the lock's pin
       # @param ask [ScopedDeclaration] the declaration
@@ -345,9 +345,9 @@ module Dev
         return false if locked.nil?
 
         scheme = @schemes[ask.integration]
-        return ask.constraint.empty? if scheme.nil?
+        return ask.requirement.any? if scheme.nil?
 
-        scheme.satisfies?(PackageVersion.new(version: locked, metadata: prior.metadata), ask.constraint)
+        scheme.satisfies?(PackageVersion.new(version: locked, metadata: prior.metadata), ask.requirement)
       rescue VersionScheme::InvalidVersionError
         false
       end

@@ -24,8 +24,7 @@ module Dev
       # digests (luarocks verifies rockspec integrity itself at install; the
       # old resolve-time download-and-hash was audit-only and read by nobody)
       # and no edges (rock dependencies would require fetching each rockspec).
-      # Constraint evaluation moves to RockScheme, fixing the old behavior of
-      # taking the first version and ignoring the constraint entirely.
+      # Requirement evaluation is RockScheme's; this reports every version.
       #
       # @param id [PackageId] name is the rock name
       # @return [Package]

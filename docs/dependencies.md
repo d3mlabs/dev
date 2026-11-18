@@ -57,7 +57,7 @@ Dev::Deps.define do
 
   group :build do
     brew "cmake"
-    brew "llvm", version: "22"
+    brew "llvm", "~> 22.0"
     env :ci do
       brew "ruby"
     end
@@ -70,30 +70,43 @@ Dev::Deps.define do
 
   group :test do
     cmake "googletest", github: "google", tag: "v1.17.0", targets: ["gtest", "gmock"]
-    luarocks "luaunit", ">=3.5"
+    luarocks "luaunit", ">= 3.5"
   end
 
   group :anatomy, host: :darwin do
-    pip "totalsegmentator", ">=2.0"
+    pip "totalsegmentator", ">= 2.0"
   end
 end
 ```
 
 ### Directives
 
+Every directive that declares a package takes an optional requirement as
+its second argument, in rubygems' syntax: `"4.0.1"` is exactly that
+version, `"~> 18.0"` is any 18.x, `">= 2, < 3"` is a range. Without one
+the directive asks for any version, and `dev deps update` locks the
+highest the channel publishes. Some directives also take the channel's own
+spelling as a keyword (`brew "llvm", version: "18"`, `gh ..., tag: "v1.0"`);
+a directive given both refuses.
+
+A channel that cannot pick among versions refuses a range when the lock is
+written, naming what it takes: a cask takes no requirement, a Steam app
+takes none or an exact `buildid:`, and a formula brew has one version of
+takes none or that version.
+
 | Directive | Declares | Installed by |
 |---|---|---|
-| `ruby "X.Y.Z"` | The project Ruby. A rubygems requirement: `"4.0.6"` exact, `"~> 4.0"` highest 4.0.x at lock time. | brew, from the d3mlabs tap's `ruby@X.Y.Z` formulae |
+| `ruby "X.Y.Z"` | The project Ruby. `"4.0.6"` exact, `"~> 4.0"` highest 4.0.x at lock time, `"4.0"` any 4.0.x. | brew, from the d3mlabs tap's `ruby@X.Y.Z` formulae |
 | `python "3.12"` | The project Python and a `.venv` built on it. | brew (`python@3.12`), then `venv` |
-| `gem "name" [, "req"]` | A gem. dev generates `Gemfile` and `Gemfile.lock`. A group becomes a bundler group. | `bundle install` |
-| `brew "name" [, version:]` | A formula. | `brew install` at the locked version |
+| `gem "name" [, "req"]` | A gem. The requirement is written into the generated `Gemfile` as is; dev generates `Gemfile.lock`. A group becomes a bundler group. Other keywords (`require:`, `git:`) are gem options. | `bundle install` |
+| `brew "name" [, "req"] [, version:]` | A formula, chosen among the versions brew publishes for it and its `name@N` siblings. `brew "llvm", "~> 18.0"`, `brew "llvm", version: "18"` and `brew "llvm@18"` are the same declaration. `cask: true` declares a cask by its whole name (`brew "temurin@21", cask: true`), which takes no requirement. | `brew install` at the locked version |
 | `tap "owner/repo" [, url:]` | A tap formulae may come from. | `brew tap` |
-| `gh "name", github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:`, or a commit by full 40-hex `sha:`. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. | download into the store |
-| `cmake "name", github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. | checkout into the store |
+| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. | download into the store |
+| `cmake "name" [, "req"], github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. `tag:` and `branch:` name a ref; a requirement ranges over the repo's version tags; `commit:` is a full 40-hex SHA. | checkout into the store |
 | `luarocks "name" [, "req"]` | A rock. Transitive deps resolved by luarocks at install. | `luarocks install` |
-| `pip "name" [, "req"]` | A package in the project venv. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
-| `ficsit "ModRef" [, version:]` | A Satisfactory mod from SMR. | download |
-| `steam "name", app: [, branch:, buildid:]` | A Steam app or depot via SteamCMD. | `steamcmd` |
+| `pip "name" [, "req"]` | A package in the project venv; `~>` reads as pip's `~=`. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
+| `ficsit "ModRef" [, "req"] [, version:]` | A Satisfactory mod from SMR. `version:` takes ficsit.app's own range syntax (`"^3.12.0"`). | download |
+| `steam "name" [, "= buildid"], app: [, branch:, buildid:]` | A Steam app or depot via SteamCMD, following `branch:` (default `public`). `buildid:` asserts the branch is still at that build. | `steamcmd` |
 | `egs` | Epic's BuildPatchTool. Pinning it gives the project a `deploy egs` channel. | download |
 | `xcode "26.1.1"` | The Xcode toolchain. macOS only. | `xcodes install`; publishes `DEVELOPER_DIR` |
 | `wwise "Wwise", sdk:, integration:, ue: [, packages:, deployment_platforms:]` | The Wwise SDK with its Unreal integration. | `wwise-cli` |
@@ -159,13 +172,14 @@ Dev::Deps.define do
   register :my_type, MyIntegration
 
   group :app do
-    my_type "some_dep", version: ">=1.0"
+    my_type "some_dep", ">= 1.0"
   end
 end
 ```
 
 An integration implements `Dev::Deps::Integration` (`install_all(pins,
-root:)`) and `Dev::Deps::Repository` (`resolve(name, constraint, cache:)`).
+root:)`) and `Dev::Deps::Repository` (`find(id)`), and registers a
+`Dev::Deps::VersionScheme` saying how its versions order.
 A `dependencies.rb` beside the class file declares the integration's own
 tooling. Design notes: [deps-architecture.md](deps-architecture.md).
 

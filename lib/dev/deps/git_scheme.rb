@@ -1,40 +1,32 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "version_scheme"
+require_relative "tag_scheme"
 
 module Dev
   module Deps
-    # Git ref constraint semantics (:cmake): the constraint names a ref —
-    # "tag" or "branch" — and the universe's versions are resolved SHAs
-    # carrying the ref they resolved from as a fact.
-    #
-    # A ref constraint matches the version's "ref" fact, never the version
-    # string: the SHA a ref points at is a repository fact the scheme cannot
-    # derive. Commit pins are not constraints at all — a SHA is an address
-    # into the continuous space, declared as the revision and lifted by
-    # GitRepository#at without any scheme running.
-    class GitScheme < VersionScheme
+    # Git ref semantics (:cmake): the universe's versions are resolved SHAs,
+    # each carrying the ref it resolved from as a fact, and the requirement
+    # reads that fact — never the SHA, which is a repository fact the scheme
+    # cannot derive and carries no order. A tag or branch name is an exact
+    # ask (`tag: "v1.3.2"`, `branch: "main"`); a range reads the refs that
+    # are versions, as TagScheme does over gh tags. Commit pins are not
+    # requirements at all — a SHA is an address into the continuous space,
+    # declared as the revision and lifted by GitRepository#at without any
+    # scheme running.
+    class GitScheme < TagScheme
       extend T::Sig
 
-      # @param version [PackageVersion] a candidate (version is the resolved
-      #   SHA, "ref" rides its metadata)
-      # @param constraint [Hash] declaration constraint; "tag" or "branch"
-      # @return [Boolean]
-      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
-      def satisfies?(version, constraint)
-        ref = constraint["tag"] || constraint["branch"]
-        return true if ref.nil?
+      # The fact a version carries its ref under.
+      REF = "ref"
 
-        version.metadata["ref"].to_s == ref.to_s
-      end
+      protected
 
-      # @param versions [Array<String>] resolved SHAs
-      # @return [Array<String>] the same versions, order untouched — SHAs
-      #   carry no order
-      sig { override.params(versions: T::Array[String]).returns(T::Array[String]) }
-      def sort(versions)
-        versions.dup
+      # @param version [PackageVersion] a resolved SHA with its ref fact
+      # @return [String] the ref name; empty for a version with none
+      sig { override.params(version: PackageVersion).returns(String) }
+      def coordinate(version)
+        version.metadata[REF].to_s
       end
     end
   end

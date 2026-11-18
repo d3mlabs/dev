@@ -25,7 +25,8 @@ class Dev::Deps::ImageDSLTest < Minitest::Test
     decl.name == "snappy-linux"
     decl.integration == :image
     decl.source == FLOOR
-    decl.constraint == {}
+    decl.requirement.any?
+    decl.options == {}
     decl.scope.group == :app
     decl.materialization == {
       "platform" => "linux/amd64",

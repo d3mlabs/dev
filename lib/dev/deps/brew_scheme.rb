@@ -1,39 +1,63 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "version_scheme"
+require_relative "brew_version"
+require_relative "range_scheme"
 
 module Dev
   module Deps
-    # Homebrew constraint semantics (:brew, :cask): the constraint's "version"
-    # is a formula *suffix* ("18" selects the llvm@18 formula), not a range
-    # over the reported stable versions — brew's own universe treats llvm@18
-    # as a distinct formula, so the suffix is the coordinate.
+    # Homebrew ordering (:brew, :python): dev's requirement evaluated over
+    # the formula family's real stable versions — the bare spec's and its
+    # versioned siblings' (llvm 21.1.0, llvm@19 19.1.7, llvm@18 18.1.8), as
+    # BrewRepository enumerates them. The `@18` suffix is not a version:
+    # the DSL reads `brew "llvm@18"` and `version: "18"` as `~> 18.0`, and
+    # that is what 18.1.8 is matched against.
     #
-    # The suffix is matched against the version's "version_suffix" fact (the
-    # reported stable version, e.g. "18.1.8", is brew's record, not the
-    # coordinate). BrewRepository enumerates the whole spec family (the bare
-    # formula plus its versioned_formulae siblings), so the suffix selects a
-    # sibling out of the reported universe.
-    class BrewScheme < VersionScheme
+    # Brew versions are tolerant of shape — `3.11.4_1` (a bottle revision,
+    # above 3.11.4), `2024-01-15`, `1.0r3`, `1.0.0-beta` — and order by
+    # Homebrew's own token rules (BrewVersion), which place revisions above
+    # their base and prereleases below theirs; a version brew cannot read
+    # (one not starting with a digit) is not a candidate.
+    #
+    # A family with one version has no range to pick among: it satisfies
+    # `Any` (follow brew) or its exact version, and a range over it is
+    # refused naming that version, rather than satisfied today and
+    # unanswerable the day brew moves the formula.
+    class BrewScheme < RangeScheme
       extend T::Sig
 
-      # @param version [PackageVersion] a candidate ("version_suffix" rides
-      #   its metadata when the formula spec was suffixed)
-      # @param constraint [Hash] declaration constraint; "version" holds the suffix
-      # @return [Boolean]
-      sig { override.params(version: PackageVersion, constraint: T::Hash[String, T.untyped]).returns(T::Boolean) }
-      def satisfies?(version, constraint)
-        suffix = constraint["version"]
-        suffix.nil? || version.metadata["version_suffix"].to_s == suffix.to_s
+      # The version string is not one brew's ordering can read.
+      class InvalidVersionError < VersionScheme::InvalidVersionError; end
+
+      # @param name [String] the declaration's name
+      # @param requirement [Requirement]
+      # @param versions [Array<PackageVersion>] the family as reported
+      # @return [String, nil] the refusal for a range over a one-version family
+      sig do
+        override.params(
+          name: String,
+          requirement: Requirement,
+          versions: T::Array[PackageVersion],
+        ).returns(T.nilable(String))
+      end
+      def refusal(name:, requirement:, versions:)
+        return nil if versions.size != 1 || requirement.any? || requirement.is_a?(Requirement::Exact)
+
+        only = T.must(versions.first).version
+        "#{name}: brew has one version of it, #{only}, and a range (`#{requirement}`) cannot pick among one — " \
+          "declare `brew \"#{name}\"` to follow brew, or `brew \"#{name}\", \"= #{only}\"` to hold it"
       end
 
-      # @param versions [Array<String>] reported stable versions
-      # @return [Array<String>] the same versions, order untouched — brew
-      #   reports one current version per formula spec
-      sig { override.params(versions: T::Array[String]).returns(T::Array[String]) }
-      def sort(versions)
-        versions.dup
+      protected
+
+      # @param coordinate [String] a brew stable version
+      # @return [BrewVersion]
+      # @raise [InvalidVersionError] if brew's ordering cannot read it
+      sig { override.params(coordinate: String).returns(BrewVersion) }
+      def comparison_key(coordinate)
+        BrewVersion.new(coordinate)
+      rescue BrewVersion::InvalidVersionError => e
+        raise InvalidVersionError, e.message
       end
     end
   end

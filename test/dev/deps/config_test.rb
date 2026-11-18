@@ -6,12 +6,14 @@ require "dev/deps"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ConfigTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
+
   test "define records the ruby directive as a :ruby declaration" do
     When
     config = Dev::Deps.define { ruby "4.0.5" }
 
     Then
-    config.declarations.map { |d| [d.name, d.integration, d.constraint] } == [["ruby", :ruby, { "version" => "4.0.5" }]]
+    config.declarations.map { |d| [d.name, d.integration, d.requirement] } == [["ruby", :ruby, Requirement.parse("= 4.0.5")]]
   end
 
   test "define registers gems as bundler declarations with optional version" do
@@ -26,9 +28,9 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems.size == 2
     gems[0].name == "cli-ui"
     gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GROUP
-    !gems[0].constraint.key?("version")
+    gems[0].requirement.any?
     gems[1].name == "rake"
-    gems[1].constraint["version"] == "~> 13.0"
+    gems[1].requirement == Requirement.parse("~> 13.0")
   end
 
   test "define registers group-scoped gems with the group as bundler group" do
@@ -43,7 +45,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl = config.declarations.find { |d| d.name == "minitest" }
     decl.integration == :bundler
     decl.scope.group == :test
-    decl.constraint["version"] == "~> 5.0"
+    decl.requirement == Requirement.parse("~> 5.0")
   end
 
   test "define registers taps as Tap objects" do
@@ -86,14 +88,14 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then "each formula is a :brew declaration in the build group; tap is the source, version the constraint"
+    Then "each formula is a :brew declaration in the build group; tap is the source, version: the line asked"
     decls = config.declarations
     decls.size == 3
     decls.map(&:name) == %w[ccache cmake powershell]
     decls.all? { |d| d.integration == :brew && d.scope.group == :build }
-    decls[0].constraint == {}
+    decls[0].requirement.any?
     decls[0].source.nil?
-    decls[2].constraint == { "version" => "7.4.0" }
+    decls[2].requirement == Requirement.parse("~> 7.4.0.0")
     decls[2].source == "d3mlabs/d3mlabs"
   end
 
@@ -119,7 +121,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     by_name["ruby"].integration == :brew
     by_name["powershell"].scope.env == "dev"
     by_name["powershell"].integration == :cask
-    by_name["powershell"].constraint == {}
+    by_name["powershell"].requirement.any?
   end
 
   test "define app group with cmake deps produces declarations" do
@@ -144,7 +146,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decls[0].name == "boost"
     decls[0].integration == :url
     decls[0].source == "https://example.com/boost.tar.gz"
-    decls[0].constraint == {}
+    decls[0].requirement.any?
     decls[0].materialization["version_label"] == "boost-1.90.0"
     decls[0].materialization["cmake_targets"] == ["stacktrace"]
     decls[0].materialization["cmake_namespace"] == "Boost::"
@@ -152,7 +154,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decls[1].name == "cereal"
     decls[1].integration == :cmake
     decls[1].source == "https://github.com/USCiLab/cereal"
-    decls[1].constraint["tag"] == "v1.3.2"
+    decls[1].requirement == Requirement::Exact.new(version: "v1.3.2")
   end
 
   test "define test group with cmake_targets riding materialization" do
@@ -166,10 +168,11 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then "install instructions never pollute the constraint"
+    Then "install instructions never pollute the options"
     decl = config.declarations.find { |d| d.name == "googletest" }
     decl.materialization["cmake_targets"] == ["gtest", "gmock"]
-    decl.constraint == { "tag" => "v1.17.0" }
+    decl.requirement == Requirement::Exact.new(version: "v1.17.0")
+    decl.options == {}
   end
 
   test "an empty definition declares nothing" do
@@ -205,10 +208,10 @@ class Dev::Deps::ConfigTest < Minitest::Test
       end
     end
 
-    Then "the address rides the revision slot, never the constraint"
+    Then "the address rides the revision slot, never the requirement"
     decl = config.declarations.find { |d| d.name == "entityx" }
     decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
-    decl.constraint == {}
+    decl.requirement.any?
   end
 
   test "brew rides the lockfile pipeline as declarations, in and out of env blocks" do
@@ -228,8 +231,8 @@ class Dev::Deps::ConfigTest < Minitest::Test
     brew_decls.map(&:name).sort == %w[cmake powershell ruby]
     brew_decls.all? { |d| d.scope.group == :build }
     brew_decls.find { |d| d.name == "powershell" }.source == "d3mlabs/d3mlabs"
-    # env is a first-class declaration field, never smuggled into the constraint.
+    # env is a first-class declaration field, never smuggled into the options.
     brew_decls.find { |d| d.name == "ruby" }.scope.env == "ci"
-    brew_decls.find { |d| d.name == "ruby" }.constraint["env"].nil?
+    brew_decls.find { |d| d.name == "ruby" }.options["env"].nil?
   end
 end

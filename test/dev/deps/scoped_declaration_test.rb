@@ -3,13 +3,16 @@
 
 require "test_helper"
 require "dev/deps/declaration"
+require "dev/deps/requirement"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::ScopedDeclarationTest < Minitest::Test
-  def atom(name: "boost", integration: :cmake, constraint: {})
-    Dev::Deps::Declaration.new(name:, integration:, constraint:)
+  def atom(name: "boost", integration: :cmake, requirement: nil, options: {})
+    Dev::Deps::Declaration.new(
+      name:, integration:, requirement: requirement || Dev::Deps::Requirement::Any.new, options:,
+    )
   end
 
   test "marries a declaration to the context it resolves under" do
@@ -26,13 +29,16 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
   test "delegates the atom's facts for call-site ergonomics" do
     Given "a scoped declaration"
     scoped = Dev::Deps::ScopedDeclaration.new(
-      declaration: atom(name: "SML", integration: :ficsit, constraint: { "version" => "^3.6" }),
+      declaration: atom(
+        name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse("~> 3.6"), options: { "target" => "Windows" },
+      ),
     )
 
-    Expect "name/integration/constraint read through to the atom"
+    Expect "name/integration/requirement/options read through to the atom"
     scoped.name == "SML"
     scoped.integration == :ficsit
-    scoped.constraint == { "version" => "^3.6" }
+    scoped.requirement == Dev::Deps::Requirement.parse("~> 3.6")
+    scoped.options == { "target" => "Windows" }
   end
 
   test "defaults to the default scope, no platform, no hook, no materialization" do
@@ -49,7 +55,9 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
   test "carries install instructions as materialization, frozen" do
     Given "a row with an asset glob and a build recipe"
     scoped = Dev::Deps::ScopedDeclaration.new(
-      declaration: atom(name: "UnrealEngine", integration: :gh, constraint: { "tag" => "5.6.1-css-83" }),
+      declaration: atom(
+        name: "UnrealEngine", integration: :gh, requirement: Dev::Deps::Requirement::Exact.new(version: "5.6.1-css-83"),
+      ),
       materialization: { "asset_pattern" => "*.tar.zst.*", "build" => "make install" },
     )
 

@@ -26,9 +26,10 @@ module Dev
     # list (`brew tap-info --json`) is read instead and the bare spec is
     # optional — a tap publishing one immutable `ruby@4.0.x` per patch is a
     # family with no bare member. Either way one batched info call fetches
-    # every member's facts, and each member's suffix rides its version as
-    # the version_suffix fact a scheme matches (BrewScheme's version: picks
-    # a suffix; GemScheme, for :ruby, ranges over the stable versions).
+    # every member's facts; a requirement is evaluated over those real
+    # versions (BrewScheme orders them tolerantly; GemScheme, for :ruby,
+    # ranges over the stable versions), and each member's suffix rides its
+    # version as the version_suffix fact BrewIntegration installs by.
     # Casks are a separate universe (BrewCaskRepository) under :cask.
     #
     # Each version publishes its bottles: every bottle tag is a platform and
@@ -136,14 +137,13 @@ module Dev
       end
 
       # Report a brew formula's universe: the spec family's current stable
-      # versions, bare spec last (the unconstrained pick — BrewScheme
-      # preserves order and the Resolver takes the last version).
+      # versions, one per member (the Resolver takes the greatest satisfying
+      # one under BrewScheme's ordering).
       #
       # The tap scoping the name is the package's source coordinate
-      # (PackageId#source). Suffix and tap ride metadata as facts: BrewScheme
-      # matches the suffix, BrewIntegration rebuilds the install spec from
-      # both. Head-only siblings without a stable version are not versions
-      # and are skipped.
+      # (PackageId#source). Suffix and tap ride metadata as facts:
+      # BrewIntegration rebuilds the install spec from both. Head-only
+      # siblings without a stable version are not versions and are skipped.
       #
       # @param id [PackageId] name is the formula name; source is the tap
       # @return [Package] one version per family spec

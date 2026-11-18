@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "gem_scheme"
 require_relative "locker"
 require_relative "scoped_declaration"
 require_relative "shadowenv_exec"
@@ -41,18 +42,23 @@ module Dev
       # @param shadowenv_exec [ShadowenvExec] spawn seam for the project's Ruby
       #   toolchain — `bundle lock` must solve under the pinned Ruby and its
       #   bundler, not whatever the invoking shell carries
+      # @param scheme [GemScheme] the channel's translation of dev's
+      #   requirement into bundler's (GemScheme#render)
       sig do
         params(
           project_root: T.any(Pathname, String),
           ruby_version: T.nilable(String),
           shadowenv_exec: ShadowenvExec,
+          scheme: GemScheme,
         ).void
       end
-      def initialize(project_root:, ruby_version: nil, shadowenv_exec: ShadowenvExec.new(project_root: Pathname(project_root)))
+      def initialize(project_root:, ruby_version: nil, shadowenv_exec: ShadowenvExec.new(project_root: Pathname(project_root)),
+        scheme: GemScheme.new)
         super()
         @project_root = T.let(Pathname(project_root), Pathname)
         @ruby_version = ruby_version
         @shadowenv_exec = shadowenv_exec
+        @scheme = scheme
       end
 
       # Generate the Gemfile from all gem declarations and lock it.
@@ -96,19 +102,18 @@ module Dev
         gemfile_path.write("#{lines.join("\n")}\n")
       end
 
-      # Render a single `gem` line from a declaration's constraint. "version" is
-      # the positional requirement; any other constraint keys become gem options.
+      # Render a single `gem` line from a declaration: the requirement
+      # translated into bundler's own terms (GemScheme#render, one positional
+      # per term so a conjunction reads as bundler writes one), then the
+      # declaration's options as gem options.
       #
       # @param decl [ScopedDeclaration]
       # @return [String]
       sig { params(decl: ScopedDeclaration).returns(String) }
       def gem_line(decl)
         parts = [%(gem "#{decl.name}")]
-        constraint = decl.constraint
-        parts << constraint["version"].inspect if constraint["version"]
-
-        options = constraint.reject { |key, _| key == "version" }
-        options.each { |key, value| parts << "#{key}: #{value.inspect}" }
+        parts.concat(@scheme.render(decl.requirement).as_list.map(&:inspect)) unless decl.requirement.any?
+        decl.options.each { |key, value| parts << "#{key}: #{value.inspect}" }
 
         parts.join(", ")
       end

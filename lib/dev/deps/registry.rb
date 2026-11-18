@@ -34,7 +34,7 @@ require_relative "ghcr_publisher"
 require_relative "rubygems_publisher"
 require_relative "brew_cask_repository"
 require_relative "brew_scheme"
-require_relative "exact_scheme"
+require_relative "cask_scheme"
 require_relative "gem_scheme"
 require_relative "git_scheme"
 require_relative "locker"
@@ -42,6 +42,7 @@ require_relative "pep440_scheme"
 require_relative "rock_scheme"
 require_relative "semver_scheme"
 require_relative "steam_scheme"
+require_relative "tag_scheme"
 require_relative "version_scheme"
 require "dev/lifecycle/publisher"
 require "dev/ui"
@@ -69,10 +70,9 @@ module Dev
       # @param repository [Class] Repository subclass that reports this type's universes
       # @param repository_needs [Array<Symbol>] extra kwargs the repository takes
       # @param scheme [Class, nil] VersionScheme subclass carrying this type's
-      #   constraint semantics; nil for a purely addressable type (xcode)
-      #   whose declarations carry a revision, never a constraint
-      # @param scheme_args [Hash{Symbol => Object}] constructor kwargs for the
-      #   scheme (e.g. ExactScheme's key:)
+      #   requirement semantics; nil for a purely addressable type (xcode)
+      #   whose declarations carry a revision, never a requirement, or a
+      #   url-shaped one whose address is the whole ask
       # @param locker [Class, nil] Locker subclass for types whose ecosystem tool
       #   owns the whole-set solve (bundler), or nil
       # @param locker_needs [Array<Symbol>] extra kwargs the locker takes
@@ -97,7 +97,7 @@ module Dev
       #   dependency type is: gems (`bundler`) ship to `rubygems`, an `image`
       #   is pushed to `ghcr`. nil names the channel after the entry.
       Entry = Data.define(
-        :symbol, :repository, :repository_needs, :scheme, :scheme_args, :locker, :locker_needs,
+        :symbol, :repository, :repository_needs, :scheme, :locker, :locker_needs,
         :integration, :integration_needs, :install_alias, :publisher, :publisher_needs, :channel,
       ) do
         extend T::Sig
@@ -124,11 +124,6 @@ module Dev
         sig { returns(T.nilable(T.class_of(VersionScheme))) }
         def scheme
           to_h.fetch(:scheme)
-        end
-
-        sig { returns(T::Hash[Symbol, T.untyped]) }
-        def scheme_args
-          to_h.fetch(:scheme_args)
         end
 
         sig { returns(T.nilable(T.class_of(Locker))) }
@@ -178,7 +173,6 @@ module Dev
             scheme: T.nilable(T.class_of(VersionScheme)),
             integration: T.nilable(T.class_of(Integration)),
             repository_needs: T::Array[Symbol],
-            scheme_args: T::Hash[Symbol, T.untyped],
             locker: T.nilable(T.class_of(Locker)),
             locker_needs: T::Array[Symbol],
             integration_needs: T::Array[Symbol],
@@ -189,7 +183,7 @@ module Dev
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:,
-                       repository_needs: [], scheme_args: {}, locker: nil, locker_needs: [],
+                       repository_needs: [], locker: nil, locker_needs: [],
                        integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [], channel: nil)
           super
           return if channel.nil? || publisher
@@ -259,17 +253,18 @@ module Dev
           Entry.new(
             symbol: :cask,
             repository: BrewCaskRepository,
-            scheme: BrewScheme,
+            scheme: CaskScheme,
             integration: BrewIntegration,
           ),
           # The project's interpreters are brew formulae with their own
-          # constraint semantics, installed through brew's instance (the
+          # requirement semantics, installed through brew's instance (the
           # same install_all call, so one activation covers every keg):
           # ruby ranges over the d3mlabs tap's immutable ruby@X.Y.Z family
-          # with rubygems requirements; python selects core's python@minor
-          # by suffix, as any versioned formula. Their own symbols keep the
-          # lock legible (`ruby:`/`python:` sections) and let the install
-          # step that activates an interpreter key on the pin, not its name.
+          # with rubygems ordering; python ranges over core's python@minor
+          # family (`python "3.12"` is `~> 3.12.0`), as any versioned
+          # formula. Their own symbols keep the lock legible (`ruby:` /
+          # `python:` sections) and let the install step that activates an
+          # interpreter key on the pin, not its name.
           Entry.new(
             symbol: :ruby,
             repository: BrewRepository,
@@ -294,7 +289,7 @@ module Dev
           # url deps are declared with the cmake DSL verb (url:) but are a
           # separate universe: the URL is the entire address and the artifact
           # behind it is the one version, downloaded and TOFU-hashed by find.
-          # Scheme-less — a url declaration carries no constraint (the tag:
+          # Scheme-less — a url declaration carries no requirement (the tag:
           # label is naming, not selection) — and installed through cmake's
           # integration instance so a mixed project generates one deps.cmake.
           Entry.new(
@@ -326,8 +321,7 @@ module Dev
           Entry.new(
             symbol: :gh,
             repository: GhRepository,
-            scheme: ExactScheme,
-            scheme_args: { key: "tag" },
+            scheme: TagScheme,
             integration: GhIntegration,
             integration_needs: %i[project_root],
           ),
@@ -359,7 +353,7 @@ module Dev
             symbol: :xcode,
             repository: XcodeRepository,
             # Purely addressable: the DSL mints the exact version as the
-            # declaration's revision, so no constraint ever needs evaluating.
+            # declaration's revision, so no requirement ever needs evaluating.
             scheme: nil,
             integration: XcodeIntegration,
             integration_needs: %i[project_root],
@@ -410,10 +404,9 @@ module Dev
         end
 
         # Build the integration-type -> VersionScheme hash the Resolver consumes.
-        # Schemes are stateless domain services; their only context is the
-        # entry's own scheme_args (e.g. which constraint key ExactScheme reads).
-        # Scheme-less (purely addressable) types are absent from the hash, so
-        # a constraint-shaped ask against one fails the Resolver's
+        # Schemes are stateless domain services with no context at all.
+        # Scheme-less (purely addressable, url-shaped) types are absent from
+        # the hash, so a requirement against one fails the Resolver's
         # no-scheme-registered check loudly.
         #
         # @return [Hash{Symbol => VersionScheme}]
@@ -423,9 +416,7 @@ module Dev
             scheme = entry.scheme
             next unless scheme
 
-            # T.unsafe: the keyword set is entry-declared (scheme_args); the
-            # scheme constructors' own sigs validate at runtime.
-            schemes[entry.symbol] = T.unsafe(scheme).new(**entry.scheme_args)
+            schemes[entry.symbol] = scheme.new
           end
         end
 

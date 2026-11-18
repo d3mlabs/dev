@@ -15,7 +15,9 @@ require "tmpdir"
 # integration class, or a declaration DSL verb, is added without a registry entry.
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::RegistryConsistencyTest < Minitest::Test
-  DEPS_DIR = File.expand_path("../../../../lib/dev/deps", __dir__)
+  # Anchored on the registry's own source file rather than a path relative to
+  # this test: a mis-counted `..` would scan an empty directory and pass.
+  DEPS_DIR = File.dirname(File.realpath(Object.const_source_location("Dev::Deps::Registry").first))
 
   # Repositories deliberately not owned by a single integration symbol (none today).
   REPOSITORY_ALLOWLIST = {}.freeze
@@ -26,6 +28,7 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
   # Schemes deliberately not owned by a single integration symbol.
   SCHEME_ALLOWLIST = {
     "version_scheme.rb" => "VersionScheme is the abstract base every scheme subclasses",
+    "range_scheme.rb" => "RangeScheme is the abstract base of every scheme with a total order",
   }.freeze
 
   # Every GroupDSL verb that creates a declaration, mapped to its integration

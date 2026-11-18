@@ -128,7 +128,7 @@ class Dev::Deps::DependencyTest < Minitest::Test
 
   test "dependencies field stores transitive deps" do
     Given "a dependency with transitive deps"
-    transitive = [{ name: "zlib", constraint: ">=1.0" }]
+    transitive = [{ name: "zlib", requirement: ">= 1.0" }]
 
     When
     dep = Dev::Deps::Dependency.new(

@@ -3,33 +3,48 @@
 
 require "test_helper"
 require "dev/deps/declaration"
+require "dev/deps/requirement"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DeclarationTest < Minitest::Test
-  test "states a package under a constraint in dev's shape" do
-    Given "a declaration with an explicit constraint hash"
+  Requirement = Dev::Deps::Requirement
+
+  test "states a package under a requirement in dev's language" do
+    Given "a declaration with an explicit requirement"
     decl = Dev::Deps::Declaration.new(
-      name: "SML", integration: :ficsit, constraint: { "version" => "^3.6.0" },
+      name: "SML", integration: :ficsit, requirement: Requirement.parse("~> 3.6"),
     )
 
-    Expect "the atom's three facts are readable"
+    Expect "the atom's facts are readable"
     decl.name == "SML"
     decl.integration == :ficsit
-    decl.constraint == { "version" => "^3.6.0" }
+    decl.requirement == Requirement::Pessimistic.new(version: "3.6")
   end
 
-  test "unconstrained is the empty hash, a present empty form" do
-    Given "a declaration without a constraint"
+  test "no requirement is Any, a present empty form; no options is the empty hash" do
+    Given "a declaration asking nothing"
     decl = Dev::Deps::Declaration.new(name: "boost", integration: :cmake)
 
-    Expect "the constraint is {} — never nil"
-    decl.constraint == {}
+    Expect "the requirement is Any — never nil"
+    decl.requirement.any?
+    decl.options == {}
+  end
+
+  test "options are the integration's own vocabulary beside the requirement" do
+    Given "a gem with bundler options"
+    decl = Dev::Deps::Declaration.new(
+      name: "rake", integration: :bundler, requirement: Requirement.parse("~> 13"), options: { "require" => false },
+    )
+
+    Expect
+    decl.requirement == Requirement.parse("~> 13")
+    decl.options == { "require" => false }
   end
 
   test "is value-equal and hash-stable" do
     Given "two declarations built independently from the same facts"
-    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, constraint: { "version" => "~> 1.17" })
-    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, constraint: { "version" => "~> 1.17" })
+    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
+    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
 
     Expect "they are equal and collapse to one hash key"
     a == b
@@ -45,25 +60,34 @@ class Dev::Deps::DeclarationTest < Minitest::Test
     gem_decl != pip_decl
   end
 
-  test "is frozen, constraint included" do
-    Given "a declaration"
-    decl = Dev::Deps::Declaration.new(name: "boost", integration: :cmake, constraint: { "tag" => "1.0" })
+  test "a different requirement is a different declaration" do
+    Given
+    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
+    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.16"))
 
-    Expect "the value and its constraint resist mutation"
-    decl.frozen?
-    decl.constraint.frozen?
+    Expect
+    a != b
   end
 
-  test "carries a source coordinate as an identity field, not a constraint key" do
+  test "is frozen, options included" do
+    Given "a declaration"
+    decl = Dev::Deps::Declaration.new(name: "boost", integration: :cmake, options: { "cmake_namespace" => "Boost" })
+
+    Expect "the value and its options resist mutation"
+    decl.frozen?
+    decl.options.frozen?
+  end
+
+  test "carries a source coordinate as an identity field, not a requirement" do
     Given "a source-based declaration"
     decl = Dev::Deps::Declaration.new(
       name: "fmt", integration: :cmake,
-      constraint: { "tag" => "11.0.2" }, source: "https://github.com/fmtlib/fmt",
+      requirement: Requirement::Exact.new(version: "11.0.2"), source: "https://github.com/fmtlib/fmt",
     )
 
-    Expect "source is a field and the constraint holds only version-shaped keys"
+    Expect "source is a field and the requirement is the version ask alone"
     decl.source == "https://github.com/fmtlib/fmt"
-    decl.constraint == { "tag" => "11.0.2" }
+    decl.requirement == Requirement::Exact.new(version: "11.0.2")
   end
 
   test "source defaults to nil for registry-backed packages" do
@@ -84,7 +108,7 @@ class Dev::Deps::DeclarationTest < Minitest::Test
     a.hash != b.hash
   end
 
-  test "carries a revision as an address, not a constraint key" do
+  test "carries a revision as an address, not a requirement" do
     Given "a declaration pinning an addressable revision"
     decl = Dev::Deps::Declaration.new(
       name: "opencell", integration: :cmake,
@@ -92,14 +116,16 @@ class Dev::Deps::DeclarationTest < Minitest::Test
       revision: "ee3042f8b0279856061f91069a487e4ed6f69475",
     )
 
-    Expect "the revision is a field and the constraint stays empty"
+    Expect "the revision is a field and the requirement stays Any"
     decl.revision == "ee3042f8b0279856061f91069a487e4ed6f69475"
-    decl.constraint == {}
+    decl.requirement.any?
   end
 
   test "revision defaults to nil — most asks select over a universe" do
-    Given "a constraint-shaped declaration"
-    decl = Dev::Deps::Declaration.new(name: "googletest", integration: :cmake, constraint: { "tag" => "v1.17.0" })
+    Given "a requirement-shaped declaration"
+    decl = Dev::Deps::Declaration.new(
+      name: "googletest", integration: :cmake, requirement: Requirement::Exact.new(version: "v1.17.0"),
+    )
 
     Expect
     decl.revision.nil?
@@ -115,17 +141,25 @@ class Dev::Deps::DeclarationTest < Minitest::Test
     a.hash != b.hash
   end
 
-  test "a revision alongside version constraints is a contradiction, rejected loudly" do
+  test "a revision alongside a requirement is a contradiction, rejected loudly" do
     When "declaring both an address and a selection"
     act = lambda do
       Dev::Deps::Declaration.new(
         name: "opencell", integration: :cmake,
-        constraint: { "tag" => "v1.0" }, revision: "a" * 40,
+        requirement: Requirement::Exact.new(version: "v1.0"), revision: "a" * 40,
       )
     end
 
-    Then "the atom refuses: an address forgoes resolution, a constraint asks for it"
-    error = assert_raises(Dev::Deps::Declaration::RevisionWithConstraintError) { act.call }
+    Then "the atom refuses: an address forgoes resolution, a requirement asks for it"
+    error = assert_raises(Dev::Deps::Declaration::RevisionWithRequirementError) { act.call }
     error.message.include?("opencell")
+  end
+
+  test "a revision alongside options is the same contradiction" do
+    When
+    Dev::Deps::Declaration.new(name: "opencell", integration: :cmake, options: { "tag" => "v1" }, revision: "a" * 40)
+
+    Then
+    raises Dev::Deps::Declaration::RevisionWithRequirementError
   end
 end

@@ -3,10 +3,14 @@
 
 require "test_helper"
 require "dev/deps/package_version"
+require "dev/deps/requirement"
+require "dev/deps/semver_range"
 require "dev/deps/semver_scheme"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::SemverSchemeTest < Minitest::Test
+  Requirement = Dev::Deps::Requirement
+
   def scheme
     Dev::Deps::SemverScheme.new
   end
@@ -15,19 +19,43 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
     Dev::Deps::PackageVersion.new(version: version)
   end
 
-  test "#{version} against #{requirement.inspect} is #{expected}" do
-    When "evaluating the requirement under semver range semantics"
-    result = scheme.satisfies?(pv(version), { "version" => requirement })
+  test "#{version} against #{expression.inspect} is #{expected}" do
+    When "evaluating dev's requirement under semver ordering"
+    result = scheme.satisfies?(pv(version), Requirement.parse(expression))
 
     Then
     result == expected
 
     Where
-    version       | requirement        | expected
+    version       | expression          | expected
+    "3.12.0"      | "~> 3.12.0"         | true
+    "3.12.9"      | "~> 3.12.0"         | true
+    "3.13.0"      | "~> 3.12.0"         | false
+    "3.13.2"      | "~> 3.12"           | true
+    "4.0.0"       | "~> 3.12"           | false
+    "3.11.9"      | "~> 3.12"           | false
+    "2.5.0"       | ">= 1.0.0, < 3.0.0" | true
+    "3.0.0"       | ">= 1.0.0, < 3.0.0" | false
+    "1.0.0"       | "1.0.0"             | true
+    "1.0.1"       | "1.0.0"             | false
+    "1.0.0-rc.1"  | ">= 1.0.0"          | false
+    "1.0.0"       | "> 1.0.0-rc.1"      | true
+    "1.0.0"       | "<= 1.0.0"          | true
+    "1.0.1"       | "<= 1.0.0"          | false
+  end
+
+  test "a translated ficsit range (#{range.inspect}) reads the same as upstream" do
+    When "evaluating the range SMR wrote, translated"
+    result = scheme.satisfies?(pv(version), Dev::Deps::SemverRange.new.parse(range))
+
+    Then
+    result == expected
+
+    Where
+    version       | range              | expected
     "3.12.0"      | "^3.12.0"          | true
     "3.13.2"      | "^3.12.0"          | true
     "4.0.0"       | "^3.12.0"          | false
-    "3.11.9"      | "^3.12.0"          | false
     "0.2.5"       | "^0.2.3"           | true
     "0.3.0"       | "^0.2.3"           | false
     "0.0.3"       | "^0.0.3"           | true
@@ -35,27 +63,19 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
     "1.2.9"       | "~1.2.3"           | true
     "1.3.0"       | "~1.2.3"           | false
     "2.5.0"       | ">=1.0.0 <3.0.0"   | true
-    "3.0.0"       | ">=1.0.0 <3.0.0"   | false
-    "1.0.0"       | "1.0.0"            | true
-    "1.0.1"       | "1.0.0"            | false
-    "1.0.0"       | "=1.0.0"           | true
-    "1.0.0-rc.1"  | ">=1.0.0"          | false
-    "1.0.0"       | ">1.0.0-rc.1"      | true
-    "1.0.0"       | "<=1.0.0"          | true
-    "1.0.1"       | "<=1.0.0"          | false
   end
 
-  test "an empty constraint is satisfied by anything" do
+  test "Any is satisfied by anything" do
     Expect
-    scheme.satisfies?(pv("3.12.0"), {})
+    scheme.satisfies?(pv("3.12.0"), Requirement::Any.new)
   end
 
   test "sorts semver-correctly, prereleases below their release" do
     Given "releases and prereleases out of order"
-    versions = ["1.0.0", "1.0.0-rc.1", "0.9.0", "1.0.0-beta"]
+    versions = ["1.0.0", "1.0.0-rc.1", "0.9.0", "1.0.0-beta"].map { |v| pv(v) }
 
     When "sorting"
-    sorted = scheme.sort(versions)
+    sorted = scheme.sort(versions).map(&:version)
 
     Then
     sorted == ["0.9.0", "1.0.0-beta", "1.0.0-rc.1", "1.0.0"]
@@ -63,22 +83,22 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
 
   test "orders numeric prerelease identifiers numerically" do
     Expect "rc.10 sorts above rc.2 (numeric, not lexicographic)"
-    scheme.sort(["1.0.0-rc.10", "1.0.0-rc.2"]) == ["1.0.0-rc.2", "1.0.0-rc.10"]
+    scheme.sort([pv("1.0.0-rc.10"), pv("1.0.0-rc.2")]).map(&:version) == ["1.0.0-rc.2", "1.0.0-rc.10"]
   end
 
   test "rejects a version that is not semver" do
     When "sorting a non-semver string"
-    scheme.sort(["not-semver"])
+    scheme.sort([pv("not-semver")])
 
     Then
     raises Dev::Deps::SemverScheme::InvalidVersionError
   end
 
-  test "rejects a constraint it cannot parse" do
-    When "evaluating an unparseable range"
-    scheme.satisfies?(pv("1.0.0"), { "version" => "^^nope" })
+  test "rejects a requirement version that is not semver" do
+    When "evaluating a requirement over four segments"
+    scheme.satisfies?(pv("1.0.0"), Requirement.parse(">= 1.2.3.4"))
 
     Then
-    raises Dev::Deps::SemverScheme::InvalidConstraintError
+    raises Dev::Deps::VersionScheme::InvalidRequirementError
   end
 end
