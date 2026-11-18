@@ -435,7 +435,7 @@ difference. The host's job is to bring a data root to the start line.
 | **Host provisioned from the environment's image** (a cloud worker or WSL distro baked from it) | its disk | `dev up` installs the whole lock on the host; no container | `dev up` is a probe |
 | **Linux host not provisioned from it** (the box, a stock hosted runner) | its disk, at `/var/lib/dev` | `dev up` creates the root, converges docker, pulls the image, installs the lock, starts the container over the host's own root | probe on both sides |
 | **Mac** | the Mac's disk, and named volumes in the colima VM for the container | `dev up` installs the darwin lock on the host, then the Linux lock inside the container's volumes | probe on both sides |
-| **Self-hosted runner** (a box) | its disk | Homebrew + dev, `gh auth login`, `dev runner register` | `d3mlabs/dev/up` upgrades dev and probes; several branches stay warm at once; `dev cache gc --keep N` per job trims |
+| **Self-hosted runner** (a box) | its disk | Homebrew + dev, `gh auth login`, `dev runner register` | `d3mlabs/dev/up` upgrades dev and probes; several branches stay warm at once; `dev cache gc --keep N` per job trims. The checkout's ignored build state is warm too when the workflow checks out with `clean: false`, as dev's shipped `dev-lifecycle.yml` does |
 | **Hosted runner** (GitHub larger runner) | a **checkpoint**: a custom runner image of the disk after `dev up` | `d3mlabs/dev/up` installs Homebrew + dev, then the full lock — minutes to tens of minutes | boots the checkpoint; `d3mlabs/dev/up` is a probe |
 
 ### The hosted recipe

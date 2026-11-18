@@ -694,8 +694,11 @@ nothing. Its inputs:
 | `runner` | the label the job demands beside `self-hosted` |
 | `fetch` | whether to upload the packaged artifact as a workflow artifact named after the build |
 
-The job checks out the snapshot branch, puts dev on PATH, runs `dev up`,
-then the verbs. The run is located by its branch (unique to the dispatch),
+The job checks out the snapshot branch without cleaning the tree
+(`clean: false`: on a persistent runner the checkout is the build's
+working tree, and its ignored build state is the warmth the next run
+starts from), puts dev on PATH, runs `dev up`, then the verbs. The run
+is located by its branch (unique to the dispatch),
 polled for up to a minute while GitHub registers it, and `gh run watch`
 streams it to the terminal; the dispatch prints the run's page first. A
 run that does not complete successfully is the verb's failure, naming the
