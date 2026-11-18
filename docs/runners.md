@@ -499,6 +499,11 @@ When copying a workflow precedent: the runner user's step is `uses:
 d3mlabs/dev/up@main`. A `dev deps install` in a workflow belongs to the
 agent user's step, never to the runner's.
 
+dev ships this rule as the `two-identity-rule` skill
+(`share/cursor-skills/two-identity-rule/`), linked machine-wide with
+dev's other skills ([agents.md](agents.md#skills)), so an agent writing a
+workflow in any adopting repo loads it before it copies a precedent.
+
 #### The checkpoint
 
 A hosted runner's disk does not persist across jobs, so its warmth is a
