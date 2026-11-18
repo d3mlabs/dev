@@ -745,6 +745,19 @@ A branch that outlives its dispatch (a killed dev, a lost connection, a
 read-only credential) is pruned by `dev cache gc` once older than seven
 days, read from its name ([Data root](data-root.md#dev-cache-gc)).
 
+**Inside an Actions job, the checkout is the snapshot.** A job is given
+a commit at a ref — `GITHUB_SHA` at `GITHUB_REF`, `refs/pull/<n>/merge`
+for a pull request, a branch for a push — and `actions/checkout` puts
+that commit at HEAD, so the tree is already on the forge. When HEAD is
+`GITHUB_SHA` and `git status --porcelain` is empty (ignored files do not
+count; they never enter a snapshot), the sync step hands the container
+that commit at the job's ref and pushes nothing — a job's default
+`GITHUB_TOKEN` is `contents: read`, which could not push a branch
+anyway. A job whose steps have changed the tree before `dev` runs (a
+generated file, a modified lock) pushes as above, and a refused push
+then also says what differed, so the fix is read from the error rather
+than from the token.
+
 A snapshot-branch build is unreviewed code running on the host as its
 job user: the same trust a self-hosted runner already extends to the
 repo's own branches.

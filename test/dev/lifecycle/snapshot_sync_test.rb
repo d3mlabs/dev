@@ -40,6 +40,78 @@ class Dev::Lifecycle::SnapshotSyncTest < Minitest::Test
     FileUtils.rm_rf(workspace)
   end
 
+  test "inside an Actions job, a clean checkout at GITHUB_SHA is handed over as is: nothing pushed, nothing deleted" do
+    Given "a clean checkout and the job's facts for it"
+    workspace = Pathname(Dir.mktmpdir("snapshot-sync-"))
+    root, origin = checkout_with_origin(workspace)
+    head = Dev::Lifecycle::Git.new(root:).capture(["rev-parse", "HEAD"]).strip
+    env = { "GITHUB_ACTIONS" => "true", "GITHUB_SHA" => head, "GITHUB_REF" => "refs/pull/338/merge" }
+    checkout = Dev::Lifecycle::JobCheckout.new(git: Dev::Lifecycle::Git.new(root:), env:)
+    seen_on_remote = nil
+    seen = nil
+
+    When
+    result = Dev::Lifecycle::SnapshotSync.new(root:, checkout:, out: StringIO.new).sync(runner: "container") do |snapshot|
+      seen = snapshot
+      seen_on_remote = remote_heads(origin)
+      :ran
+    end
+
+    Then "the block saw the job's own commit at the job's ref, and the remote never changed"
+    result == :ran
+    seen == Dev::Lifecycle::Snapshot.checked_out(sha: head, ref: "refs/pull/338/merge")
+    seen_on_remote.keys == ["refs/heads/main"]
+    remote_heads(origin).keys == ["refs/heads/main"]
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "inside an Actions job, a checkout with changes is pushed as a snapshot branch like any other tree" do
+    Given
+    workspace = Pathname(Dir.mktmpdir("snapshot-sync-"))
+    root, origin = checkout_with_origin(workspace)
+    head = Dev::Lifecycle::Git.new(root:).capture(["rev-parse", "HEAD"]).strip
+    (root / "a.txt").write("changed\n")
+    env = { "GITHUB_ACTIONS" => "true", "GITHUB_SHA" => head, "GITHUB_REF" => "refs/heads/main" }
+    checkout = Dev::Lifecycle::JobCheckout.new(git: Dev::Lifecycle::Git.new(root:), env:)
+    seen_on_remote = nil
+
+    When
+    Dev::Lifecycle::SnapshotSync.new(root:, checkout:, out: StringIO.new).sync(runner: "container") do |snapshot|
+      seen_on_remote = remote_heads(origin)
+      snapshot
+    end
+
+    Then
+    seen_on_remote.keys.any? { |ref| ref.start_with?("refs/heads/dev/build/container/") }
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
+  test "inside an Actions job, a push the origin refuses says why the checkout could not be handed over as is" do
+    Given "a job checkout with a change and an origin that is gone"
+    workspace = Pathname(Dir.mktmpdir("snapshot-sync-"))
+    root, origin = checkout_with_origin(workspace)
+    head = Dev::Lifecycle::Git.new(root:).capture(["rev-parse", "HEAD"]).strip
+    (root / "a.txt").write("changed\n")
+    FileUtils.rm_rf(origin)
+    env = { "GITHUB_ACTIONS" => "true", "GITHUB_SHA" => head, "GITHUB_REF" => "refs/heads/main" }
+    checkout = Dev::Lifecycle::JobCheckout.new(git: Dev::Lifecycle::Git.new(root:), env:)
+
+    When
+    Dev::Lifecycle::SnapshotSync.new(root:, checkout:, out: StringIO.new).sync(runner: "container") { |_snapshot| nil }
+
+    Then
+    error = raises(Dev::Lifecycle::SnapshotBranches::PushError)
+    error.message.include?("could not push the snapshot")
+    error.message.include?("M a.txt")
+
+    Cleanup
+    FileUtils.rm_rf(workspace)
+  end
+
   test "the branch is deleted when the block raises, and the error is the block's" do
     Given
     workspace = Pathname(Dir.mktmpdir("snapshot-sync-"))
