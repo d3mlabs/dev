@@ -141,7 +141,8 @@ In the order a new user needs them:
 7. [Data root](docs/data-root.md) — where dev stores things, `dev cache gc`.
 8. [Lifecycle](docs/lifecycle.md) — `build`, `package`, `deploy`,
    `release` in full.
-9. [Runners](docs/runners.md) — self-hosted and hosted runners, agent hosts.
+9. [Runners](docs/runners.md) — self-hosted and hosted runners, the
+   `d3mlabs/dev/up` step a job converges its runner with, agent hosts.
 10. [Agents](docs/agents.md) — plans, skills, learnings.
 11. [Writing scripts for dev](docs/scripts.md) — terminal, spinners,
     environment.
