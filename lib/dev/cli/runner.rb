@@ -94,9 +94,8 @@ module Dev
 
       # The build hosts a run can leave this machine for, made once per run
       # and shared by the command runner and the lifecycle verbs: the
-      # project's container (ProjectContainer) and the sync step a transport
-      # that pushes a snapshot branch delivers the tree by
-      # (Transport::SyncFor).
+      # project's container (ProjectContainer) and the sync step the
+      # Actions-runner transport delivers the tree by (Transport::SyncFor).
       class RemoteHosts < T::Struct
         const :containers, ProjectContainer
         const :sync_for, Transport::SyncFor
@@ -379,7 +378,7 @@ module Dev
       #
       # @param context [ExecutionContext]
       # @param usage_printer [Cli::UsagePrinter]
-      # @param hosts [RemoteHosts] the project's container and the sync step to it
+      # @param hosts [RemoteHosts] the project's container, the one the commands run in
       # @return [CommandExecutor]
       sig { params(context: ExecutionContext, usage_printer: Cli::UsagePrinter, hosts: RemoteHosts).returns(CommandExecutor) }
       def build_executor(context, usage_printer, hosts:)
@@ -389,7 +388,6 @@ module Dev
           project_root: project.root,
           host_rule: @host_rule,
           containers: hosts.containers,
-          sync_for: hosts.sync_for,
         )
         builtin_executor = BuiltinExecutor.new
         project_executor = ProjectExecutor.new(command_runner:)

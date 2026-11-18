@@ -6,9 +6,7 @@ module Dev
   # generic lifecycle workflow's, or any other. One fact, read where the
   # job changes what dev does: the Actions transport refuses to carry a
   # verb out of a job (Cli::Transport::ActionsRunner — a job dispatching
-  # a job would hide a misprovisioned runner behind a loop), and the job's
-  # own checkout and repo name stand in for what dev would otherwise push
-  # or ask gh for (Lifecycle::JobCheckout, ProjectContainer).
+  # a job would hide a misprovisioned runner behind a loop).
   #
   # Read from GitHub's own marker, `GITHUB_ACTIONS=true`, which every job
   # carries on every runner kind; declared by the runner, never inferred

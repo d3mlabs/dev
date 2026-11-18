@@ -13,7 +13,6 @@ require "dev/project_container"
 require "dev/cli/transport"
 require "fileutils"
 require "pathname"
-require "shellwords"
 require "stringio"
 require "support/fake_container_engine"
 require "support/fake_gh"
@@ -25,7 +24,8 @@ require "tmpdir"
 # a transport whose far side is scripted (the forge, FakeGh, for the
 # Actions runner; the engine, FakeContainerEngine, for the local
 # container) and whose delivery is real: a snapshot branch on a temp
-# bare origin. It never asks for the env: the seam runs on the host.
+# bare origin for the runner, the checkout mounted for the container. It
+# never asks for the env: the seam runs on the host.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::DispatchTest < Minitest::Test
   include SorbetHelper
@@ -160,17 +160,15 @@ class Dev::Cli::DispatchTest < Minitest::Test
     FileUtils.rm_rf(workspace)
   end
 
-  test "the local container runs the verb by docker exec over the snapshot: the container fetches the branch into its own workspace with gh's auth, resets to the sha, and the branch is deleted after" do
+  test "the local container runs the verb by docker exec in the mounted checkout: the service container mounts the tree at its own path, nothing is pushed, and the origin never changes" do
     Given "a checkout with an origin, a persisted image, and an engine recording what runs in the service container"
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, origin = checkout_with_origin(workspace)
-    engine = recording_engine
-    heads_at_exec = nil
-    heads = -> { remote_heads(origin) }
-    engine.define_singleton_method(:status) do |args, env: {}, **opts|
-      heads_at_exec = heads.call if args.fetch(0) == "exec"
-      super(args, env:, **opts)
-    end
+    checkout = Dev::BuildContainer.workspace_path(root)
+    heads_before = remote_heads(origin)
+    # No service container exists yet: `container inspect` fails, so the
+    # dispatch creates one — the run whose mounts are under test.
+    engine = recording_engine { |args| args[0, 2] != ["container", "inspect"] }
     ui = typed_mock(Dev::Ui)
     crossing = nil
     ui.expects(:print_remote_crossing).with { |destination:, workspace:| crossing = [destination, workspace] }
@@ -182,33 +180,29 @@ class Dev::Cli::DispatchTest < Minitest::Test
     When
     outcome = remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "cellbound-3d-win64-dev"])) { flunk("the env was resolved") }
 
-    Then "Done; the service container was brought up (no checkout mounted), then one exec with GH_TOKEN named, running the workspace program ending in the verb"
+    Then "Done; the service container was created with the checkout and its container-side shadowenv mounted, then one exec in the checkout with GH_TOKEN named, the verb its argv; the origin as it was"
     outcome == Dev::Cli::Dispatch::Outcome::Done.new
-    crossing.fetch(0) == "in cellbound-3d-linux (container)"
+    crossing == ["in cellbound-3d-linux (container)", "the checkout, mounted"]
+    created = engine.runs.find { |verb, flag, *_rest| verb == "run" && flag == "-d" }
+    created.each_cons(2).include?(["-v", "#{checkout}:#{checkout}"])
+    created.each_cons(2).include?(["-v", "#{checkout}/.shadowenv.d-container:#{checkout}/.shadowenv.d"])
+    (root / ".shadowenv.d").directory?
+    (root / ".shadowenv.d-container").directory?
     exec = engine.runs.find { |verb, *_rest| verb == "exec" }
-    exec[0, 3] == ["exec", "-e", "GH_TOKEN"]
-    exec[4, 2] == ["sh", "-c"]
+    exec == ["exec", "-e", "GH_TOKEN", "-w", checkout, Dev::BuildContainer.service_container_name(image(persist: true).ref, root), "dev", "build", "cellbound-3d-win64-dev"]
     engine.run_envs.fetch(engine.runs.index(exec)) == { "GH_TOKEN" => "gho_host" }
-    engine.runs.none? { |*run| run.flatten.include?("#{root}:/project") }
-    script = exec.last
-    branch = heads_at_exec.keys.find { |ref| ref.start_with?("refs/heads/dev/build/container/") }
-    !branch.nil?
-    script.include?("cd #{Dev::BuildContainer::DATA_ROOT_MOUNT}/workspaces/checkout-#{Dev::BuildContainer.workspace_id(root)}")
-    script.include?("git -c credential.helper= -c #{Shellwords.escape("credential.helper=!gh auth git-credential")}")
-    script.include?("fetch -q --no-tags https://github.com/o/r.git #{branch}")
-    script.include?("git reset -q --hard #{heads_at_exec.fetch(branch)}")
-    script.end_with?("exec dev build cellbound-3d-win64-dev\n")
-    crossing.fetch(1) == "snapshot #{heads_at_exec.fetch(branch)[0, 12]}"
-    remote_heads(origin).keys == ["refs/heads/main"]
+    remote_heads(origin) == heads_before
+    Dev::Lifecycle::Git.new(root:).capture(["status", "--porcelain"]).strip.empty?
 
     Cleanup
     FileUtils.rm_rf(workspace)
   end
 
-  test "a non-persisted image runs the verb in a one-shot `docker run --rm` of the image, the container's data root mounted and no checkout" do
+  test "a non-persisted image runs the verb in a one-shot `docker run --rm` of the image, the container's data root and the checkout mounted, the checkout the workdir" do
     Given
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
     root, _origin = checkout_with_origin(workspace)
+    checkout = Dev::BuildContainer.workspace_path(root)
     engine = recording_engine
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: false), token: nil),
@@ -222,19 +216,20 @@ class Dev::Cli::DispatchTest < Minitest::Test
     run = engine.runs.find { |verb, *_rest| verb == "run" }
     run[0, 2] == ["run", "--rm"]
     run.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
-    run.each_cons(2).none? { |flag, value| flag == "-v" && value.start_with?(root.to_s) }
+    run.each_cons(2).include?(["-v", "#{checkout}:#{checkout}"])
+    run.each_cons(2).include?(["-w", checkout])
     run.include?(image(persist: false).ref)
-    run.last.end_with?("exec dev build x\n")
+    run.last(3) == ["dev", "build", "x"]
     engine.runs.none? { |verb, *_rest| verb == "exec" }
 
     Cleanup
     FileUtils.rm_rf(workspace)
   end
 
-  test "a verb that exits nonzero inside is ContainerVerbFailedError carrying the status; the branch is still deleted" do
+  test "a verb that exits nonzero inside is ContainerVerbFailedError carrying the status" do
     Given
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
-    root, origin = checkout_with_origin(workspace)
+    root, _origin = checkout_with_origin(workspace)
     engine = recording_engine(&->(args) { args.fetch(0) == "exec" ? 3 : true })
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
@@ -248,7 +243,6 @@ class Dev::Cli::DispatchTest < Minitest::Test
     error = raises(Dev::Cli::Transport::LocalContainer::ContainerVerbFailedError)
     error.message == "`dev package x` in cellbound-3d-linux (container) exited 3"
     error.exit_status == 3
-    remote_heads(origin).keys == ["refs/heads/main"]
 
     Cleanup
     FileUtils.rm_rf(workspace)
@@ -291,10 +285,10 @@ class Dev::Cli::DispatchTest < Minitest::Test
     "linux"  | 0
   end
 
-  test "the local container refuses before anything is pushed when the engine does not answer" do
+  test "the local container refuses before anything runs when the engine does not answer" do
     Given
     workspace = Pathname(Dir.mktmpdir("dispatch-"))
-    root, origin = checkout_with_origin(workspace)
+    root, _origin = checkout_with_origin(workspace)
     engine = FakeContainerEngine.new(capture_result: "")
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: nil),
@@ -308,7 +302,6 @@ class Dev::Cli::DispatchTest < Minitest::Test
     error = raises(Dev::ProjectContainer::EngineUnavailableError)
     error.message.include?("`dev up` brings it up")
     engine.runs.empty?
-    remote_heads(origin).keys == ["refs/heads/main"]
 
     Cleanup
     FileUtils.rm_rf(workspace)
@@ -399,15 +392,14 @@ class Dev::Cli::DispatchTest < Minitest::Test
   end
 
   # The container transport over a recording engine: the client on the
-  # given host OS, the repo resolved without gh, the floor passing.
+  # given host OS, the floor passing.
   def local_container(engine, root:, image:, token:, host_os: "darwin", out: StringIO.new)
     containers = Dev::ProjectContainer.new(
       project_root: root,
       client: Dev::BuildContainer.new(engine:, host_os:),
       github_token: Dev::ContainerGithubToken.new(source: -> { token }),
-      repo_resolver: -> { "o/r" },
     )
-    Dev::Cli::Transport::LocalContainer.new(image:, containers:, sync_for: quiet_sync_for, out:)
+    Dev::Cli::Transport::LocalContainer.new(image:, containers:, out:)
   end
 
   def image(persist:)

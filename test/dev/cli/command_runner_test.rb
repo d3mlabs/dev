@@ -20,9 +20,7 @@ require "dev/environment_ref"
 require "dev/host_environment"
 require "dev/cli/host_rule"
 require "dev/cli/project_images"
-require "shellwords"
 require "support/fake_container_engine"
-require "support/scripted_remote"
 
 transform!(RSpock::AST::Transformation)
 class CommandRunnerTest < Minitest::Test
@@ -49,31 +47,27 @@ class CommandRunnerTest < Minitest::Test
   # A containerized runner over a real ProjectContainer whose
   # engine-injected BuildContainer client is handed back, so tests stub
   # the client instance (the image step is a registry boundary) and read
-  # what reached the engine off the fake. The sync step the container's
-  # transport delivers the tree by is canned (CannedSync: one snapshot, no
-  # git); the repo gh would name is "o/r".
+  # what reached the engine off the fake. The container's transport
+  # delivers the tree as the checkout itself, mounted (no git, no forge).
   # The project is on the lock's pins alone (lock_images). The marker is
   # the host rule's fact: absent unless a test writes one (`marker:` a
   # path under the project root). The engine-floor gate passes unless a
   # test hands in its own check (`resources_check:`) over a sized engine
   # (`engine:`).
   def container_runner(engine_hint: nil, engine: FakeContainerEngine.new, resources_check: passing_check,
-    inside_container: false, marker: nil, github_token: no_github_token, sync: ScriptedRemote::CannedSync.new)
+    inside_container: false, marker: nil, github_token: no_github_token)
     client = Dev::BuildContainer.new(engine:)
-    containers = Dev::ProjectContainer.new(
-      project_root: @project_root, client:, engine_hint:, resources_check:, github_token:, repo_resolver: -> { "o/r" },
-    )
+    containers = Dev::ProjectContainer.new(project_root: @project_root, client:, engine_hint:, resources_check:, github_token:)
     runner = Dev::Cli::CommandRunner.new(
       ui: @ui, project_root: @project_root, host_rule: host_rule(marker:, inside_container:), containers:,
-      sync_for: ->(_root) { sync },
     )
     [runner, client]
   end
 
-  # The workspace program a container runs ends by becoming the command:
-  # what a stubbed client must have been handed as its shell_cmd.
+  # A shell command as the container runs it: the argv a stubbed client
+  # must have been handed, `sh -c` and the command, nothing between.
   def runs_inside(shell_command)
-    includes("exec #{["sh", "-c", shell_command].shelljoin}\n")
+    ["sh", "-c", shell_command]
   end
 
   # The container's verdict in exec mode is the process's own: pin the exit
@@ -418,32 +412,29 @@ class CommandRunnerTest < Minitest::Test
   #
   # A command in a container crosses through the container's transport
   # (Transport::LocalContainer), which delivers the tree as a workspace —
-  # today a snapshot (ADR-0008): its sync step yields one, the container
-  # is handed the workspace program that fetches it and ends in the
-  # command, and the container's exit status becomes the process's own —
-  # Kernel.exit in exec mode, where a host command would have
-  # exec-replaced the process.
+  # the checkout, bind-mounted at its own path: the container runs the
+  # shell command there, and the container's exit status becomes the
+  # process's own — Kernel.exit in exec mode, where a host command would
+  # have exec-replaced the process.
 
-  test "run resolves a pinned image through ensure_environment_image! and runs in it over the workspace its transport delivered: the one image, no key needed" do
+  test "run resolves a pinned image through ensure_environment_image! and runs in it over the mounted checkout: the one image, no key needed" do
     Given "a lock pinning one image"
     lock_images("myapp-linux")
     engine = FakeContainerEngine.new
-    sync = ScriptedRemote::CannedSync.new
-    runner, client = container_runner(engine:, sync:)
+    runner, client = container_runner(engine:)
     cmd = command("./bin/build.sh", repl: false)
     client.expects(:ensure_environment_image!).once
       .with { |image, publish:| image.name == "myapp-linux" && !publish }
       .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/build.sh"), volumes: [], env: {})
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {})
       .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     expect_exit(0)
 
     When
     runner.exec_into(cmd)
 
-    Then "the transport synced the tree for the container, the engine ran the invocation, and the status was exited with"
-    sync.synced == ["container"]
+    Then "the engine ran the invocation in the checkout, and the status was exited with"
     engine.runs.last == ["run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"]
     0 * Kernel.exec(any_parameters)
 
@@ -451,24 +442,21 @@ class CommandRunnerTest < Minitest::Test
     Dir.chdir(@original_cwd)
   end
 
-  test "the workspace program the container is handed fetches the snapshot into the container's own checkout, then becomes the command" do
-    Given "a lock pinning one image and a client whose shell_cmd is captured"
+  test "the command's args ride the shell command the container runs" do
+    Given "a lock pinning one image and a client whose argv is captured"
     lock_images("myapp-linux")
     runner, client = container_runner
     handed = nil
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command).with { |_tag, shell_cmd:, **| handed = shell_cmd }
+    client.stubs(:docker_run_command).with { |_tag, argv:, **| handed = argv }
       .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "x"))
     Kernel.stubs(:exit)
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false), args: ["--fast"])
 
-    Then "the program lives under the container's data root, fetches o/r at the snapshot branch, resets to its sha, execs the command"
-    handed.include?("cd #{Dev::BuildContainer::DATA_ROOT_MOUNT}/workspaces/#{@project_root.basename}-#{Dev::BuildContainer.workspace_id(@project_root)}")
-    handed.include?("fetch -q --no-tags https://github.com/o/r.git refs/heads/dev/build/container/")
-    handed.include?("git reset -q --hard #{ScriptedRemote::SHA}")
-    handed.end_with?("exec sh -c ./bin/build.sh\\ --fast\n")
+    Then
+    handed == ["sh", "-c", "./bin/build.sh --fast"]
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -598,7 +586,7 @@ class CommandRunnerTest < Minitest::Test
       .with("ghcr.io/d3mlabs/snappy-server:deadbeef", project_root: @project_root, volumes: ["/e:/ue"])
       .returns("dev-snappy-server-deadbeef")
     client.expects(:docker_exec_command)
-      .with("dev-snappy-server-deadbeef", shell_cmd: runs_inside("./bin/test-server.sh"), env: { "WWISE_TOKEN" => "tok-123" })
+      .with("dev-snappy-server-deadbeef", project_root: @project_root, argv: runs_inside("./bin/test-server.sh"), env: { "WWISE_TOKEN" => "tok-123" })
       .returns(invocation("exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"))
     client.expects(:docker_run_command).never
     expect_exit(0)
@@ -667,7 +655,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(command("./bin/editor.sh", environment: "host"))
 
     Then "the crossing into snappy-linux's container is the one line"
-    1 * @ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: ScriptedRemote::WORKSPACE)
+    1 * @ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: "the checkout, mounted")
     0 * @ui.print_remote_crossing(destination: includes("snappy-server"), workspace: anything)
     0 * @ui.print_remote_crossing(destination: includes("host"), workspace: anything)
 
@@ -826,7 +814,7 @@ class CommandRunnerTest < Minitest::Test
     When "the client returns an invocation and we run with args"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/test.sh --verbose"), volumes: [], env: {})
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/test.sh --verbose"), volumes: [], env: {})
       .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/test.sh --verbose"))
     runner.exec_into(cmd, args: ["--verbose"])
 
@@ -849,7 +837,7 @@ class CommandRunnerTest < Minitest::Test
     When "the image is ready and the command runs"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/build.sh"), volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
       .returns(invocation("run", "--rm", "-e", "WWISE_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh", env: { "WWISE_TOKEN" => "tok-123" }))
     runner.exec_into(cmd)
 
@@ -897,7 +885,7 @@ class CommandRunnerTest < Minitest::Test
     When "the command runs"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/ue/starter/publish.sh"),
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/ue/starter/publish.sh"),
         volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
       .returns(invocation("run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/ue/starter/publish.sh",
         env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }))
@@ -923,7 +911,7 @@ class CommandRunnerTest < Minitest::Test
     When "the command runs"
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/build.sh"),
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"),
         volumes: [], env: { "GH_TOKEN" => "gho_mine" })
       .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
@@ -948,7 +936,7 @@ class CommandRunnerTest < Minitest::Test
     Dev::Credentials.stubs(:load).with("wwise", "token").returns(nil)
     client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
     client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, shell_cmd: runs_inside("./bin/build.sh"), volumes: [], env: {})
+      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {})
       .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 

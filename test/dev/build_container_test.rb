@@ -13,6 +13,17 @@ transform!(RSpock::AST::Transformation)
 class BuildContainerTest < Minitest::Test
   include SorbetHelper
 
+  # The checkout a container is composed for: a real directory, resolved
+  # as the client resolves it, since the checkout mounts pre-create its
+  # shadowenv directories.
+  def setup
+    @checkout = Pathname(File.realpath(Dir.mktmpdir("build-container-checkout-")))
+  end
+
+  def teardown
+    FileUtils.rm_rf(@checkout)
+  end
+
   # Engine-injected instance under test: the docker CLI is a true boundary,
   # so the fake engine records argv instead of tests stubbing Kernel#system.
   # A Mac unless said otherwise: the data root's shape is the host OS's,
@@ -44,23 +55,78 @@ class BuildContainerTest < Minitest::Test
     When "building a docker run command"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
     ).argv
 
-    Then "the argv is the engine's verb onward (the engine's own prefix is the engine's to add), the checkout mounted nowhere (ADR-0008: the container works on a snapshot it fetched), no workdir imposed"
+    Then "the argv is the engine's verb onward (the engine's own prefix is the engine's to add), the checkout mounted at its own path and the workdir, the command word for word after the image"
     cmd[0, 2] == ["run", "--rm"]
-    cmd.each_cons(2).none? { |flag, value| flag == "-v" && value.start_with?("/project") }
-    !cmd.include?("-w")
-    cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
+    cmd.each_cons(2).include?(["-v", "#{@checkout}:#{@checkout}"])
+    cmd.each_cons(2).include?(["-w", @checkout.to_s])
+    cmd.index("-w") < cmd.index("jpduchesne89/snappy:content-abc123")
+    cmd.last(2) == ["jpduchesne89/snappy:content-abc123", "./bin/build.sh"]
+  end
+
+  test "#{what} mounts the container's own shadowenv directory over the host's, both made on the host first so docker never creates them as root (dev#648)" do
+    Given "a checkout with no shadowenv directory yet"
+    engine = FakeContainerEngine.new
+    bc = build_container(engine: engine)
+
+    When
+    cmd = if what == "docker_run_command"
+      bc.docker_run_command("img:tag", project_root: @checkout, argv: ["true"]).argv
+    else
+      bc.create_service_container("svc", "img:tag", project_root: @checkout)
+      engine.runs.find(&method(:detached_run?))
+    end
+
+    Then "the checkout's mount comes first, then .shadowenv.d-container over .shadowenv.d; both directories exist on the host"
+    mounts = cmd.each_cons(2).select { |flag, _| flag == "-v" }.map(&:last)
+    mounts.index("#{@checkout}:#{@checkout}") < mounts.index("#{@checkout}/.shadowenv.d-container:#{@checkout}/.shadowenv.d")
+    (@checkout / ".shadowenv.d").directory?
+    (@checkout / ".shadowenv.d-container").directory?
+
+    Where
+    what
+    "docker_run_command"
+    "create_service_container"
+  end
+
+  test "the checkout is mounted and entered at its real path, so a symlinked route names the same container, mount and workdir" do
+    Given "the checkout reached through a symlink"
+    link = Pathname(Dir.mktmpdir("build-container-link-")) / "snappy"
+    File.symlink(@checkout.to_s, link.to_s)
+
+    When
+    cmd = build_container.docker_run_command("img:tag", project_root: link, argv: ["true"]).argv
+
+    Then
+    cmd.each_cons(2).include?(["-v", "#{@checkout}:#{@checkout}"])
+    cmd.each_cons(2).include?(["-w", @checkout.to_s])
+    cmd.none? { |part| part.include?(link.to_s) }
+
+    Cleanup
+    FileUtils.rm_rf(link.dirname)
+  end
+
+  test "the checkout mounts are refused on an engine that cannot see local paths, before any directory is made" do
+    Given
+    engine = FakeContainerEngine.new(local_mounts: false)
+
+    When
+    build_container(engine: engine).docker_run_command("img:tag", project_root: @checkout, argv: ["true"])
+
+    Then
+    raises Dev::BuildContainer::LocalMountsUnsupportedError
+    !(@checkout / ".shadowenv.d-container").exist?
   end
 
   test "docker_run_command widens the pending-signal ulimit (Rosetta pend_signal aborts)" do
     When "building a docker run command"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
     ).argv
 
     Then "the run carries the widened sigpending bucket"
@@ -72,8 +138,8 @@ class BuildContainerTest < Minitest::Test
     When "building a docker run command with volumes"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
       volumes: ["/opt/engines/ue:/ue", "/var/cache/wwise:/wwise"],
     ).argv
 
@@ -89,8 +155,8 @@ class BuildContainerTest < Minitest::Test
     When "building a docker run command with env"
     invocation = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
       env: { "WWISE_TOKEN" => "tok-123" },
     )
     cmd = invocation.argv
@@ -106,8 +172,8 @@ class BuildContainerTest < Minitest::Test
     When "building a one-shot run with its own env"
     invocation = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
       env: { "WWISE_TOKEN" => "tok-123" },
     )
     cmd = invocation.argv
@@ -129,8 +195,8 @@ class BuildContainerTest < Minitest::Test
     When "building a one-shot run"
     invocation = build_container(engine: engine).docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
     )
     cmd = invocation.argv
 
@@ -160,15 +226,15 @@ class BuildContainerTest < Minitest::Test
 
     When
     cmd, env = if what == "docker_run_command"
-      invocation = bc.docker_run_command("ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh")
+      invocation = bc.docker_run_command("ghcr.io/d3mlabs/snappy-linux:abc", project_root: @checkout, argv: ["./bin/build.sh"])
       [invocation.argv, invocation.env]
     else
-      bc.send(:create_service_container, "svc", "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"))
+      bc.send(:create_service_container, "svc", "ghcr.io/d3mlabs/snappy-linux:abc", project_root: @checkout)
       index = engine.runs.index(&method(:detached_run?))
       [engine.runs.fetch(index), engine.run_envs.fetch(index)]
     end
 
-    Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume — the host user's own (brew is single-owner, and the engine is shared by the host's users)"
+    Then "the host's root at the host's path, DEV_DATA_ROOT agreeing; no data-root volume; Linuxbrew still a volume — the host user's own (brew is single-owner, and the engine is shared by the host's users); the checkout's two mounts beside"
     cmd.each_cons(2).include?(["-v", "#{root}:#{root}"])
     cmd.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
     env["DEV_DATA_ROOT"] == root
@@ -176,7 +242,7 @@ class BuildContainerTest < Minitest::Test
     cmd.none? { |part| part.include?("dev-data-root") }
     !engine.runs.include?(["volume", "create", "dev-data-root"])
     engine.runs.include?(["volume", "create", "dev-linuxbrew-jp"])
-    cmd.count { |part| part == "-v" } == 2
+    cmd.count { |part| part == "-v" } == 4
 
     Cleanup
     ENV["DEV_DATA_ROOT"] = original
@@ -196,7 +262,7 @@ class BuildContainerTest < Minitest::Test
 
     When
     invocation = build_container(host_os: "linux").docker_run_command(
-      "ghcr.io/d3mlabs/snappy-linux:abc", project_root: Pathname("/project"), shell_cmd: "./bin/build.sh",
+      "ghcr.io/d3mlabs/snappy-linux:abc", project_root: @checkout, argv: ["./bin/build.sh"],
     )
 
     Then
@@ -217,8 +283,8 @@ class BuildContainerTest < Minitest::Test
     When "building a docker run command with a ~ volume"
     cmd = build_container.docker_run_command(
       "jpduchesne89/snappy:content-abc123",
-      project_root: Pathname("/project"),
-      shell_cmd: "./bin/build.sh",
+      project_root: @checkout,
+      argv: ["./bin/build.sh"],
       volumes: ["~/.dev/engines/unreal-engine-css:/ue"],
     ).argv
 
@@ -235,7 +301,7 @@ class BuildContainerTest < Minitest::Test
     Given "an engine whose exec verb exits 3 and a composed invocation"
     engine = FakeContainerEngine.new(&->(args) { args.fetch(0) == "run" ? 3 : true })
     bc = build_container(engine: engine)
-    invocation = bc.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "true", env: { "WWISE_TOKEN" => "tok" })
+    invocation = bc.docker_run_command("img:tag", project_root: @checkout, argv: ["true"], env: { "WWISE_TOKEN" => "tok" })
 
     When
     status = bc.execute(invocation)
@@ -323,7 +389,7 @@ class BuildContainerTest < Minitest::Test
     bc = build_container(engine: FakeContainerEngine.new(local_mounts: false))
 
     When "composing a run command (every -v funnels through the same check)"
-    bc.docker_run_command("img:tag", project_root: Pathname("/project"), shell_cmd: "true")
+    bc.docker_run_command("img:tag", project_root: @checkout, argv: ["true"])
 
     Then
     raises Dev::BuildContainer::LocalMountsUnsupportedError
@@ -392,24 +458,20 @@ class BuildContainerTest < Minitest::Test
     runner != manual
   end
 
-  test "docker_exec_command targets the container, imposing no workdir: the command names its own (the workspace it fetched)" do
+  test "docker_exec_command targets the container in the mounted checkout: the workdir, then the command word for word" do
     When "building a docker exec command"
     cmd = build_container.docker_exec_command(
-      "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
+      "dev-snappy-linux-content-abc", project_root: @checkout, argv: ["sh", "-c", "./bin/build.sh"],
     ).argv
 
     Then
-    cmd[0] == "exec"
-    !cmd.include?("-w")
-    cmd.none? { |part| part.include?("/project") }
-    cmd.include?("dev-snappy-linux-content-abc")
-    cmd.last(3) == ["sh", "-c", "./bin/build.sh"]
+    cmd == ["exec", "-w", @checkout.to_s, "dev-snappy-linux-content-abc", "sh", "-c", "./bin/build.sh"]
   end
 
   test "docker_exec_command names env vars with bare -e flags before the container; the values ride the invocation's env, never argv (dev#317)" do
     When "building a docker exec command with env"
     invocation = build_container.docker_exec_command(
-      "dev-snappy-linux-content-abc", shell_cmd: "./bin/build.sh",
+      "dev-snappy-linux-content-abc", project_root: @checkout, argv: ["./bin/build.sh"],
       env: { "WWISE_TOKEN" => "tok-123" },
     )
     cmd = invocation.argv
@@ -424,7 +486,7 @@ class BuildContainerTest < Minitest::Test
   test "ensure_service! creates the container when none exists" do
     Given "an image tag whose container is absent, and the checkout it runs in"
     tag = "jpduchesne89/snappy-linux:content-abc"
-    root = Pathname("/proj")
+    root = @checkout
     name = Dev::BuildContainer.service_container_name(tag, root)
     bc = build_container
 
@@ -443,7 +505,7 @@ class BuildContainerTest < Minitest::Test
   test "ensure_service! starts the container when it exists but is stopped" do
     Given "an image tag whose container exists but is stopped"
     tag = "jpduchesne89/snappy-linux:content-abc"
-    root = Pathname("/proj")
+    root = @checkout
     name = Dev::BuildContainer.service_container_name(tag, root)
     bc = build_container
 
@@ -463,7 +525,7 @@ class BuildContainerTest < Minitest::Test
   test "ensure_service! is a no-op when the container is already running" do
     Given "an image tag whose container is already up"
     tag = "jpduchesne89/snappy-linux:content-abc"
-    root = Pathname("/proj")
+    root = @checkout
     name = Dev::BuildContainer.service_container_name(tag, root)
     bc = build_container
 
@@ -485,7 +547,7 @@ class BuildContainerTest < Minitest::Test
   test "ensure_service! recreates a container that mounts another prefix volume than this user's: #{what}" do
     Given "a container on #{mounted.inspect}, this user's volume being dev-linuxbrew-jp (Linux)"
     tag = "jpduchesne89/snappy-linux:content-abc"
-    root = Pathname("/proj")
+    root = @checkout
     name = Dev::BuildContainer.service_container_name(tag, root)
     bc = build_container(host_os: "linux")
 
@@ -521,7 +583,7 @@ class BuildContainerTest < Minitest::Test
   test "reap_stale_services! removes other-tag containers but keeps the current tag" do
     Given "a current tag and a stale sibling container in the same checkout"
     tag = "jpduchesne89/snappy-linux:content-new"
-    root = Pathname("/proj")
+    root = @checkout
     keep = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
     stale = service(Dev::BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-old", root),
       running: false)
@@ -538,7 +600,7 @@ class BuildContainerTest < Minitest::Test
 
   test "reset_service! removes every container for the checkout" do
     Given "two containers for the checkout (current and stale)"
-    root = Pathname("/proj")
+    root = @checkout
     current = service("dev-snappy-linux-abc-content-abc", running: true)
     stale = service("dev-snappy-linux-abc-content-old", running: false)
     bc = build_container
@@ -555,7 +617,7 @@ class BuildContainerTest < Minitest::Test
 
   test "stop_service! stops the checkout's running containers with no grace period, keeping them" do
     Given "a running and a stopped container for the checkout"
-    root = Pathname("/proj")
+    root = @checkout
     running = service("dev-snappy-linux-abc-content-abc", running: true)
     stopped = service("dev-snappy-linux-abc-content-old", running: false)
     engine = FakeContainerEngine.new
@@ -572,7 +634,7 @@ class BuildContainerTest < Minitest::Test
 
   test "stop_service! raises when a container will not stop" do
     Given "a running container whose stop fails"
-    root = Pathname("/proj")
+    root = @checkout
     bc = build_container(engine: FakeContainerEngine.new { |_args| false })
     bc.stubs(:service_containers).returns([service("dev-x", running: true)])
 
@@ -590,14 +652,14 @@ class BuildContainerTest < Minitest::Test
     bc = build_container(engine: engine)
 
     Expect "nothing stopped, nothing run"
-    bc.stop_service!(Pathname("/proj")) == []
+    bc.stop_service!(@checkout) == []
     engine.runs == []
   end
 
   test "service_status gathers image presence and the checkout's containers" do
     Given "a local image, a registry copy, and a current + stale container"
     tag = "jpduchesne89/snappy-linux:content-abc"
-    root = Pathname("/proj")
+    root = @checkout
     current = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
     stale = service(Dev::BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-old", root), running: false)
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: FakeRegistryLogin.new)
@@ -618,7 +680,7 @@ class BuildContainerTest < Minitest::Test
 
   test "reap_stale_services! and service_status keep to the image's own containers: another image's are not stale siblings (dev#307)" do
     Given "a checkout with two persisted images, each with a container, and a stale one of the first"
-    root = Pathname("/proj")
+    root = @checkout
     linux = "ghcr.io/d3mlabs/snappy-linux:aaaa"
     server = "ghcr.io/d3mlabs/snappy-server:bbbb"
     linux_current = service(Dev::BuildContainer.service_container_name(linux, root), running: true)
@@ -642,7 +704,7 @@ class BuildContainerTest < Minitest::Test
   test "service_status probes the registry inside a login session when told the registry: read scope, the probe, logout (dev#313)" do
     Given "a pinned image on a private registry, and a recording login"
     tag = "ghcr.io/d3mlabs/snappy-linux:aaaa"
-    root = Pathname("/proj")
+    root = @checkout
     login = FakeRegistryLogin.new
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
     bc.stubs(:local_image?).with(tag).returns(false)
@@ -660,7 +722,7 @@ class BuildContainerTest < Minitest::Test
   test "service_status without a credential to ask with leaves the registry half unknown rather than claiming absence (dev#313)" do
     Given "a host with no gh auth: the login refuses with #{error}"
     tag = "ghcr.io/d3mlabs/snappy-linux:aaaa"
-    root = Pathname("/proj")
+    root = @checkout
     login = FakeRegistryLogin.new
     login.stubs(:with).raises(error, "no")
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
@@ -683,10 +745,10 @@ class BuildContainerTest < Minitest::Test
     Dev::RegistryLogin::LoginFailedError    | nil
   end
 
-  test "create_service_container runs detached, mounts the data root + volumes (never the checkout), idles, and carries the label contract" do
+  test "create_service_container runs detached, mounts the data root, the checkout and the volumes, idles, and carries the label contract" do
     Given "a recording engine and the checkout's labels"
     engine = FakeContainerEngine.new
-    root = Pathname("/project")
+    root = @checkout
     labels = Dev::BuildContainer.service_labels("img:tag", root)
 
     When "creating the service container"
@@ -695,10 +757,10 @@ class BuildContainerTest < Minitest::Test
       project_root: root, volumes: ["/engines/ue:/ue"],
     )
 
-    Then "it is a detached, named run under an init that reaps orphans, mounting the data root + engine but no checkout, sleeping"
+    Then "it is a detached, named run under an init that reaps orphans, mounting the data root, the checkout at its path and the engine, sleeping"
     engine.runs.last[0, 5] == ["run", "-d", "--init", "--name", "dev-x"]
     engine.runs.last.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
-    engine.runs.last.none? { |part| part.include?("/project:") }
+    engine.runs.last.each_cons(2).include?(["-v", "#{root}:#{root}"])
     engine.runs.last.include?("/engines/ue:/ue")
     engine.runs.last.include?("img:tag")
     engine.runs.last.last(2) == ["sleep", "infinity"]
@@ -711,7 +773,7 @@ class BuildContainerTest < Minitest::Test
 
     When "creating the service container"
     build_container(engine: engine).create_service_container(
-      "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
+      "dev-x", "img:tag", project_root: @checkout, volumes: [],
     )
 
     Then "the detached run names DEV_INSIDE_CONTAINER before the image; its value rides the run's env"
@@ -730,10 +792,10 @@ class BuildContainerTest < Minitest::Test
 
     When "creating the service container"
     build_container(engine: engine).create_service_container(
-      "dev-x", "img:tag", project_root: Pathname("/project"), volumes: [],
+      "dev-x", "img:tag", project_root: @checkout, volumes: [],
     )
 
-    Then "the detached run mounts both volumes, sets DEV_DATA_ROOT, and names no host path"
+    Then "the detached run mounts both volumes, sets DEV_DATA_ROOT, and names the host's data root nowhere"
     run = engine.runs.last
     run.each_cons(2).include?(["-v", "dev-data-root:/var/lib/dev"])
     run.each_cons(2).include?(["-v", "dev-linuxbrew:/home/linuxbrew/.linuxbrew"])
@@ -748,11 +810,11 @@ class BuildContainerTest < Minitest::Test
 
   test "docker_run_command carries the label contract so dev engine down recognizes an in-flight --rm run" do
     Given "the checkout's labels"
-    root = Pathname("/project")
+    root = @checkout
     labels = Dev::BuildContainer.service_labels("img:tag", root)
 
     When "building a one-shot run"
-    cmd = build_container.docker_run_command("img:tag", project_root: root, shell_cmd: "make").argv
+    cmd = build_container.docker_run_command("img:tag", project_root: root, argv: ["make"]).argv
 
     Then "every label precedes the image"
     labels.all? { |key, value| cmd.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
@@ -790,7 +852,7 @@ class BuildContainerTest < Minitest::Test
 
     When "docker run fails"
     build_container(engine: engine).create_service_container(
-      "dev-x", "img:tag", project_root: Pathname("/project"),
+      "dev-x", "img:tag", project_root: @checkout,
     )
 
     Then
@@ -800,7 +862,7 @@ class BuildContainerTest < Minitest::Test
   test "with_one_shot_container creates a --rm sibling of the service container, yields its name, and removes it after" do
     Given "a recording engine"
     engine = FakeContainerEngine.new
-    root = Pathname("/project")
+    root = @checkout
     service_name = Dev::BuildContainer.service_container_name("img:tag", root)
     seen = {}
 
@@ -818,7 +880,7 @@ class BuildContainerTest < Minitest::Test
     create[0, 2] == ["run", "-d"]
     create.include?("--rm")
     create.each_cons(2).include?(["--name", seen[:name]])
-    create.none? { |part| part.include?("/project:") }
+    create.each_cons(2).include?(["-v", "#{root}:#{root}"])
     create.include?("/e:/ue")
     create.each_cons(2).include?(["-e", "DEV_INSIDE_CONTAINER"])
     engine.run_envs.fetch(2)["DEV_INSIDE_CONTAINER"] == "1"
@@ -835,7 +897,7 @@ class BuildContainerTest < Minitest::Test
 
     When "the block fails"
     begin
-      build_container(engine: engine).with_one_shot_container("img:tag", project_root: Pathname("/project")) do |name|
+      build_container(engine: engine).with_one_shot_container("img:tag", project_root: @checkout) do |name|
         seen[:name] = name
         raise "install exploded"
       end
@@ -853,7 +915,7 @@ class BuildContainerTest < Minitest::Test
     ran = false
 
     When "creating"
-    build_container(engine: engine).with_one_shot_container("img:tag", project_root: Pathname("/project")) { |_name| ran = true }
+    build_container(engine: engine).with_one_shot_container("img:tag", project_root: @checkout) { |_name| ran = true }
 
     Then
     raises RuntimeError
@@ -889,7 +951,7 @@ class BuildContainerTest < Minitest::Test
 
   test "service_containers lists the checkout's containers by workspace label, running or not" do
     Given "docker ps reporting a running and an exited container, with surrounding noise"
-    root = Pathname("/proj")
+    root = @checkout
     volumes = { "dev-snappy-abc-content-1" => "dev-linuxbrew-jp\n", "dev-snappy-abc-content-2" => "" }
     engine = FakeContainerEngine.new(
       capture_result: ->(args) { args.first == "ps" ? "dev-snappy-abc-content-1\trunning\ndev-snappy-abc-content-2\texited\n\n" : volumes.fetch(args.last) },

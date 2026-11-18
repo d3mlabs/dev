@@ -16,7 +16,7 @@ require "dev/container_user_aligner"
 require "dev/engine_provisioner"
 require "support/fake_container_engine"
 require "support/fake_registry_login"
-require "support/scripted_remote"
+require "dev/lifecycle/workspace"
 require "fileutils"
 require "pathname"
 require "stringio"
@@ -105,7 +105,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).call(args: no_args, context: context)
 
     Then "every step is reported: the container's dev, then the deps it installs — an already-aligned user says nothing"
@@ -193,7 +193,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, host_rule: rule,
     ).call(args: no_args, context: project(root: root, engine: engine))
 
     Then "one service — the persisted image's; the plain one stops at its image"
@@ -280,7 +280,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).call(args: no_args, context: context)
 
     Then "the alignment is reported before the container's dev"
@@ -293,10 +293,9 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     :prefix_adopted | "dev: container user took over its Linuxbrew prefix volume"
   end
 
-  test "container up installs deps over the checkout as the container's transport delivers it — a snapshot synced for the container — the image riding along for its run_env" do
-    Given "a persisted pin and a canned sync that records who it synced for"
+  test "container up installs deps over the checkout as the container's transport delivers it — mounted, at its own path — the image riding along for its run_env" do
+    Given "a persisted pin"
     context = pinned_project(persist: true, run_env: { "WWISE_TOKEN" => "wwise/token" })
-    sync = ScriptedRemote::CannedSync.new
     provisioner = typed_mock(Dev::EngineProvisioner)
     provisioner.stubs(:provision!)
     client = client()
@@ -310,12 +309,11 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new, sync_for: ->(_root) { sync },
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
     ).call(args: no_args, context: context)
 
-    Then "one snapshot, synced for the container, is the workspace the install is handed with the image"
-    sync.synced == ["container"]
-    1 * deps_installer.install!(CURRENT, image: named("myapp-linux"), workspace: canned_workspace)
+    Then "the mounted checkout is the workspace the install is handed with the image"
+    1 * deps_installer.install!(CURRENT, image: named("myapp-linux"), workspace: Dev::Lifecycle::Workspace::Mounted.new(context.project!.root))
   end
 
   # --- cold_up ----------------------------------------------------------------
@@ -344,7 +342,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "cold-upping"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: user_aligner,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).cold_up(project: context.project!)
 
     Then "the steps are reported against the one-shot container"
@@ -370,7 +368,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "cold-upping"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: StringIO.new,
     ).cold_up(project: context.project!)
 
     Then "the install ran inside the one-shot container"
@@ -395,7 +393,7 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     When "bringing the container up"
     Dev::Cli::Builtins::ContainerUpCommand.new(
       container_client: client, engine_provisioner: provisioner, user_aligner: aligned_user,
-      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out, sync_for: canned_sync_for,
+      dev_provisioner: dev_provisioner, deps_installer: deps_installer, out: out,
     ).call(args: no_args, context: context)
 
     Then
@@ -679,15 +677,9 @@ class Dev::Cli::Builtins::ContainerCommandsTest < Minitest::Test
     )
   end
 
-  # The sync step canned (one snapshot, no git): how the container's
-  # transport delivers the checkout before `dev up` installs inside.
-  def canned_sync_for
-    ->(_root) { ScriptedRemote::CannedSync.new }
-  end
-
-  # The workspace the install is handed: the canned snapshot, delivered.
+  # The workspace the install is handed: the checkout, mounted.
   def canned_workspace
-    responds_with(:description, ScriptedRemote::WORKSPACE)
+    responds_with(:description, "the checkout, mounted")
   end
 
   # The pinned image an install is handed, matched by name.

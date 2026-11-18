@@ -137,7 +137,8 @@ In the order a new user needs them:
 5. [Shell integration](docs/shell.md) — `dev cd`, `dev clone`, completion,
    `dev cred`.
 6. [Containers](docs/containers.md) — the engine, the `image` block, where
-   commands run.
+   commands run; the container works in the checkout, bind-mounted at
+   its host path.
 7. [Data root](docs/data-root.md) — where dev stores things, `dev cache gc`.
 8. [Lifecycle](docs/lifecycle.md) — `build`, `package`, `deploy`,
    `release` in full.

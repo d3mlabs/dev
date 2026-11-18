@@ -47,7 +47,8 @@ module Dev
     # for a project venv find the one the developer's machine runs.
     HOST_VENV_DIR = ".venv"
     # The build container's link, beside the host's in the bind-mounted
-    # project: suffixed as the container-side lisps are.
+    # project: suffixed as the container's shadowenv directory is
+    # (BuildContainer::CONTAINER_SHADOWENV_DIR).
     CONTAINER_VENV_DIR = ".venv-container"
     # The store base every project's venvs live under; the store re-roots
     # the `~/.dev` prefix onto the data root (Dev::DataRoot).
@@ -91,8 +92,9 @@ module Dev
     # Activate one installed Python in the project shadowenv: this side's
     # venv is found in the store by its key or built there once — on the
     # keg's interpreter, pinned to the keg, pip made importable — the
-    # project-side link is pointed at it, and the lisp (placed for this side
-    # of the build container by ShadowenvFile) puts the venv first on PATH.
+    # project-side link is pointed at it, and the lisp (written to this
+    # side's shadowenv directory by ShadowenvFile) puts the venv first on
+    # PATH.
     #
     # A plain-directory venv at the link's path is a checkout from before
     # venvs lived in the store: kept, and activated as it was, while it was

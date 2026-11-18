@@ -16,9 +16,10 @@ require "support/fake_gh"
 
 # The workspace contract each transport keeps: `with_workspace(tree)`
 # delivers the tree to the host for the block's duration — through the
-# sync step built over that tree, for the two adapters whose host fetches
-# a snapshot — and `assert_ready!` refuses, before anything leaves the
-# machine, what the transport cannot carry. Dispatch::Remote over the
+# sync step built over that tree for the Actions runner, whose host
+# fetches a snapshot; as the checkout itself for the local container,
+# which mounts it — and `assert_ready!` refuses, before anything leaves
+# the machine, what the transport cannot carry. Dispatch::Remote over the
 # whole shape, with a real origin, is DispatchTest.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::TransportTest < Minitest::Test
@@ -59,12 +60,12 @@ class Dev::Cli::TransportTest < Minitest::Test
     gh.calls.empty?
   end
 
-  test "#{what}#with_workspace builds the sync step over the tree it is handed, syncs for its label, and yields the pushed snapshot as the workspace" do
+  test "ActionsRunner#with_workspace builds the sync step over the tree it is handed, syncs for its label, and yields the pushed snapshot as the workspace" do
     Given
-    snapshot = pushed_snapshot(runner: label)
+    snapshot = pushed_snapshot(runner: "ue-engine-hosted")
     sync = YieldingSync.new(snapshot)
     built_over = []
-    transport = send(builder, ->(root) { sync.tap { built_over << root } })
+    transport = actions_runner(FakeGh.new(root: Pathname("/nonexistent")), sync_for: ->(root) { sync.tap { built_over << root } })
     tree = Pathname("/src/checkout")
 
     When
@@ -74,28 +75,35 @@ class Dev::Cli::TransportTest < Minitest::Test
     result == [Dev::Lifecycle::Workspace::Snapshot.new(snapshot), :ran]
     result.fetch(0).description == "snapshot 0123456789ab"
     built_over == [tree]
-    sync.synced == [label]
-
-    Where
-    what                  | label              | builder
-    "the Actions runner"  | "ue-engine-hosted" | :actions_runner_syncing_by
-    "the local container" | "container"        | :local_container_syncing_by
+    sync.synced == ["ue-engine-hosted"]
   end
 
-  test "a snapshot handed over as a job's own checkout has no branch to dispatch on: NotPushedError, and the forge is never asked" do
+  test "LocalContainer#with_workspace yields the tree itself as the mounted workspace: nothing synced, no git, no forge" do
     Given
-    gh = FakeGh.new(root: Pathname("/nonexistent"))
-    checked_out = Dev::Lifecycle::Snapshot.checked_out(sha: SHA, ref: "refs/pull/338/merge")
-    transport = actions_runner(gh, sync_for: ->(_root) { YieldingSync.new(checked_out) })
+    transport = local_container
+    tree = Pathname("/src/checkout")
 
     When
-    transport.with_workspace(Pathname("/src/checkout")) do |workspace|
-      transport.run(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"]), workspace:)
-    end
+    result = transport.with_workspace(tree) { |workspace| [workspace, :ran] }
+
+    Then "the block's value comes back; the workspace is the checkout, named as the mount it is"
+    result == [Dev::Lifecycle::Workspace::Mounted.new(tree), :ran]
+    result.fetch(0).description == "the checkout, mounted"
+    transport.runner == "container"
+  end
+
+  test "the Actions runner refuses a mounted workspace: another transport's delivery, with no branch to dispatch on, and the forge is never asked" do
+    Given
+    gh = FakeGh.new(root: Pathname("/nonexistent"))
+    transport = actions_runner(gh)
+
+    When
+    transport.run(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"]), workspace: Dev::Lifecycle::Workspace::Mounted.new(Pathname("/src/checkout")))
 
     Then
-    error = raises(Dev::Cli::Transport::ActionsRunner::NotPushedError)
-    error.message.include?("refs/pull/338/merge")
+    error = raises(Dev::Cli::Transport::ActionsRunner::WorkspaceNotSnapshotError)
+    error.message.include?("the checkout, mounted")
+    error.message.include?("the container's delivery")
     gh.calls.empty?
   end
 
@@ -118,15 +126,6 @@ class Dev::Cli::TransportTest < Minitest::Test
     Dev::Lifecycle::Snapshot.new(sha: SHA, branch: Dev::Lifecycle::SnapshotBranch.mint(runner:))
   end
 
-  # The two adapters over a given sync step, for the Where table.
-  def actions_runner_syncing_by(sync_for)
-    actions_runner(FakeGh.new(root: Pathname("/nonexistent")), sync_for:)
-  end
-
-  def local_container_syncing_by(sync_for)
-    local_container(sync_for:)
-  end
-
   def actions_runner(gh, sync_for: Dev::Cli::Transport::DEFAULT_SYNC_FOR, inside_job: false)
     Dev::Cli::Transport::ActionsRunner.new(
       runner: "ue-engine-hosted",
@@ -138,14 +137,13 @@ class Dev::Cli::TransportTest < Minitest::Test
     )
   end
 
-  def local_container(sync_for:)
+  def local_container
     containers = Dev::ProjectContainer.new(
       project_root: Pathname("/src/checkout"),
       client: Dev::BuildContainer.new(engine: FakeContainerEngine.new),
       github_token: Dev::ContainerGithubToken.new(source: -> { nil }),
-      repo_resolver: -> { "o/r" },
     )
-    Dev::Cli::Transport::LocalContainer.new(image:, containers:, sync_for:, out: StringIO.new)
+    Dev::Cli::Transport::LocalContainer.new(image:, containers:, out: StringIO.new)
   end
 
   def image

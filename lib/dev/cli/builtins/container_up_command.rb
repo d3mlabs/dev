@@ -45,10 +45,8 @@ module Dev
       # it, and still starts no container.
       #
       # The container's dependency install reads the lock from the tree as
-      # the container's transport delivers it (Transport::LocalContainer)
-      # for the install's duration: today a snapshot of this checkout,
-      # pushed and fetched into the container's own workspace by the
-      # container itself (ProjectContainer).
+      # the container's transport delivers it (Transport::LocalContainer):
+      # this checkout, bind-mounted into the container at its own path.
       class ContainerUpCommand < ContainerCommand
         extend T::Sig
         include ServiceUp
@@ -77,8 +75,6 @@ module Dev
         #   containers (ProjectContainer over the client) when not injected
         # @param out [IO, StringIO]
         # @param host_rule [Dev::Cli::HostRule] whether an image's work runs here
-        # @param sync_for [Proc] the sync step the container's transport
-        #   delivers the checkout by (Transport::SyncFor)
         sig do
           params(
             container_client: T.nilable(Dev::BuildContainer),
@@ -88,19 +84,17 @@ module Dev
             deps_installer: T.nilable(Dev::ContainerDepsInstaller),
             out: T.any(IO, StringIO),
             host_rule: Dev::Cli::HostRule,
-            sync_for: Transport::SyncFor,
           ).void
         end
         def initialize(container_client: nil, engine_provisioner: Dev::EngineProvisioner.new,
                        user_aligner: nil, dev_provisioner: nil, deps_installer: nil, out: $stdout,
-                       host_rule: Dev::Cli::HostRule.new, sync_for: Transport::DEFAULT_SYNC_FOR)
+                       host_rule: Dev::Cli::HostRule.new)
           super(container_client:, out:)
           @engine_provisioner = engine_provisioner
           @user_aligner = user_aligner
           @dev_provisioner = dev_provisioner
           @deps_installer = deps_installer
           @host_rule = host_rule
-          @sync_for = sync_for
           @containers = T.let(nil, T.nilable(Dev::ProjectContainer))
         end
 
@@ -261,11 +255,11 @@ module Dev
           # Dependencies install where they are consumed: with the container's
           # dev current, its side of the install runs there (gems against the
           # store Ruby, container-scoped brew deps), over the lock as this
-          # tree has it — delivered to the container by its transport for
-          # the install's duration, and run in the container the caller
-          # holds (the install's exec, not the transport's run: `cold_up`'s
+          # tree has it — delivered to the container by its transport (the
+          # mounted checkout), and run in the container the caller holds
+          # (the install's exec, not the transport's run: `cold_up`'s
           # one-shot container is the one that just received dev).
-          transport = Transport::LocalContainer.new(image:, containers: containers(project), sync_for: @sync_for, out: @out)
+          transport = Transport::LocalContainer.new(image:, containers: containers(project), out: @out)
           transport.with_workspace(project.root) do |workspace|
             deps_installer(project).install!(name, image:, workspace:)
           end

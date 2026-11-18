@@ -7,23 +7,18 @@ require_relative "git"
 require_relative "snapshot"
 require_relative "snapshot_branch"
 require_relative "snapshot_branches"
-require_relative "job_checkout"
 require_relative "snapshot_commit"
 require_relative "workflow_triggers"
 
 module Dev
   module Lifecycle
-    # The sync step of the remote dispatch: make the working tree reachable
-    # from a build host as a snapshot branch for exactly as long as the
-    # dispatch needs it. In order: refuse while nothing has left the
-    # machine if a project workflow would run on the push, commit the tree
-    # through a temporary index, push the commit to
-    # `dev/build/<runner>/<id>`, hand the snapshot to the dispatch, and
+    # The sync step of the remote dispatch to a runner: make the working
+    # tree reachable from a build host on another machine as a snapshot
+    # branch for exactly as long as the dispatch needs it. In order: refuse
+    # while nothing has left the machine if a project workflow would run on
+    # the push, commit the tree through a temporary index, push the commit
+    # to `dev/build/<runner>/<id>`, hand the snapshot to the dispatch, and
     # delete the branch when the dispatch returns, however it returns.
-    #
-    # Inside an Actions job whose checkout is still the commit the job was
-    # given (JobCheckout), the tree is already on the forge at the job's
-    # ref: that is the snapshot, nothing is pushed and nothing deleted.
     #
     # The delete is best-effort: a build that succeeded is not failed by a
     # lost connection afterwards, and SnapshotBranches' retention rule
@@ -36,7 +31,6 @@ module Dev
       # @param triggers [WorkflowTriggers] the project's workflows
       # @param commit [SnapshotCommit] the temp-index commit
       # @param branches [SnapshotBranches] the remote namespace
-      # @param checkout [JobCheckout] the tree as an Actions job's own checkout
       # @param out [IO, StringIO] where a failed delete is reported
       sig do
         params(
@@ -45,7 +39,6 @@ module Dev
           triggers: WorkflowTriggers,
           commit: SnapshotCommit,
           branches: SnapshotBranches,
-          checkout: JobCheckout,
           out: T.any(IO, StringIO),
         ).void
       end
@@ -55,21 +48,17 @@ module Dev
         triggers: WorkflowTriggers.new(root:),
         commit: SnapshotCommit.new(git:),
         branches: SnapshotBranches.new(git:),
-        checkout: JobCheckout.new(git:),
         out: $stderr
       )
         @root = root
         @triggers = triggers
         @commit = commit
         @branches = branches
-        @checkout = checkout
         @out = out
       end
 
       # Push a snapshot of the working tree for a dispatch to a runner, run
-      # the dispatch with it, and delete the branch after — or, in an
-      # Actions job whose checkout is the job's own commit, hand that over
-      # and push nothing.
+      # the dispatch with it, and delete the branch after.
       #
       # @param runner [String] the runner label the branch is named for
       # @yieldparam snapshot [Snapshot] the commit and the ref it is served at
@@ -85,14 +74,10 @@ module Dev
           .returns(T.type_parameter(:R))
       end
       def sync(runner:, &blk)
-        if (checked_out = @checkout.snapshot)
-          return yield checked_out
-        end
-
         branch = SnapshotBranch.mint(runner:)
         @triggers.assert_none_fire_on_push_to!(branch.name)
         sha = @commit.create
-        push(sha, branch)
+        @branches.push(sha, branch)
         begin
           yield Snapshot.new(sha:, branch:)
         ensure
@@ -101,24 +86,6 @@ module Dev
       end
 
       private
-
-      # A refused push inside a job also says why the checkout could not
-      # be handed over as is — the job's token is usually read-only, and
-      # the fix is upstream of the push.
-      #
-      # @param sha [String]
-      # @param branch [SnapshotBranch]
-      # @return [void]
-      # @raise [SnapshotBranches::PushError]
-      sig { params(sha: String, branch: SnapshotBranch).void }
-      def push(sha, branch)
-        @branches.push(sha, branch)
-      rescue SnapshotBranches::PushError => e
-        reason = @checkout.reason
-        raise e if reason.nil?
-
-        raise SnapshotBranches::PushError, "#{e.message}\nthe job's checkout was not handed over as is: #{reason}"
-      end
 
       # @param branch [SnapshotBranch]
       # @return [void]

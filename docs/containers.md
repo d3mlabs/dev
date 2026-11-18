@@ -141,7 +141,8 @@ made by hand to that registry.
   and injected as `-e` on every run. A missing one never blocks a command.
 
 The host's `gh auth token` rides along as `GH_TOKEN` on every exec, so a
-command that calls `gh` inside has the host's auth.
+command that calls `gh` inside has the host's auth. Nothing else needs
+it: the tree reaches the container as a bind mount, not a fetch.
 
 ### Several images
 
@@ -198,17 +199,26 @@ At creation the container gets:
   calls for — on Linux, the host caller's uid in the root's group — so what
   the container writes belongs to the caller outside. Design notes:
   [ADR-0006](DECISIONS.md#adr-0006--the-build-container-runs-as-the-hosts-user).
+- **The checkout at its own host path**, bind-mounted and set as the
+  working directory, so a path the build tool records inside reads the
+  same outside. On a Linux host (data root and checkout both at their
+  host paths) the two sides see one filesystem; on a Mac the checkout
+  crosses the VM boundary as virtiofs while the data root stays on the
+  VM's disk.
+- **Its own `.shadowenv.d/`.** The host's activation lisps bind the
+  host's interpreters, so the host's `.shadowenv.d-container/` (ignored)
+  is mounted over `.shadowenv.d/` inside: the container's `dev up`
+  writes its lisps there, and the host never reads them. Both
+  directories are created on the host before the mount, so docker never
+  creates them as root.
 - **The host's dev at the host's exact version**, installed through
   Linuxbrew into the prefix volume on first use and whenever the version
   differs.
 
-Inside, a command runs directly through `shadowenv exec` in the
-container's own workspace — a checkout of the snapshot the host handed it,
-not a bind mount of the host's tree. Activation files the container
-writes land beside the host's as `_container` siblings
-(`515_brew_container.lisp`), inert on the host. `dev up` inside is the
-dependency install alone; `dev deps install` inside installs the whole
-Linux lock against the container's data root.
+Inside, a command runs directly through `shadowenv exec` in the mounted
+checkout. `dev up` inside is the dependency install alone; `dev deps
+install` inside installs the whole Linux lock against the container's
+data root.
 
 ## The host rule
 

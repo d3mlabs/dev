@@ -175,13 +175,12 @@ class ShadowenvPythonTest < Minitest::Test
     activate!(tmpdir, keg)
     activate!(tmpdir, keg)
 
-    Then "one venv was built, on the container side of the store; .venv-container links at it; the host's cfg is untouched; the container lisp activates the store venv"
+    Then "one venv was built, on the container side of the store; .venv-container links at it; the host's cfg is untouched; the lisp (in what is the container's own .shadowenv.d, mounted) activates the store venv"
     File.read(log).lines.select { |line| line.start_with?("-m venv") } == ["-m venv #{stored}\n"]
     File.readlink(File.join(tmpdir, ".venv-container")) == stored.to_s
     File.read(File.join(host_venv, "pyvenv.cfg")) == "home = /opt/homebrew/opt/python@3.12/bin\nversion = 3.12.8\n"
-    lisp = File.read(File.join(tmpdir, ".shadowenv.d", "540_python_container.lisp"))
+    lisp = File.read(File.join(tmpdir, ".shadowenv.d", "540_python.lisp"))
     lisp.include?(%((env/set "VIRTUAL_ENV" "#{stored}")))
-    !File.exist?(File.join(tmpdir, ".shadowenv.d", "540_python.lisp"))
 
     Cleanup
     original ? ENV[Dev::ContainerContext::MARKER] = original : ENV.delete(Dev::ContainerContext::MARKER)
