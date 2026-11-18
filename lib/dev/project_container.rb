@@ -3,6 +3,7 @@
 
 require "pathname"
 require "sorbet-runtime"
+require "dev/actions_job_context"
 require "dev/build_container"
 require "dev/container_engine"
 require "dev/container_github_token"
@@ -51,17 +52,29 @@ module Dev
     # The gh query for the checkout's `owner/repo`.
     REPO_QUERY = T.let(%w[repo view --json nameWithOwner -q .nameWithOwner].freeze, T::Array[String])
 
+    # The variable an Actions job carries its own `owner/repo` in.
+    JOB_REPOSITORY = "GITHUB_REPOSITORY"
+
     class << self
       extend T::Sig
 
-      # The repo resolver a caller gets by default: gh in the checkout,
-      # asked when called — never at construction, so `dev help` pays no
-      # gh call.
+      # The repo resolver a caller gets by default. Inside an Actions job
+      # the job names its repo (`GITHUB_REPOSITORY`), and that is the
+      # answer: a `gh repo view` there would answer with whatever the
+      # job's GH_TOKEN can see, which is not always the repo it runs in
+      # (a release-pull token scoped to other repos). Anywhere else, gh in
+      # the checkout — asked when called, never at construction, so
+      # `dev help` pays no gh call.
       #
       # @param project_root [Pathname]
-      # @return [Proc] `-> { "owner/repo\n" }`
-      sig { params(project_root: Pathname).returns(T.proc.returns(String)) }
-      def default_repo_resolver(project_root)
+      # @param env [Hash{String => String}] the environment to read, the
+      #   process's own by default
+      # @return [Proc] `-> { "owner/repo" }` (gh's answer keeps its newline)
+      sig { params(project_root: Pathname, env: T::Hash[String, String]).returns(T.proc.returns(String)) }
+      def default_repo_resolver(project_root, env: ENV.to_h)
+        job_repo = env[JOB_REPOSITORY].to_s
+        return -> { job_repo } if ActionsJobContext.inside?(env) && !job_repo.empty?
+
         -> { Lifecycle::Gh.new(root: project_root).capture(REPO_QUERY) }
       end
     end
@@ -74,8 +87,9 @@ module Dev
     # @param resources_check [EngineResourcesCheck] the engine-vs-hint gate
     # @param github_token [ContainerGithubToken] the host's gh token, as GH_TOKEN inside
     # @param repo_resolver [Proc] the checkout's repo as the forge spells it
-    #   (`owner/repo`) — `gh repo view` in the checkout; called once, on the
-    #   first run, never at construction (a gh call at load would tax `dev help`)
+    #   (`owner/repo`) — the job's own inside Actions, `gh repo view` in the
+    #   checkout otherwise; called once, on the first run, never at
+    #   construction (a gh call at load would tax `dev help`)
     sig do
       params(
         project_root: Pathname,
