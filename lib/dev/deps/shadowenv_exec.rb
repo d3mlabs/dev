@@ -3,6 +3,7 @@
 
 require "open3"
 require "pathname"
+require_relative "toolchain_exec"
 
 module Dev
   module Deps
@@ -27,6 +28,7 @@ module Dev
     # fails the build on a nil'd key in either seam.
     class ShadowenvExec
       extend T::Sig
+      include ToolchainExec
 
       # @param project_root [Pathname, String] root whose shadowenv the child runs under
       sig { params(project_root: T.any(String, Pathname)).void }
@@ -40,7 +42,7 @@ module Dev
       # @param env [Hash{String => String, nil}] caller env for the child, layered over the inherited one
       # @return [Array(String, String, Process::Status)] stdout, stderr, exit status
       sig do
-        params(
+        override.params(
           command: String,
           env: T::Hash[String, T.nilable(String)],
         ).returns([String, String, Process::Status])

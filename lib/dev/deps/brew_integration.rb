@@ -341,6 +341,18 @@ module Dev
         raise PartialInstallError, failures if failures.any?
       end
 
+      # The Cellar keg of an installed pin, for a caller that runs the keg's
+      # binaries by path rather than through a project's activation — a tool
+      # tree's closure runs under the Ruby its own lock pins.
+      #
+      # @param dep [Dependency] a formula pin this integration installed
+      # @return [Pathname] the keg whose version is the locked one
+      # @raise [KegNotFoundError] if the Cellar has no keg at the locked version
+      sig { params(dep: Dependency).returns(Pathname) }
+      def keg(dep)
+        keg_dir(dep) || raise(KegNotFoundError.new(formula: formula_name(dep), locked: dep.version.to_s, cellar: cellar_dir(dep)))
+      end
+
       private
 
       # Run each installed interpreter pin's language activation against its
