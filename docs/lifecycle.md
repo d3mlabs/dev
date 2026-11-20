@@ -209,7 +209,10 @@ push`'s OTP) land as written. The report:
 
 A release's frame reads `(live track, release v1.2.0)`; a stale artifact
 shipped under `--allow-stale` says so on its line. `--dry-run` selects
-and reports, ships nothing and records nothing.
+and reports, ships nothing and records nothing; a publisher that reads
+its destination adds what it found there and what the deploy would move
+([gh](#gh) reports its heads and the candidate), and a refusal under
+`--dry-run` records no failed deploy either.
 
 Under a remote dispatch (`--runner`, or a channel `environment:` this
 machine is not) the host selects from **its own** store, or downloads
@@ -355,7 +358,10 @@ release is never cut on an assumed yes.
    split set's parts as `<build>-<version>.tar.zst.00`, … with a
    rewritten `<build>-<version>.MANIFEST`), with `release.json` beside
    them. The release is created once (`gh release create --verify-tag`,
-   notes from the plan) and assets upload with `--clobber`.
+   notes from the plan) and assets upload with `--clobber`. A project
+   with a [gh channel](#gh) creates it with `--latest=false`, and the
+   plan's step says so: GitHub's latest designation is that channel's
+   head, moved by `deploy gh`, never by a cut.
 
 ```
 ✓ v1.2.0 released! (0123456789ab, from main) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0
@@ -363,6 +369,14 @@ release is never cut on an assumed yes.
   cellbound-3d-server-linux64-release-1.2.0.zip (1.2.0+0123456789ab)
 Nothing deployed — ship it: dev deploy <channel> --release 1.2.0
 ```
+
+The release is cut whether or not the repository freezes its releases,
+and the verb reads the created release back: one the forge reports
+mutable (`immutable: false`) is warned about before the deploy hint,
+naming the repository setting (Settings → General → Releases → Immutable
+releases) — its tag and assets can still change, so no head may point at
+it, and `deploy gh` refuses it. Enabling the setting freezes the releases
+cut from then on; one already cut stays mutable.
 
 A run that fails after the tag is pushed leaves the release uncreated;
 running it again resumes at the push, creates the release if missing,
@@ -386,7 +400,11 @@ and re-uploads what a half-done run attached.
 A channel is declared under `commands: deploy:` ([Deploy
 channels](dev-yml.md#deploy-channels)) or contributed by the lock: every
 integration with a publisher contributes a channel of its own name to a
-project whose lock pins it. The two sets merge by name:
+project whose lock pins it. One publisher is reached by declaration
+instead of by a pin: [gh](#gh) ships to the project's own releases, a
+destination every releasing project has and none pins, so declaring a
+`gh` channel is what contributes its publisher, and no project gets it
+unasked. The two sets merge by name:
 
 | Declared | Contributed | Result |
 | --- | --- | --- |
@@ -470,6 +488,7 @@ is replaced on each deploy so nothing from a previous one rides along.
 | `egs` | the `egs` BuildPatchTool pin | labelled `Testing` | labelled `Live` | pointed: the label | `dev cred` `egs/client_id`, `egs/client_secret` |
 | `ficsit` | a `ficsit` mod pin | SMR stability `beta` | SMR stability `release` | derived: the greatest `SemVersion` at `release` stability | `dev cred` `ficsit/api_key` (`FICSIT_API_KEY`) |
 | `brew` | a formula pinned from a tap | refused: a formula points at a release asset | the tap's formulae rewritten to the release's assets | pointed: the formula's stable spec | the `gh` login, pushing to the tap |
+| `gh` | declaring a `gh` channel | refused: a head points at a release | the release's series tag `v<major>` moved to its commit; GitHub's latest designation when its series is the newest deployed | pointed: the series tags and the latest designation | the `gh` login, writing the repo's refs and releases |
 
 A `run:` channel's head is pointed: the script's destination holds what
 the last deploy left there, and dev reads nothing back from it.
@@ -638,6 +657,63 @@ The tap is the lock's: the one tap the brew-family pins come from (two is
 refused). It is cloned into the scratch (`.brew/<user>/homebrew-<repo>`)
 and reset to the remote's default branch on every run.
 
+#### gh
+
+A project that declares a `gh` channel under `commands: deploy:` gets
+dev's gh publisher, no pin needed: the destination is the project's own
+repository on the forge, where `dev release` already put the bytes. The
+channel moves the repo's **heads** and nothing else: no notes, no assets,
+no version tag.
+
+```yaml
+commands:
+  deploy:
+    commands:
+      gh:
+        desc: Series tags
+        targets: [dev]
+```
+
+The heads are one **series tag** per deployed series — `v1`, `v2`: the
+major, as `~> 1` on a host's stream or `@v1` in a workflow follows it —
+and GitHub's **latest designation**. `dev deploy gh --release 1.3.0`
+moves `v1` to 1.3.0's commit (created on the series' first deploy,
+force-moved after, forward or back: deploying 1.2.0 again is the
+rollback), and makes 1.3.0 the repo's latest release when `v1` is the
+newest series with a tag, its own included. A 1.x patch deployed after
+2.0 is live moves `v1` and leaves latest on 2.0; a pre-release moves its
+series tag and is never designated latest. A release the heads are
+already at writes nothing. Receipt: `v1 → v1.3.0 (0123456789ab), from
+v1.2.0 (fedcba987654); latest → v1.3.0`, with the hint `Followers of v1
+(~> 1, @v1) take v1.3.0 from here` when anything moved.
+
+Releases only: a head points at a release, so a store artifact is
+refused and `--release <version>` is the only form. Immutable releases
+only: the head is what every follower installs, so the release it names
+must be one the forge has frozen — the repository's immutable-releases
+setting, read back from the release as `immutable: true`. A mutable
+release is refused before anything moves, naming the setting; `dev
+release` warns at the cut when a release comes out mutable.
+
+`--dry-run` reads the forge and reports the heads as they stand, then the
+candidate, then the refusal a mutable release would meet:
+
+```
+┏━━ Deploying gh (live track, release v1.3.0) — dry run ━━━━━━━━━━━━━━━━━━━━━━━━
+┃ dev (1.3.0+0123456789ab): dev-1.3.0.zip
+┃ Heads: v1 → v1.2.0 (fedcba987654), v2 → v2.0.0 (13579bdf0246); latest v2.0.0
+┃ Candidate: v1 → v1.3.0 (0123456789ab), from v1.2.0 (fedcba987654); latest stays v2.0.0 — v2 is the newest series
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Nothing shipped, nothing recorded (--dry-run)
+```
+
+The series tags are lightweight tags written through the git refs API
+(`contents: write`); an annotated tag of a series' name is not read as a
+pointer. The latest designation is `gh release edit <tag> --latest`.
+Because the designation is this channel's head, a project with a `gh`
+channel cuts every release with `--latest=false`
+([The cut](#the-cut)).
+
 ## The dependency graph
 
 Each verb needs what the one before it leaves, and names the missing step
@@ -649,6 +725,7 @@ rather than performing it:
 | `package` | a current build | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store; a channel; the channel's environment; a protocol; to record, a repo `gh` reaches with `deployments: write` | "`dev package <build>` first"; a channel exists or `deploy` does not; a channel with no protocol is refused at load with both fixes; a record the forge refuses fails after the shipped lines |
 | `deploy <channel> --release V` | release `V` cut, carrying an archive of each accepted build; `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused; a download whose digest is not `release.json`'s is removed and refused |
+| `deploy gh --release V` | the above; release `V` immutable; `contents: write` for the series tag and the latest designation | a store artifact is refused naming `dev release`; a mutable release is refused naming the repository setting; a refused ref write is the heads' error |
 | `deploy --release V` | the above for every channel | stops at the first channel that refuses; name the channels to ship the rest |
 | `deploy status` | a channel; a repo `gh` reaches | the forge's refusal is the command's error |
 | `release` | a clean checkout on a branch with `origin`; the version not yet cut, or cut on HEAD (a resume); `release:` naming packageable builds; `contents: write`; a terminal or `--yes` | refuses before anything moves; packages each release build at the tag itself, so staleness cannot arise; a tag pushed with no release is what the retry resumes |

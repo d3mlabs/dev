@@ -189,10 +189,10 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     )
   end
 
-  def command(release: release_builds, store: self.store)
+  def command(release: release_builds, store: self.store, designates_latest: true)
     Dev::Cli::Builtins::ReleaseCommand.new(
       release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:, store:,
-      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW },
+      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW }, designates_latest:,
     )
   end
 
@@ -218,11 +218,18 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.answers(["release", "upload"], with: "")
   end
 
+  # The release as the forge holds it once cut: frozen, on a repo with
+  # immutable releases on, unless a test is about the warning.
+  def forge_reports(tag, immutable: true)
+    @gh.answers(["api", "repos/{owner}/{repo}/releases/tags/#{tag}"], with: { "immutable" => immutable, "prerelease" => false })
+  end
+
   test "a fresh cut: bumps VERSION, tags, pushes, packages each release build at the tag, creates the release and attaches the archives" do
     Given
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_reports("v1.2.0")
 
     base = head
 
@@ -240,10 +247,11 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     store.artifact(build("cellbound-3d-linux64-release")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
     store.artifact(build("cellbound-3d-server-linux64")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
 
-    # the forge was asked for the release, given one with the notes, then the renamed archives and release.json
+    # the forge was asked for the release, given one with the notes, then the renamed archives and release.json, then read back
     @gh.calls.map { |call| call.argv.first(3) } ==
-      [["release", "view", "v1.2.0"], ["release", "create", "v1.2.0"], ["release", "upload", "v1.2.0"]]
+      [["release", "view", "v1.2.0"], ["release", "create", "v1.2.0"], ["release", "upload", "v1.2.0"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
     @gh.calls[1].argv.include?("--verify-tag")
+    !@gh.calls[1].argv.include?("--latest=false")
     @gh.calls[1].stdin == "Release v1.2.0."
     @gh.calls[2].argv.map { |word| File.basename(word) }[3..] ==
       ["cellbound-3d-linux64-release-1.2.0.zip", "cellbound-3d-server-linux64-1.2.0.zip", "release.json", "--clobber"]
@@ -285,6 +293,42 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
         cellbound-3d-server-linux64-1.2.0.zip (1.2.0+#{short_head})
       Nothing deployed — ship it: dev deploy <channel> --release 1.2.0
     OUT
+    !@out.string.include?("mutable")
+  end
+
+  test "a project with a gh channel cuts its release as not latest — `deploy gh` designates it — and the plan says so (dev#655)" do
+    Given
+    forge_has_no_release
+    forge_creates
+    forge_accepts_upload
+    forge_reports("v1.2.0")
+
+    When
+    execute(command(designates_latest: false), "1.2.0")
+
+    Then
+    @gh.calls[1].argv.first(3) == ["release", "create", "v1.2.0"]
+    @gh.calls[1].argv.include?("--latest=false")
+    @out.string.include?("  5. Create GitHub release v1.2.0 and attach 2 archives + release.json (not latest: `deploy gh` designates it)\n")
+    @out.string.lines.last == "Nothing deployed — ship it: dev deploy <channel> --release 1.2.0\n"
+  end
+
+  test "a release the forge reports mutable is warned about, naming the repository setting, before the deploy hint: no head may point at it (dev#655)" do
+    Given
+    forge_has_no_release
+    forge_creates
+    forge_accepts_upload
+    forge_reports("v1.2.0", immutable: false)
+
+    When
+    execute(command, "1.2.0")
+
+    Then "released all the same; the warning is the epilogue's last line but the hint"
+    origin_refs == ["refs/heads/main", "refs/tags/v1.2.0"]
+    @out.string.lines.last(2).join == <<~OUT
+      #{CLI::UI::Glyph::WARNING.char} v1.2.0's release is mutable: its tag and assets can still change, so no head may point at it — enable immutable releases on the repository (#{Dev::Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) before the next release
+      Nothing deployed — ship it: dev deploy <channel> --release 1.2.0
+    OUT
   end
 
   test "a retry after the forge refused resumes the cut: nothing re-cut, the artifacts current, the existing release's assets replaced" do
@@ -302,6 +346,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.calls.clear
     @gh.answers(["release", "view"], with: "#{URL}\n")
     forge_accepts_upload
+    forge_reports("v1.2.0")
 
     When
     execute(command, "1.2.0")
@@ -310,8 +355,8 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     head == tagged
     git("log", "--oneline").lines.size == 2
     build_runs == ["cellbound-3d", "cellbound-3d-server"]
-    @gh.calls.map { |call| call.argv.first(2) } == [["release", "view"], ["release", "upload"]]
-    @gh.calls.last.argv.last == "--clobber"
+    @gh.calls.map { |call| call.argv.first(2) } == [["release", "view"], ["release", "upload"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
+    @gh.calls[1].argv.last == "--clobber"
     @out.string.lines.first(2).join == "Resuming v1.2.0\nBase: main @ #{tagged[0, 12]} — HEAD already tagged, nothing to cut (in sync with origin/main)\n"
     @out.string.include?("  1. Push main + tag v1.2.0 to origin\n  2. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag\n")
     !@out.string.include?("Bumping")
@@ -328,6 +373,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_reports("v0.1.0")
 
     When
     execute(command, "0.1.0")
@@ -352,6 +398,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_reports("v1.2.0")
     base = head
 
     When
@@ -389,6 +436,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_reports("v1.2.0")
     ui = AnsweringUi.new(out: @out, answer: true)
 
     When
@@ -426,6 +474,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_reports("v#{expected}")
 
     When
     execute(command, *words)

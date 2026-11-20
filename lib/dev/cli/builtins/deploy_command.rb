@@ -41,7 +41,9 @@ module Dev
       # for a release's archives — and the publisher (Ports: the `run:` as a
       # ScriptPublisher, or the one the lock contributed); the seam is the
       # publisher over the selected shipments, on that track, with the
-      # channel's scratch in the store, skipped under `--dry-run`; `after`
+      # channel's scratch in the store — or, under `--dry-run`, the
+      # publisher's preview of its destination (what it holds and what
+      # would move), reported and nothing shipped; `after`
       # records the deploy as a GitHub Deployment: the channel as its
       # environment, the shipments' ref — the
       # artifacts' commit, or the release's tag — as its ref, the builds and
@@ -236,7 +238,12 @@ module Dev
           ui = context.ui
           ui.frame("Deploying #{env.channel} (#{source(env.selection)})#{" — dry run" if env.dry_run}") do
             env.selection.shipments.each { |shipment| ui.note("  #{shipment_line(env, shipment)}") }
-            next if env.dry_run
+            if env.dry_run
+              # What the publisher reads of its destination (a pointed
+              # channel's heads and the candidate); nothing for most.
+              env.publisher.preview(env.selection.shipments, channel: env.channel, track: env.selection.track).each { |line| ui.note("  #{line}") }
+              next
+            end
 
             # The publisher has the terminal — a `run:` script's lines, `gem
             # push`'s OTP prompt — so a step, never a spin.
@@ -245,7 +252,8 @@ module Dev
             end
           end
         rescue StandardError => e
-          record_failure(env, e)
+          # A dry run records nothing, its refusals included.
+          record_failure(env, e) unless env.dry_run
           raise
         end
 

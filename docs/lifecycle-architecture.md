@@ -23,7 +23,7 @@ One class per noun, none playing two roles.
 | Channel | `Lifecycle::Channel` | Where shipments go: a name, the build patterns it accepts and a publisher spec. Declared under `commands: deploy:`, or contributed by the lock under an integration's name. |
 | Shipment | `Lifecycle::Shipment` | One archive as `deploy` hands it to a publisher: file, build, build id, digest and its **provenance** (`Lifecycle::Provenance`, sealed): `Store` (the tree it was packaged from) or `Release` (the tag and the commit `release.json` records). The provenance decides the track and what a script is told; how a publisher ships the bytes does not depend on it. |
 | Track | `Lifecycle::Track` | `testing` or `live`. Decided by the provenance, never the operator. |
-| Publisher | `Lifecycle::Publisher` | The channel's protocol: ships the selected shipments on a track with a scratch and answers with a receipt, and declares how its destination keeps its head. `ScriptPublisher` is the `run:` form; an integration publisher is set on its registry entry. |
+| Publisher | `Lifecycle::Publisher` | The channel's protocol: ships the selected shipments on a track with a scratch and answers with a receipt, declares how its destination keeps its head, and may preview its destination for `--dry-run` (what it holds, what would move; nothing by default). `ScriptPublisher` is the `run:` form; an integration publisher is set on its registry entry. |
 | Head | `Lifecycle::Head` | What a follower of a channel installs when it asks for nothing in particular. `release` never moves a head; `deploy` moves exactly one. Distinct from the resolver's greatest-satisfying version — a lock wants that, a follower wants what is deployed, and after a rollback the two differ — so it reads no `Requirement` or `VersionScheme`. Holds dev's half of the mechanism, `Head.derive`: the greatest non-prerelease version among a store's, within a series. |
 | Head strategy | `Lifecycle::HeadStrategy` | How a destination keeps its head, declared by every publisher: `pointed` (a movable pointer — a tag, a formula's stable spec, a branch's live build, a label — that `deploy` moves and a rollback moves back) or `derived` (versions and no pointer — rubygems.org, bare tags — so dev computes the head by `Head.derive`). A closed set: a destination fitting neither is a third strategy to name here, never a publisher's special case. |
 | Series | `Lifecycle::Series` | Every version of one major, named `v<major>`. What a follower is on (`~> 1`, `@v1`) and what a head is kept per: one pointer per series on a pointed channel, that major's greatest release on a derived one. Following never crosses a major. |
@@ -35,7 +35,8 @@ One class per noun, none playing two roles.
 | Release cut | `Lifecycle::ReleaseCut` | The git half of `release`: a clean tree on a branch, the `VERSION` bump with the `Gemfile.lock` lines mirroring it (`Lifecycle::ProjectVersion.files`), the tag, the push. Read into a `Plan` first; resumable when HEAD is already tagged. |
 | Release assets | `Lifecycle::ReleaseAssets` | An artifact's archive under its release name, `<build>-<version>.<ext>` (a split set's parts and a rewritten `MANIFEST`), with the entry `release.json` records for it. |
 | Part list | `Lifecycle::PartList` | A split archive's `MANIFEST`: `<sha256>  <part>` per line, the shape `sha256sum -c` reads. Written by the archive, renamed by the release assets, read back by the release download. |
-| Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once, assets uploaded with `--clobber`, downloaded back by name. Through `gh`. |
+| Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once (as latest, or not when a head owns that designation), assets uploaded with `--clobber`, downloaded back by name, its facts (`immutable`, `prerelease`) read back. Through `gh`. |
+| Heads on the forge | `Lifecycle::GithubHeads` | The gh channel's heads as the repo keeps them: one series tag `v<major>` per deployed series (read from the `v`-tag refs, created or force-moved through the git refs API) and GitHub's latest designation (`gh release edit --latest`). `Deps::GhPublisher` reads them into a candidate and moves them. |
 | Release archives | `Lifecycle::ReleaseArchives` | A cut release read back for `deploy --release`: `release.json` downloaded fresh, the selected archives downloaded into `.releases/<tag>/` and verified against its digests; a verified file is not fetched again, a failing one is removed and refused. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a runner reaches it: a commit through a temporary index (`Lifecycle::SnapshotCommit`) on a `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as the dispatch needs it. `Lifecycle::SnapshotSync` runs the step; `Lifecycle::SnapshotBranches` prunes the leftovers; `Lifecycle::WorkflowTriggers` reads the project's workflows for the `on: push` refusal. |
 | Workspace | `Lifecycle::Workspace` | What a build host holds of the project tree while a verb runs there, as the transport delivered it; sealed, two shapes: `Workspace::Snapshot`, the pushed snapshot a runner fetches (`snapshot <sha>` on the crossing line), and `Workspace::Mounted`, the checkout bind-mounted into the container at its own path (`the checkout, mounted`). Each side that runs in a workspace cases over the shapes and refuses the one that is not its delivery. |
@@ -57,7 +58,7 @@ toolchain; the publisher never selects and never rewrites an archive.
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
-| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy` | `ScriptPublisher`; the lock's integration publishers | a channel's `run: <command>`; a registry entry's `publisher:` |
+| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
 
 `Lifecycle::Ports` maps a target's specs and a channel's to port
 instances. It is the one place that matches the sealed `BuilderSpec`,
@@ -81,9 +82,9 @@ for publishers whose destination takes a directory.
 ## Binding a channel
 
 `ChannelBinder` binds every channel's publisher reference against the
-lock before the command tree exists. A declared channel with `run:` gets
-a `ScriptPublisher`. One without `run:` whose name the lock's publishers
-include gets a `PublisherSpec::Integration`. One without `run:` and
+project's publishers before the command tree exists. A declared channel
+with `run:` gets a `ScriptPublisher`. One without `run:` whose name the
+project's publishers include gets a `PublisherSpec::Integration`. One without `run:` and
 without a publisher is bound with a **fault** naming the fix, so the
 channel still lists in `dev help deploy` and only `deploy <channel>`
 refuses. A contributed publisher the project did not declare becomes a
@@ -93,12 +94,19 @@ a `dev.yml` error.
 
 An integration's publisher is declared on its `Deps::Registry::Entry`:
 `publisher:` names the class, `publisher_needs:` the constructor kwargs
-taken from the composition context (`project_root`), and `channel:` the
+taken from the composition context (`project_root`), `channel:` the
 channel's name when it differs from the integration's (`rubygems` for
-`gem`, `ghcr` for `image`, `brew` for `taps`). The registry's consistency
-test fails on a `*_publisher.rb` no entry wires, on two entries claiming
-one channel, and on a wired publisher that does not declare its own
-`head_strategy`.
+`gem`, `ghcr` for `image`, `brew` for `taps`), and `reached_by:` how a
+project reaches it (`Registry::Reach`): by a **pin** of the entry's type
+or of one that installs through it (the default), or by **declaration**
+of the channel in `dev.yml` (`gh`, whose destination is the project's own
+repo and so is never pinned). `Cli::ProjectPublishers` reads the lock's
+pins and the manifest's channel names once and hands both to
+`Registry.publishers`; `Registry.publisher_reach`, which names the pin a
+faulted channel lacks, lists pin-reached entries only. The registry's
+consistency test fails on a `*_publisher.rb` no entry wires, on two
+entries claiming one channel, and on a wired publisher that does not
+declare its own `head_strategy`.
 
 ## The verbs' output
 
@@ -180,11 +188,14 @@ A new builder implements `Lifecycle::Builder` (`build`, `name`,
 publisher `Lifecycle::Publisher` (`publish`, and `head_strategy` — say
 whether the destination keeps a pointer `deploy` moves or versions dev
 derives the head over; a destination that does neither is a third
-strategy to add to `HeadStrategy` first). A builder or packager is
-wired in `Lifecycle::Ports` from a new `BuilderSpec` or `PackagerSpec`
-variant, and nowhere else. An integration's publisher needs no new spec:
-set it as `publisher:` on the integration's registry entry and every
-project whose lock reaches the entry gets the channel. The verbs, the
+strategy to add to `HeadStrategy` first; override `preview` when the
+destination has state worth reading before a deploy, so `--dry-run`
+reports it). A builder or packager is wired in `Lifecycle::Ports` from a
+new `BuilderSpec` or `PackagerSpec` variant, and nowhere else. An
+integration's publisher needs no new spec: set it as `publisher:` on the
+integration's registry entry and every project that reaches the entry —
+by its pin, or by declaring the channel when the entry says
+`reached_by: Reach::Declaration` — gets the channel. The verbs, the
 selectors, the dispatcher and the store do not change: they see ports,
 builds and channels, never scripts, formats or endpoints.
 
