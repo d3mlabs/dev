@@ -3,6 +3,7 @@
 
 require "test_helper"
 require "dev/runner_discovery"
+require "dev/stream"
 require "etc"
 require "tmpdir"
 require "fileutils"
@@ -98,6 +99,20 @@ class Dev::RunnerDiscoveryTest < Minitest::Test
 
     Expect
     Dev::RunnerDiscovery.new(home: home).enrollments.fetch(0).pool == "Default"
+  end
+
+  test "an enrollment knows the stream its job-started hook follows (the .env record register writes), nil for a slot whose jobs run a checkout (dev#658)" do
+    Given "an agent slot following ai-flow's v2 stream, and a build host"
+    home = Dir.mktmpdir
+    following = write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "JPSFF-agent", pool: "ai-flow")
+    File.write(File.join(following, ".env"), "LANG=C\nACTIONS_RUNNER_HOOK_JOB_STARTED=#{following}/dev-job-started.sh\nDEV_STREAM=d3mlabs/ai-flow@gh ~> 2\n")
+    write_runner(home, "actions-runner-snappy", scope: "JPDuchesne/snappy", name: "JPSFF", pool: nil)
+
+    When
+    enrollments = Dev::RunnerDiscovery.new(home: home).enrollments
+
+    Then
+    enrollments.map(&:stream) == [Dev::Stream.parse("d3mlabs/ai-flow@gh ~> 2"), nil]
   end
 
   test "an enrollment carries no label guessed from its dir name: the dir is a path, the record is the identity" do

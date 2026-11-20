@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/ui"
 require "dev/engine_resources"
+require "dev/lifecycle/channel"
 require "dev/runner_role"
 require_relative "project_images"
 
@@ -25,6 +26,9 @@ module Dev
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
       # The runner roles the project declares (ProjectManifest#runner_roles).
       const :runner_roles, T::Hash[String, Dev::RunnerRole::Declaration], default: {}
+      # The deploy channels the project declares (ProjectManifest#channels):
+      # a declared role anchors to the project's stream when one is gh's.
+      const :channels, T::Hash[String, Dev::Lifecycle::Channel], default: {}
 
       # The project's environment images and where each command runs
       # (ProjectImages). One instance per context: the lock is read once.

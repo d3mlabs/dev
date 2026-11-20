@@ -86,7 +86,17 @@ module Dev
         # @return [TreeKey]
         sig { override.params(dep: Dependency).returns(TreeKey) }
         def tree_key(dep)
-          TreeKey.new(base: "#{Integration::TREES_ROOT}/gh/#{dep.metadata.fetch("repo")}", version: dep.version, marker: MARKER_FILE)
+          TreeKey.new(base: tree_base(dep.metadata.fetch("repo")), version: dep.version, marker: MARKER_FILE)
+        end
+
+        # The base every version of one repo's trees sits under — what a
+        # listing of installed versions is keyed by.
+        #
+        # @param repo [String] "owner/repo"
+        # @return [String]
+        sig { params(repo: String).returns(String) }
+        def tree_base(repo)
+          "#{Integration::TREES_ROOT}/gh/#{repo}"
         end
       end
 

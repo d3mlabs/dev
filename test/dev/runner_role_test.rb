@@ -2,7 +2,12 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "dev/lifecycle/build_pattern"
+require "dev/lifecycle/channel"
+require "dev/lifecycle/publisher_spec"
+require "dev/lifecycle/target"
 require "dev/runner_role"
+require "dev/stream"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerRoleTest < Minitest::Test
@@ -139,6 +144,69 @@ class Dev::RunnerRoleTest < Minitest::Test
     description          | version   | fragment
     "no VERSION"         | nil       | "keeps no VERSION"
     "a pre-release"      | "2.0.0rc" | "is not major.minor.patch"
+  end
+
+  # --- the stream a declared role follows (dev#658) ---------------------------
+
+  # A project deployed through gh, and one deployed through brew alone.
+  GH_CHANNELS = { "gh" => Dev::Lifecycle::Channel.new(
+    name: "gh", accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "ai-flow"))],
+    publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "gh"),
+  ) }.freeze
+  BREW_CHANNELS = { "brew" => Dev::Lifecycle::Channel.new(
+    name: "brew", accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "dev"))],
+    publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "brew"),
+  ) }.freeze
+
+  test "a declaration bound in a project deployed through gh anchors the role to the project's stream at its series" do
+    Given
+    declaration = Dev::RunnerRole::Declaration.new(name: "agent", labels: AGENT_LABELS, group: "ai-flow", workflows: [".github/workflows/x.yml"], job_identity: "ai-agent")
+
+    When
+    role = declaration.bind(repo: "d3mlabs/ai-flow", version: "2.4.1", channels: GH_CHANNELS)
+
+    Then "the stream is the repo on gh, pessimistic on the major the pins follow"
+    role.stream == Dev::Stream.parse("d3mlabs/ai-flow@gh ~> 2")
+    role.group.workflows == ["d3mlabs/ai-flow/.github/workflows/x.yml@refs/tags/v2"]
+  end
+
+  test "a declaration bound in a project not deployed through gh — or with no channels — follows no stream: its jobs run the checkout" do
+    Given
+    declaration = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu])
+
+    Expect
+    declaration.bind(repo: "d3mlabs/cellbound-3d", version: "3.0.0", channels: BREW_CHANNELS).stream.nil?
+    declaration.bind(repo: "d3mlabs/cellbound-3d", version: "3.0.0").stream.nil?
+  end
+
+  test "a project deployed through gh needs a semver VERSION for the stream even when the role pins nothing: #{description}" do
+    Given
+    declaration = Dev::RunnerRole::Declaration.new(name: "agent", labels: ["ai-build"])
+
+    When
+    error = assert_raises(Dev::RunnerRole::DeclarationError) { declaration.bind(repo: "d3mlabs/ai-flow", version: version, channels: GH_CHANNELS) }
+
+    Then
+    error.message.include?("follows the project's series")
+    error.message.include?(fragment)
+
+    Where
+    description          | version   | fragment
+    "no VERSION"         | nil       | "keeps no VERSION"
+    "a pre-release"      | "2.0.0rc" | "is not major.minor.patch"
+  end
+
+  test "the stream is part of a role's identity; a build host and a pooled role follow none" do
+    Given
+    stream = Dev::Stream.parse("d3mlabs/ai-flow@gh ~> 2")
+    following = Dev::RunnerRole.declared(name: "ue-farm", labels: %w[ue gpu], stream: stream)
+
+    Expect
+    following != FARM
+    following.stream == stream
+    Dev::RunnerRole.declared(name: "ue-farm", labels: %w[ue gpu], stream: stream) == following
+    Dev::RunnerRole.build_host(labels: ["x"]).stream.nil?
+    Dev::RunnerRole.pooled(pool: "ai-flow", labels: []).stream.nil?
   end
 
   # --- the role a slot plays ---------------------------------------------------
