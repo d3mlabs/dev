@@ -23,6 +23,9 @@ require "dev/runner_role"
 require "dev/runner_slots"
 require "dev/runner_user"
 require "dev/settings"
+require "dev/stream"
+require "dev/stream_head_lookup"
+require "dev/stream_store"
 require "dev/ui"
 require "dev/version"
 require "dev/wsl_conf"
@@ -56,8 +59,17 @@ module Dev
   # visibility, its pin, the repo registration — is named only as
   # evidence under a ✗.
   #
+  # A family that follows a **stream** (`<repo>@gh ~> <major>`, Stream:
+  # a declared role of a project deployed through gh, or slots whose
+  # hooks record one) gets one more fact after its reach: the stream,
+  # the head its series tag names on gh (StreamHeadLookup), the version
+  # installed on this host (StreamStore), and the identity its jobs run
+  # as. Red when the head is not what is installed — the next job's hook
+  # installs it, `dev runner follow <dir>` does now.
+  #
   # **Slot facts fold**: online on GitHub, service installed, who runs
-  # it, and for a slot whose role has a job identity its `_work` tree — identical across a
+  # it, whether its job-started hook follows the role's stream, and for a
+  # slot whose role has a job identity its `_work` tree — identical across a
   # family's slots → one line naming the slots; a slot that deviates
   # breaks out as its own ✗ line with its dir.
   #
@@ -130,6 +142,8 @@ module Dev
     # @param reach_factory [Proc] builds the host reach check for an identity; injected for tests
     # @param wsl_runner_host [Dev::WslRunnerHost, nil] the WSL runner host's
     #   facts; nil off WSL
+    # @param stream_lookup [Dev::StreamHeadLookup] reads a stream's head on gh
+    # @param stream_store [Dev::StreamStore] reads what of a stream is installed here
     sig do
       params(
         discovery: Dev::RunnerDiscovery,
@@ -148,6 +162,8 @@ module Dev
         repo: T.nilable(String),
         reach_factory: T.proc.params(identity: Dev::RunnerUser).returns(T.nilable(HostReach)),
         wsl_runner_host: T.nilable(WslRunnerHost),
+        stream_lookup: StreamHeadLookup,
+        stream_store: StreamStore,
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
@@ -163,8 +179,12 @@ module Dev
                    pins: [],
                    repo: nil,
                    reach_factory: ->(identity) { HostReach.new(identity: identity) },
-                   wsl_runner_host: WslRunnerHost.for_host)
+                   wsl_runner_host: WslRunnerHost.for_host,
+                   stream_lookup: StreamHeadLookup.new,
+                   stream_store: StreamStore.new)
       @wsl_runner_host = wsl_runner_host
+      @stream_lookup = stream_lookup
+      @stream_store = stream_store
       @host_identity = host_identity
       @host = host
       @host_os = host_os
@@ -307,7 +327,8 @@ module Dev
       RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: e.message)
     end
 
-    # One family's frame: its reach, then its slots. The title ends with
+    # One family's frame: its reach, its stream when it follows one, then
+    # its slots. The title ends with
     # the scope — `agent · 3 slots · d3mlabs` — because the scope is what
     # `dev runner unregister` takes and nothing else on screen says it:
     # the slot dirs are named from history (an org slot in a repo-named
@@ -318,8 +339,39 @@ module Dev
     def report_family(family)
       @ui.frame("#{family.role.name} · #{plural(family.slots.length, "slot")} · #{family.scope}") do
         report_reach(family)
+        report_stream(family)
         report_slots(family)
       end
+    end
+
+    # --- stream --------------------------------------------------------------
+
+    # The family's stream fact: what its jobs run — the head the channel
+    # points at, against what this host has installed — and as whom. The
+    # stream is the role's when the declaration is at hand; for a family
+    # known by its pool alone, the one its slots' hooks record. A family
+    # of neither has no line: its jobs run a checkout (a hook such a slot
+    # kept is the slot's own finding, hook_fact).
+    #
+    # @param family [Dev::RunnerFamily]
+    sig { params(family: RunnerFamily).void }
+    def report_stream(family)
+      stream = family.role.stream || (family.role.pooled? ? family.slots.filter_map { |slot| slot.enrollment.stream }.first : nil)
+      return unless stream
+
+      installed = @stream_store.installed(stream)
+      identity = family.role.job_identity || runner_user_name
+      head = @stream_lookup.head(stream)
+      if installed == head.version
+        line(true, "stream: #{stream} — head #{head.version} installed · jobs as #{identity}")
+      else
+        line(false, "stream: #{stream} — head #{head.version}, installed #{installed || "none"} · jobs as #{identity} " \
+                    "(the next job installs it; now: `dev runner follow #{T.must(family.slots.first).enrollment.display_dir}`)")
+      end
+    rescue StreamHeadLookup::NoHeadError, StreamHeadLookup::HeadNotReleasedError => e
+      line(false, "stream: #{stream} — #{e.message}; installed #{installed || "none"} · jobs as #{identity}")
+    rescue StreamHeadLookup::QueryError => e
+      unknown("stream: #{stream} — head unknown (#{e.message}); installed #{installed || "none"} · jobs as #{identity}")
     end
 
     # --- reach ---------------------------------------------------------------
@@ -585,6 +637,7 @@ module Dev
       enrollment.service_installed ? held << "service installed" : findings << "no service installed"
       runner_user = runner_user_name
       enrollment.owner == runner_user ? held << "runs as #{runner_user}" : findings << "runs as #{enrollment.owner}, not #{runner_user}"
+      hook_fact(enrollment, family.role, held, findings)
       job_identity = family.role.job_identity
       if job_identity
         group = DataRoot::GROUP
@@ -599,6 +652,34 @@ module Dev
       return [nil, (held + unknowns).join(" · ")] unless unknowns.empty?
 
       [true, held.join(" · ")]
+    end
+
+    # Whether the slot's job-started hook follows what the role says its
+    # jobs run. A role that follows a stream wants a hook on it; a role
+    # that follows none — a build host's, a declared role whose project
+    # does not deploy through gh — wants none, and a hook left from
+    # before is stale (register removes it). A pooled role's declaration
+    # is not at hand: a hook it has is read, not held.
+    #
+    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    # @param role [Dev::RunnerRole]
+    # @param held [Array<String>] facts that hold, appended to
+    # @param findings [Array<String>] facts that do not, appended to
+    sig { params(enrollment: RunnerDiscovery::Enrollment, role: RunnerRole, held: T::Array[String], findings: T::Array[String]).void }
+    def hook_fact(enrollment, role, held, findings)
+      expected = role.stream
+      recorded = enrollment.stream
+      if expected
+        if recorded == expected
+          held << "hook follows the stream"
+        elsif recorded
+          findings << "hook follows #{recorded}, not the role's #{expected}"
+        else
+          findings << "no job-started hook — jobs run no head of #{expected}"
+        end
+      elsif recorded
+        role.pooled? ? held << "hook follows #{recorded}" : findings << "hook follows #{recorded}, but the role follows no stream"
+      end
     end
 
     # What GitHub says of the slot: online, and labels as the role's. A

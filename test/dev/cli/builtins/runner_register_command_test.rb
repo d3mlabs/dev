@@ -9,7 +9,11 @@ require "dev/engine_resources"
 require "dev/enrolled_runner"
 require "dev/environment_image"
 require "dev/host_reach"
+require "dev/lifecycle/build_pattern"
+require "dev/lifecycle/channel"
 require "dev/lifecycle/project_version"
+require "dev/lifecycle/publisher_spec"
+require "dev/lifecycle/target"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/runner_role"
@@ -17,6 +21,8 @@ require "dev/runner_role_aliases"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
+require "dev/stream"
+require "dev/stream_hook"
 require "dev/wsl_runner_host"
 require "etc"
 require "fileutils"
@@ -130,6 +136,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # A dev.yml role of a checkout's own, with a job identity but no group:
   # repo-scoped, its jobs run as `ue-builder`.
   FARM = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], job_identity: "ue-builder")
+  # A project deployed through gh: the channel a declared role's slots follow (dev#658).
+  GH_CHANNELS = { "gh" => Dev::Lifecycle::Channel.new(
+    name: "gh", accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "cellbound-3d"))],
+    publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "gh"),
+  ) }.freeze
 
   # Class methods, defined ahead of the tests: Where tables are evaluated
   # in class scope as the file loads.
@@ -1382,6 +1393,62 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.ui.rows.none? { |_kind, text, _depth| text.include?("alias") }
   end
 
+  # dev#658: a declared role of a project deployed through gh anchors its
+  # slots to the project's stream; register writes each slot's job-started
+  # hook to follow it, after the slot is enrolled or amended.
+  test "--role <declared> from a checkout deployed through gh points every slot's job-started hook at the project's stream" do
+    Given "a checkout at 2.3.0 with a gh channel, declaring ue-farm; one slot already enrolled online, --slots 2"
+    farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu])
+    home = Dir.mktmpdir
+    existing = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "mac1-ue-farm", agent_id: 7)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs/cellbound-3d", "mac1-ue-farm"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: %w[ue gpu], status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d", hostname: "mac1")
+    context = harness.build_context(
+      name: "Cellbound3D", root: declaring_checkout(version: "2.3.0"), runner_roles: { "ue-farm" => farm }, channels: GH_CHANNELS,
+    )
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "ue-farm", "--slots", "2"]), context: context)
+
+    Then "the role follows d3mlabs/cellbound-3d@gh ~> 2; the amended slot's dir and the fresh slot's dir each follow it; the hook was built for the host rule's user (none on a Mac)"
+    stream = Dev::Stream.parse("d3mlabs/cellbound-3d@gh ~> 2")
+    harness.wirings.fetch(0).first.role.stream == stream
+    harness.hooks == [[existing, stream], [File.join(home, "actions-runner-ue-farm-2"), stream]]
+    harness.hook_users == [nil]
+  end
+
+  test "a role that follows no stream has every slot's hook removed: a build host from any checkout, a declared role of a project not deployed through gh" do
+    Given "a checkout deploying through brew alone, declaring ue-farm"
+    farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu])
+    harness = build_harness(scope: "d3mlabs/cellbound-3d", hostname: "mac1")
+    context = harness.build_context(name: "Cellbound3D", root: declaring_checkout(version: "2.3.0"), runner_roles: { "ue-farm" => farm })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, args), context: context)
+
+    Then "the one slot's dir is converged to no stream"
+    harness.hooks == [["/tmp/runner-dir", nil]]
+
+    Where
+    args
+    ["--role", "ue-farm"]
+    []
+  end
+
+  test "on the Linux rule the hook is built to write as the runner user, the enrollments' owner" do
+    Given "a Linux host whose runner user is ci"
+    runner_user = runner_user_mock(name: "ci", home: Dir.mktmpdir)
+    harness = build_harness(runner_user: runner_user, scope: "d3mlabs/cellbound-3d")
+
+    When
+    harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
+
+    Then
+    harness.hook_users == [runner_user]
+  end
+
   test "a grouped role whose checkout keeps no VERSION is refused before anything converges: the pin has no series to take" do
     Given
     farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], group: "ue-farm", workflows: [".github/workflows/build.yml"])
@@ -1967,13 +2034,14 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   private
 
   Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :factory_uis, :reach_roots, :identities,
-    keyword_init: true) do
+    :hooks, :hook_users, keyword_init: true) do
     # A project context carrying this harness's Ui — the terminal the
-    # command asks at — and the runner roles its dev.yml declares.
-    def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {})
+    # command asks at — the runner roles its dev.yml declares and the
+    # channels it deploys through.
+    def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {}, channels: {})
       Dev::Cli::ExecutionContext.new(
         ui: ui,
-        project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine, runner_roles: runner_roles),
+        project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine, runner_roles: runner_roles, channels: channels),
       )
     end
 
@@ -2009,6 +2077,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     factory_uis = []
     reach_roots = []
     identities = []
+    hooks = []
+    hook_users = []
     out = StringIO.new
     # A setup double per dir: the default one for a config naming none,
     # one resolving to the config's dir otherwise (a further slot's, or a
@@ -2064,9 +2134,18 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       teardown: teardown,
       engine_provisioner: engine,
       refresher: refresher,
+      # The job-started hook (dev#658): what each slot's dir was converged
+      # to follow, and the runner user it was built to write as.
+      stream_hook_factory: ->(hook_user, _ui) {
+        hook_users << hook_user
+        hook = typed_mock(Dev::StreamHook)
+        hook.stubs(:converge!).with { |runner_dir:, stream:| hooks << [runner_dir, stream] || true }
+        hook
+      },
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
-      torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots, identities: identities)
+      torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots, identities: identities,
+      hooks: hooks, hook_users: hook_users)
   end
 
   # A job identity recording the lifecycle a register run drives into

@@ -26,6 +26,7 @@ require "dev/runner_setup"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
+require "dev/stream_hook"
 require "dev/wsl_conf"
 require "dev/wsl_keepalive_task"
 require "dev/wsl_runner_host"
@@ -149,6 +150,11 @@ module Dev
         # `--repo` override; the gh boundary behind the derived label.
         RepoResolver = T.type_alias { T.proc.params(override: T.nilable(String)).returns(String) }
 
+        # Builds the job-started hook for this host's enrollments, written
+        # as the host rule's runner user (nil on a Mac, where the operator
+        # owns them), speaking on the Ui; injected for tests.
+        StreamHookFactory = T.type_alias { T.proc.params(runner_user: T.nilable(Dev::RunnerUser), ui: Ui).returns(Dev::StreamHook) }
+
         sig do
           params(
             runner_setup_factory: RunnerSetupFactory,
@@ -165,6 +171,7 @@ module Dev
             reach_factory: ReachFactory,
             groups: T.nilable(Dev::RunnerGroups),
             refresher: Dev::OperatorAccess::Refresher,
+            stream_hook_factory: StreamHookFactory,
           ).void
         end
         def initialize(
@@ -193,7 +200,8 @@ module Dev
           # The org's runner groups, converged over the same registry.
           groups: nil,
           # How the operator's login is widened when the pre-flight offers it.
-          refresher: Dev::OperatorAccess::DEFAULT_REFRESHER
+          refresher: Dev::OperatorAccess::DEFAULT_REFRESHER,
+          stream_hook_factory: ->(runner_user, ui) { Dev::StreamHook.new(as_user: runner_user&.name, ui: ui) }
         )
           super()
           @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
@@ -214,6 +222,7 @@ module Dev
           @wsl_runner_host = wsl_runner_host
           @pins_reader = pins_reader
           @reach_factory = reach_factory
+          @stream_hook_factory = stream_hook_factory
         end
 
         # The summary line, then what the operator needs at the prompt: who
@@ -243,6 +252,18 @@ module Dev
                             to this project's own `workflows:` at the project's series
                             (v<major>, read from VERSION — never typed), and a
                             `job_identity:` — the OS user its jobs run as.
+
+            What a slot's jobs run follows the role. A build host's run the checkout. A
+            declared role's, when the project deploys through gh (`deploy: gh:` in its
+            dev.yml), follow the project's STREAM: <repo>@gh ~> <major>, the series the
+            pins already follow. Register records the stream in each slot's runner dir
+            (.env: #{Dev::StreamHook::STREAM_ENV}) and installs the runner's job-started hook there
+            (#{Dev::StreamHook::HOOK_ENV} → #{Dev::StreamHook::SCRIPT}), which runs
+            `dev runner follow <dir>` before every job: it installs the series' head
+            (the release `v<major>` points at, as the gh tree ~/.dev/gh/<repo>/<tag>
+            with its closure) when it moved, and exports the tree's bin to the job's
+            PATH. The service is bounced once when the hook changes. A role that
+            follows no stream has no hook; re-running register removes a stale one.
 
             Scope follows the checkout: without --org the slots are this repo's — its
             jobs through any of its workflows, no runner group — for every role. --org
@@ -379,6 +400,7 @@ module Dev
               dev runner register --org --role agent --slots 3 # three jobs at once; this repo may use them
               dev runner register --role agent --slots 2       # this repo's own slots of the role, no group
               dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
+              dev runner follow ~/actions-runner-agent # what slot 1's hook runs before each job: install the moved head now
           DESC
         end
 
@@ -528,6 +550,7 @@ module Dev
           replacing = fresh.to_h { |slot| [slot, replace?(scope, fresh_slot_name(slot, naming), own, known, ui: context.ui)] }
           retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes, ui: context.ui)
 
+          hook = @stream_hook_factory.call(runner_user, context.ui)
           (1..count).each do |slot|
             enrollment = by_slot[slot]&.first
             runner = enrollment && runners[enrollment.name]
@@ -535,6 +558,7 @@ module Dev
               amend_enrollment(scope, enrollment, runner, config, ui: context.ui)
               @groups.place!(group, runner, org: scope, ui: context.ui) if group
               identity&.after_enroll!(runner_dir: enrollment.dir, slot: slot)
+              hook.converge!(runner_dir: enrollment.dir, stream: role.stream)
               next
             end
 
@@ -557,6 +581,7 @@ module Dev
             end
             slot_setup.run
             identity&.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot)
+            hook.converge!(runner_dir: slot_setup.resolve_dir, stream: role.stream)
           end
 
           converge_access!(scope, group, repo, ui: context.ui) if org
@@ -1109,7 +1134,8 @@ module Dev
         end
 
         # The role `--role` names: the checkout's dev.yml declaration, bound
-        # to the repo this registration is for and the checkout's series.
+        # to the repo this registration is for and the checkout's series —
+        # and, when the checkout deploys through gh, to its stream there.
         # A declared role without a group is its repo's — org scope needs a
         # group to fix the slots' reach — and `--org` is refused for it.
         #
@@ -1130,7 +1156,11 @@ module Dev
                 "runner_roles: { #{name}: { labels: [...] } }"
           end
 
-          role = declaration.bind(repo: resolve_repo.call, version: Lifecycle::ProjectVersion.declared(T.must(project).root))
+          role = declaration.bind(
+            repo: resolve_repo.call,
+            version: Lifecycle::ProjectVersion.declared(T.must(project).root),
+            channels: T.must(project).channels,
+          )
           if org && !role.org_scoped?
             raise ArgumentError,
               "runner role '#{name}' is this repo's — a role enrolls at the org only in a group pinned to this project's " \
