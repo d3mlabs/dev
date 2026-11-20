@@ -10,7 +10,7 @@ transform!(RSpock::AST::Transformation)
 class Dev::TapTrustTest < Minitest::Test
   # Homebrew 7 loads nothing from a tap its user has not trusted, and trust
   # is per user: the step is the one thing both host bootstraps need
-  # (RunnerUser on Linux, AgentBootstrap on macOS — dev#310, dev#374), and
+  # (RunnerUser on Linux, JobIdentity on macOS — dev#310, dev#374), and
   # how to run as the user is the one thing they hand it.
   test "trust! announces, then runs the brew dev found as the user with `trust --tap` — without brew's implicit auto-update (dev#475: its lock is the prefix owner's, and trust is a per-user file needing no API data)" do
     Given "a tap and brew, and a run-as-user seam that records and succeeds"

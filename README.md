@@ -143,7 +143,8 @@ In the order a new user needs them:
 8. [Lifecycle](docs/lifecycle.md) — `build`, `package`, `deploy`,
    `release` in full.
 9. [Runners](docs/runners.md) — self-hosted and hosted runners, the
-   `d3mlabs/dev/up` step a job converges its runner with, agent hosts.
+   `d3mlabs/dev/up` step a job converges its runner with, runner roles
+   and job identities.
 10. [Agents](docs/agents.md) — plans, skills, learnings.
 11. [Writing scripts for dev](docs/scripts.md) — terminal, spinners,
     environment.

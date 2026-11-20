@@ -10,7 +10,7 @@ lock names; `dev up` installs only the difference.
 |---|---|
 | `DEV_DATA_ROOT` set | that path |
 | Linux | `/var/lib/dev` |
-| macOS | `/Users/Shared/dev` when it exists (agent hosts), else `~/.dev` |
+| macOS | `/Users/Shared/dev` when it exists (a host with a job identity), else `~/.dev` |
 | inside a container | `/var/lib/dev` — the host's root bind-mounted on Linux, a named volume on a Mac |
 
 Per-user mutable state (`~/.dev/state`) stays in the home directory and is

@@ -849,7 +849,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     Dev::Cli::ProjectManifestLoader.new(command_parser: Dev::Cli::CommandParser.new, target_parser: Dev::Cli::TargetParser.new)
   end
 
-  test "#load extracts runner_roles: a user role per key, identity and labels only" do
+  test "#load extracts runner_roles: a declaration per key — labels alone is a repo's own role" do
     Given "a dev.yml declaring a farm role"
     tmp = write_dev_yml(<<~YAML)
       name: snappy
@@ -865,7 +865,68 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then
-    manifest.runner_roles == { "ue-farm" => Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu]) }
+    manifest.runner_roles == { "ue-farm" => Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu]) }
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load reads a role's group, its workflows and its job identity — the group as a bare name" do
+    Given "ai-flow's dev.yml"
+    tmp = write_dev_yml(<<~YAML)
+      name: ai-flow
+      runner_roles:
+        agent:
+          labels: [ai-ask, ai-edit, ai-split, ai-build, ai-learn]
+          group: ai-flow
+          workflows: [.github/workflows/ai-commands.yml, .github/workflows/origin-firing.yml]
+          job_identity: ai-agent
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.runner_roles == {
+      "agent" => Dev::RunnerRole::Declaration.new(
+        name: "agent",
+        labels: %w[ai-ask ai-edit ai-split ai-build ai-learn],
+        group: "ai-flow",
+        visibility: "selected",
+        workflows: %w[.github/workflows/ai-commands.yml .github/workflows/origin-firing.yml],
+        job_identity: "ai-agent",
+      ),
+    }
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load reads a group as a mapping with its visibility — an open pool" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: ai-flow
+      runner_roles:
+        orchestrator:
+          labels: [ai-orchestrator]
+          group: { name: ai-orchestrator, visibility: all }
+          workflows: [.github/workflows/ai-commands.yml]
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When
+    declaration = build_loader.load(Pathname.new(tmp.path)).runner_roles.fetch("orchestrator")
+
+    Then
+    declaration.group == "ai-orchestrator"
+    declaration.visibility == "all"
+    declaration.workflows == [".github/workflows/ai-commands.yml"]
+    declaration.job_identity.nil?
 
     Cleanup
     tmp.close!
@@ -887,7 +948,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load refuses a runner role that is #{fault}: #{body.strip}" do
+  test "#load refuses a runner role that is #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: snappy
@@ -904,16 +965,24 @@ class ProjectManifestLoaderTest < Minitest::Test
     Then
     error = raises Dev::Cli::ProjectManifestLoader::RunnerRoleError
     error.message.include?(name)
+    error.message.include?(fragment)
 
     Cleanup
     tmp.close!
 
     Where
-    fault                       | name      | body
-    "a builtin's name"          | "agent"   | "  agent:\n    labels: [x]"
-    "claiming an ai-flow label" | "farm"    | "  farm:\n    labels: [ai-build]"
-    "without labels"            | "farm"    | "  farm: {}"
-    "not a mapping"             | "farm"    | "  farm: ue"
+    fault                                   | name         | fragment                        | body
+    "the builtin's name"                    | "build-host" | "is builtin"                    | "  build-host:\n    labels: [x]"
+    "without labels"                        | "farm"       | "needs a `labels:` list"        | "  farm: {}"
+    "with labels not a list"                | "farm"       | "needs a `labels:` list"        | "  farm:\n    labels: ue"
+    "not a mapping"                         | "farm"       | "needs a mapping"               | "  farm: ue"
+    "a group without workflows"             | "farm"       | "pins no `workflows:`"          | "  farm:\n    labels: [ue]\n    group: ue-hosted"
+    "workflows without a group"             | "farm"       | "names no `group:`"             | "  farm:\n    labels: [ue]\n    workflows: [.github/workflows/x.yml]"
+    "a group that is neither name nor map"  | "farm"       | "neither a name nor"            | "  farm:\n    labels: [ue]\n    group: [x]\n    workflows: [.github/workflows/x.yml]"
+    "a group with an unknown visibility"    | "farm"       | "one of selected | all"         | "  farm:\n    labels: [ue]\n    group: { name: g, visibility: public }\n    workflows: [.github/workflows/x.yml]"
+    "workflows not a list"                  | "farm"       | "needs `workflows:` as a list"  | "  farm:\n    labels: [ue]\n    group: g\n    workflows: .github/workflows/x.yml"
+    "a workflow outside .github/workflows"  | "farm"       | "under .github/workflows/"      | "  farm:\n    labels: [ue]\n    group: g\n    workflows: [ci/x.yml]"
+    "a job identity not a user name"        | "farm"       | "not a user name"               | "  farm:\n    labels: [ue]\n    job_identity: [a]"
   end
 
   def write_dev_yml(content)

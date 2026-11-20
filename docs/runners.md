@@ -10,11 +10,9 @@ gets warm.
 ```bash
 dev runner register                       # this repo's build host: repo scope, label = the repo name
 dev runner register --labels ue-engine    # a build host with custom labels
-dev runner register --org --role agent    # the org agent host (--ai-flow is the same)
+dev runner register --role ue-farm        # a role this repo's dev.yml declares, at the repo
+dev runner register --org --role agent    # a role this dev.yml declares with a group, at the org
 dev runner register --org --role agent --slots 3        # three jobs at once
-dev runner register --ai-flow --slots 2   # this repo's own agent slots
-dev runner register --org --role orchestrator --slots 8 # the orchestrator pool
-dev runner register --role ue-farm        # a role this repo's dev.yml declares
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
 dev runner status --check                 # the host's posture alone, no GitHub; exit 1 on drift (every job runs it)
@@ -31,37 +29,53 @@ runner status` reads both back.
 ### Roles
 
 A registration declares the **role** its runners play. The labels, the
-runner group, the scope, the runner name and the directory all derive from
-it.
+runner group, the user the jobs run as, the scope, the runner name and the
+directory all derive from it. The build host is the one builtin role;
+every other role is declared by a project's `dev.yml`.
 
-| Role | Labels | Group | Scope |
-|---|---|---|---|
-| `agent` (`--role agent`, or `--ai-flow`) | `ai-ask ai-edit ai-split ai-build ai-learn` | `ai-flow`, pinned to ai-flow's workflows | org |
-| `orchestrator` (`--role orchestrator`, or `--labels ai-orchestrator`) | `ai-orchestrator` | `ai-orchestrator`, pinned, open to every repo | org |
-| build host (bare `register`, or `--labels`) | the repo's name, or the `--labels` set | none, or `--group` | repo; `--org` with `--labels` makes an org pool |
-| a dev.yml role (`--role <name>`) | as declared | none | repo |
+| Role | Labels | Group | Jobs run as | Scope |
+|---|---|---|---|---|
+| build host (bare `register`, or `--labels`) | the repo's name, or the `--labels` set | none, or `--group` | the enrolling user | repo; `--org` with `--labels` makes an org pool |
+| a dev.yml role (`--role <name>`) | as declared | `group:` when declared, pinned to the project's `workflows:` | `job_identity:` when declared, else the enrolling user | repo; `--org` when the role declares a group |
 
-A repo declares its own roles in `dev.yml`:
+A repo declares its roles in `dev.yml`:
 
 ```yaml
 runner_roles:
-  ue-farm:
+  ue-farm:                   # this repo's own fleet: repo-scoped, custom labels
     labels: [ue, gpu]
+  agent:                     # an org role: its own group, this repo's workflows, jobs as ai-agent
+    labels: [ai-ask, ai-edit, ai-split, ai-build, ai-learn]
+    group: ai-flow
+    workflows: [.github/workflows/ai-commands.yml, .github/workflows/origin-firing.yml]
+    job_identity: ai-agent
 ```
 
-A dev.yml role carries a name and labels only. It may not take a builtin's
-name or an ai-flow label. `--role x` that nothing declares is refused, as
-is `--role x --labels y` (the role's labels are its declaration) and
-`--org` with a dev.yml role.
+| Key | Meaning |
+|---|---|
+| `labels` | Required. The labels the role's runners advertise. |
+| `group` | The runner group the role's slots join at the org: a name, or `{ name: <name>, visibility: selected \| all }` (`selected` by default). Goes with `workflows`. |
+| `workflows` | Paths under this repo's `.github/workflows/`. The group is restricted to them at the project's series tag, `v<major>` of the `VERSION` file: a project at `2.3.0` pins `owner/repo/.github/workflows/x.yml@refs/tags/v2`. A grouped role in a checkout with no `VERSION` is refused. |
+| `job_identity` | The OS user the role's jobs run as, which register converges on the host ([Job identities](#job-identities)). Without it, jobs run as the enrolling user. |
+
+`--role x` that nothing declares is refused, as is `--role x --labels y`
+(the role's labels are its declaration) and `--org` with a role that
+declares no group (org scope needs a group to fix the slots' reach).
+
+For one release, `--ai-flow` stands for `--role agent` and `--labels
+ai-orchestrator` for `--role orchestrator` as ai-flow's `dev.yml` declares
+them, pinned to ai-flow's workflows at `@main`. Each prints a warning naming
+its replacement — `dev runner register --org --role agent` from an ai-flow
+checkout — and both go away in the next release.
 
 ### Scope
 
 Scope follows the checkout. Without `--org`, the slots are the repo's:
 only that repo's jobs land on them, for every role — a build host, or a
 repo that wants agent slots of its own. `--org` registers at the repo's
-org: an agent or orchestrator joins its pinned runner group there, and
-every repo the group admits may send jobs; `--org --labels <set>` makes a
-custom set an org pool. A **build host** is the repo-scoped default: use
+org: a grouped role joins its runner group there, and every repo the
+group admits may send jobs; `--org --labels <set>` makes a custom set an
+org pool. A **build host** is the repo-scoped default: use
 one when a repo needs its own hardware or its own concurrency cap — a
 repo whose jobs hold the one Unreal editor enrolls one build host and has
 concurrency 1 by construction.
@@ -85,7 +99,7 @@ What a registration gets, by the repo's owner and visibility:
 
 | | Private repo | Public repo |
 |---|---|---|
-| **Organization** | Any role at the repo (the default); a pinned role at the org, in its group (`--org`) | A pinned role at the org, in its group (`--org`). Repo scope refused |
+| **Organization** | Any role at the repo (the default); a grouped role at the org, in its group (`--org`) | A grouped role at the org, in its group (`--org`). Repo scope refused |
 | **User account** | Any role at the repo | Refused: no runner groups exist to pin with. Move the repo into an organization, or run its jobs on GitHub-hosted runners (ai-flow's hosted-runner mode, [ai-flow#142](https://github.com/d3mlabs/ai-flow/issues/142)) |
 
 ai-flow adopters: its README's *Choosing your runner setup* says which
@@ -104,16 +118,16 @@ supply them. Three vocabularies:
   (`d3mlabs/cellbound-3d` → `cellbound-3d`). Bare `dev runner register`
   uses it; `--repo a/b` moves it.
 - **Custom labels** through `--labels`, for special fleets (`ue-engine`).
-- **The ai-flow vocabulary**: `--ai-flow` enrolls the agent set (`ai-ask
-  ai-edit ai-split ai-build ai-learn`, one per slash command) in the
-  `ai-flow` runner group. `ai-orchestrator` is separate: the host
-  `/build --split`'s orchestrator runs on, which polls for hours and
-  belongs on an always-on box with many cheap slots, never on an agent
-  slot. A `--labels` set mixing the two is refused.
+- **A role's labels**: what its `dev.yml` declaration lists. ai-flow's
+  `agent` role carries `ai-ask ai-edit ai-split ai-build ai-learn`, one
+  per slash command; its `orchestrator` role carries `ai-orchestrator`
+  alone — the host `/build --split`'s poll loop runs on, which polls for
+  hours and belongs on an always-on box with many cheap slots, never on
+  an agent slot.
 
-A capability label is an obligation: `register` converges what each label
-requires. A plain target-host label converges nothing; the agent labels
-run the [agent host bootstrap](#agent-hosts).
+A label converges nothing by itself. What `register` converges for a role
+is what the role declares: its runner group and its
+[job identity](#job-identities).
 
 ### Slots and names
 
@@ -134,8 +148,11 @@ Runner names are `<hostname>-<role>` for grouped and dev.yml roles
 for a build host; directories are `~/actions-runner-<role>[-n]`. A family
 that is already enrolled keeps the names it has; `--name` and `--dir`
 override slot 1's. Which role an enrollment plays is read from its labels
-on GitHub, or, for an enrollment GitHub has lost, from the runner group
-its `.runner` record names — never from its name or directory.
+on GitHub — an enrollment sharing a label with the role is the role's, so
+a label set that drifted is amended in place and one with nothing in
+common is another family's — or, for an enrollment GitHub has lost, from
+the runner group its `.runner` record names. Never from its name or
+directory.
 
 ### Runner groups
 
@@ -143,11 +160,10 @@ A runner group says which repos may use an org host's slots. Labels say
 what a host can do, slots how many jobs it runs at once, the group who may
 send them.
 
-- The `agent` role sits in the `ai-flow` group. `register` creates it when
-  the org lacks it — visibility *selected*, restricted to ai-flow's two
-  reusable workflows — and re-converges it when the console drifted.
-- The `orchestrator` role sits in the `ai-orchestrator` group, visibility
-  *all*.
+- A dev.yml role with `group:` sits in that group. `register` creates it
+  when the org lacks it — the declared visibility, restricted to the
+  role's `workflows:` at the project's series tag — and re-converges it
+  when the console drifted.
 - `--group <name>` is for human-made pools of build hosts; the group must
   already exist.
 
@@ -179,8 +195,8 @@ online. Busy counts; offline does not. See
    `dev up`'s, sized from this repo's `engine:` hint
    ([Containers](containers.md#engine-resources)).
 2. **Platform facts**: the Linux [runner user](#linux-the-runner-user),
-   the [WSL2 keepalive](#wsl2), the [agent host](#agent-hosts) when agent
-   labels are advertised.
+   the [WSL2 keepalive](#wsl2), the role's [job identity](#job-identities)
+   when it declares one.
 3. **The enrollment.** An existing enrollment at the scope has its labels
    amended in place on GitHub; re-running is the no-op and the drift
    repair. Only a scope nothing serves gets the full ceremony: download,
@@ -197,9 +213,10 @@ answers; headless the answer is no, and the by-hand `dev runner
 unregister <dir>` lines are printed): more than one local enrollment for
 the scope, or GitHub listing the runner offline.
 
-Flags: `--role`, `--org`, `--repo`, `--ai-flow`, `--slots`, `--group`,
-`--yes`, `--labels`, `--dir`, `--name`, `--agent-user`, `--as` (the Linux
-runner user's name). `--org` needs no checkout; bare register does.
+Flags: `--role`, `--org`, `--repo`, `--slots`, `--group`, `--yes`,
+`--labels`, `--dir`, `--name`, `--as` (the Linux runner user's name), and
+for one release `--ai-flow`. `--org` with `--labels` needs no checkout;
+bare register and `--role` do.
 
 ### Linux: the runner user
 
@@ -282,39 +299,40 @@ from Windows, then `dev runner register` again, then
 and on) to bring the distro back under the keepalive. `dev runner status`
 reports all of this in the host frame.
 
-### Agent hosts
+### Job identities
 
-Agent labels (`ai-ask`, `ai-build`, …) mark the host as one that runs an
-AI agent in jobs. Register converges, idempotently and with admin
-prompts:
+A role declaring `job_identity: <user>` runs its jobs as that user rather
+than as the enrolling one — the shape for a role that runs an AI agent in
+jobs (ai-flow's `agent` role, as `ai-agent`). Register converges,
+idempotently and with admin prompts:
 
-- a non-admin **agent user**, `ai-agent` (`--agent-user` renames it), with
-  its own home and no sudo;
-- the **`dev` group** with both the runner identity and the agent in it;
-- one **sudoers edge**: runner user → agent (`NOPASSWD:SETENV`), so the
-  service spawns the agent. There is no edge back: the agent writes no
-  brew prefix — pins are converged dispatcher-side before the agent
-  spawns, gems land in a home the agent owns — and a brew write as the
-  prefix owner would be arbitrary code as that user (on Linux, a
-  docker-group user). A drop-in still carrying the older agent → owner
-  brew edge is rewritten without it, and `dev runner status` reports such
-  an edge as drift;
+- a non-admin **job identity user**, with its own home and no sudo;
+- the **`dev` group** with both the runner identity and the job identity
+  in it;
+- one **sudoers edge**: runner user → job identity (`NOPASSWD:SETENV`),
+  so the service spawns it. There is no edge back: the job identity
+  writes no brew prefix — pins are converged dispatcher-side before it
+  spawns, gems land in a home it owns — and a brew write as the prefix
+  owner would be arbitrary code as that user (on Linux, a docker-group
+  user). A drop-in still carrying the older identity → owner brew edge is
+  rewritten without it, and `dev runner status` reports such an edge as
+  drift;
 - the shared **data root** (provisioned on a Mac and, when an existing
   root is not what `dev runner status` inspects — group `dev`, setgid,
   group-writable throughout — re-granted tree and all; asserted on
   Linux), brew's lock directory as a group space, and the deployment tap
-  trusted by the agent user;
-- on a Mac, the agent's own **colima** engine when the repo pins an
-  image. On Linux there is no agent engine: the agent for an image-built
-  repo runs inside the project's container, and until that lands a Linux
-  host refuses to serve agent labels for such a repo;
+  trusted by the job identity;
+- on a Mac, the identity's own **colima** engine when the repo pins an
+  image. On Linux there is no such engine: the jobs of an image-built
+  repo run inside the project's container, and until that lands a Linux
+  host refuses to serve a role with a job identity for such a repo;
 - after enrollment, the `_work` tree as a group space, and the **runner
   service environment**: umask 002, `AI_FLOW_AGENT_USER`,
-  `AI_FLOW_AGENT_GROUP`, `AI_FLOW_RUNNER_SLOT`.
+  `AI_FLOW_AGENT_GROUP`, `AI_FLOW_RUNNER_SLOT` — the names the dispatcher
+  spawning the identity reads.
 
-Last, warn-only, whether the agent CLI (`cursor-agent`) is installed in
-the brew prefix. It arrives through the org Brewfile on the prefix owner's
-`dev up` — yours on a Mac, `sudo -iu runner dev up` on Linux.
+What the identity needs beyond this — an agent CLI, say — is the declaring
+project's to install; dev converges none of it.
 
 ### dev runner status
 
@@ -331,11 +349,19 @@ asked), and the box and a Mac render the same shape.
 The host frame carries what is true of the machine regardless of its
 slots: the runner user and its gh login with the token's expiry, who owns
 the toolchain, whether that identity can read this checkout's lock
-(every `gh` pin's repo, every image's floor package), the agent host's
-contract when the host is one — an agent family enrolled, or the agent
-user on the host (agent user, group memberships, the sudoers edge and the
-absence of a brew edge, data root, brew locks, engine), the WSL keepalive and
-systemd facts inside a distro, and host tooling against the org Brewfile.
+(every `gh` pin's repo, every image's floor package), each job identity's
+facts — for every identity an enrolled family's role names or a role at
+hand declares, when it is enrolled or its user exists (the user, group
+memberships, the sudoers edge and the absence of a brew edge, data root,
+brew locks, engine) — the WSL keepalive and systemd facts inside a distro,
+and host tooling against the org Brewfile.
+
+Roles are held against their declarations. In a checkout, the roles its
+`dev.yml` declares are bound to the checkout's repo and series; a slot of
+a role declared elsewhere is known by its runner group alone: its frame
+is titled by the group, its reach reads `?` with the clauses as GitHub
+has them, and the line names the fix — run `dev runner status` from the
+checkout whose `dev.yml` declares it.
 
 Each family frame opens with its **reach** — what GitHub lets this
 family's slots run, compared with what the role expects — as one fact in
@@ -344,7 +370,7 @@ three clauses:
 ```text
 orchestrator · 2 slots · d3mlabs
 ✓ reach: jobs from every d3mlabs repo
-         via d3mlabs/ai-flow/ai-commands.yml@main, d3mlabs/ai-flow/origin-firing.yml@main only
+         via d3mlabs/ai-flow/ai-commands.yml@v1, d3mlabs/ai-flow/origin-firing.yml@v1 only
          runs-on ai-orchestrator
 ✓ box-orchestrator, -2 — online · service installed · runs as runner
 ```
@@ -352,9 +378,10 @@ orchestrator · 2 slots · d3mlabs
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
 printed only under a ✗, as the `cause:` line, with the remedy when a
-clause drifted (`re-run dev runner register --org --role agent from a
-checkout at d3mlabs`). A build host sitting in the unpinned `Default` group and an
-agent family whose group lost the ai-flow pin each render that way; a
+clause drifted (`re-run dev runner register --org --role agent from the
+checkout whose dev.yml declares agent`). A build host sitting in the
+unpinned `Default` group and a grouped role whose group lost its workflow
+pin each render that way; a
 registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,
 service installed, who it runs as, the `_work` grant for agents) fold into
@@ -382,15 +409,15 @@ be quiet.
 
 What `--check` reads is today's host against today's contract — no stamp,
 no version file — and nothing GitHub would have to be asked for: the
-runner user and its login, the toolchain's owner, the agent host's
-contract (agent user, group memberships, the sudoers edge and the absence
-of a brew edge, data root, brew locks), the WSL systemd and keepalive
-facts, host tooling against the org Brewfile. The family frames — reach,
-online, labels, the runner group — need the org token and stay the
-human's `dev runner status`. Which roles are enrolled is read from each
-enrollment's own `.runner` record (its runner group), as for a slot GitHub
-has lost; a repo-scoped agent family records no group, so the agent user's
-presence on the host is what brings the agent host's facts in there. Run
+runner user and its login, the toolchain's owner, each job identity's
+facts (its user, group memberships, the sudoers edge and the absence of a
+brew edge, data root, brew locks), the WSL systemd and keepalive facts,
+host tooling against the org Brewfile. The family frames — reach, online,
+labels, the runner group — need the org token and stay the human's `dev
+runner status`. Which roles are enrolled is read from each enrollment's
+own `.runner` record (its runner group), as for a slot GitHub has lost; a
+repo-scoped family records no group, so a job identity's user existing
+on the host is what brings its facts in there. Run
 as the job's own identity, facts that identity cannot probe read `?`, not
 `✗` — the runner user's gh login from a job that cannot sudo, the
 keepalive from a service without interop — and only a `✗` fails the

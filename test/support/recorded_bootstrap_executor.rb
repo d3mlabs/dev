@@ -1,7 +1,7 @@
 # typed: false
 # frozen_string_literal: true
 
-# Records every host invocation the agent host bootstrap makes; the admin
+# Records every host invocation a job identity's convergence makes; the admin
 # CLIs (sysadminctl, dseditgroup, useradd, visudo, systemctl, ...) are a
 # true boundary — tests never mutate the host. Probes (`quiet?`) and
 # captures answer from canned tables, defaulting to "not there".
