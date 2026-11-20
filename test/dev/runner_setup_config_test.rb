@@ -8,6 +8,9 @@ require "dev/runner_setup_config"
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerSetupConfigTest < Minitest::Test
   UE = Dev::RunnerRole.build_host(labels: ["ue-engine"])
+  PINNED = Dev::RunnerGroupContract.new(name: "ai-flow", workflows: ["d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/tags/v2"])
+  AGENT = Dev::RunnerRole.declared(name: "agent", labels: %w[ai-ask ai-build], group: PINNED, job_identity: "ai-agent")
+  FARM = Dev::RunnerRole.declared(name: "ue-farm", labels: %w[ue gpu])
 
   test "optional fields default to nil" do
     When "creating a config with only a role"
@@ -23,9 +26,9 @@ class Dev::RunnerSetupConfigTest < Minitest::Test
 
   test "labels and group derive from the role — the config declares the role, config.sh gets the labels" do
     Expect
-    Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT).labels == Dev::LabelContracts::AI_FLOW_AGENT_LABELS.join(",")
-    Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT).group == "ai-flow"
-    Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::ORCHESTRATOR).group == "ai-orchestrator"
+    Dev::RunnerSetupConfig.new(role: AGENT).labels == "ai-ask,ai-build"
+    Dev::RunnerSetupConfig.new(role: AGENT).group == "ai-flow"
+    Dev::RunnerSetupConfig.new(role: FARM).group.nil?
     Dev::RunnerSetupConfig.new(role: UE).labels == "ue-engine"
     Dev::RunnerSetupConfig.new(role: UE).group.nil?
     Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: %w[ue-engine x64], group: Dev::RunnerGroupContract.new(name: "ue-hosted"))).group == "ue-hosted"

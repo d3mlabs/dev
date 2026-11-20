@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/agent_bootstrap/darwin"
+require "dev/job_identity/darwin"
 require "support/recorded_bootstrap_executor"
 require "etc"
 require "fileutils"
@@ -10,7 +10,7 @@ require "support/recording_ui"
 require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
-class Dev::AgentBootstrap::DarwinTest < Minitest::Test
+class Dev::JobIdentity::DarwinTest < Minitest::Test
   # `colima list -j` answer for a running VM already at the agent's hint
   # (12 cpus / 24 GiB), so the provisioner has nothing to do.
   RUNNING_AGENT_VM_JSON = '{"name":"default","status":"Running","arch":"aarch64","cpus":12,' \
@@ -37,7 +37,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
       data_root: provisioned_root(executor), home_dev: File.join(Dir.mktmpdir, "absent-home-dev"),
       launch_agents_dir: Dir.mktmpdir, brew_executable: nil, owner_of: HUMAN_OWNS_EVERYTHING, tap: nil,
     }
-    Dev::AgentBootstrap::Darwin.new(runner_user: "human", executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
+    Dev::JobIdentity::Darwin.new(user: "ai-agent", runner_user: "human", executor: executor, ui: RecordingUi.new, **defaults.merge(kwargs))
   end
 
   # A shared root as a converged register left it: the DDC dir under it,
@@ -66,7 +66,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor.runs.empty?
   end
 
-  test "converge! creates the hidden non-admin agent user with its own home" do
+  test "converge! creates the hidden non-admin user with its own home" do
     Given "a host missing only the agent user"
     executor = RecordedBootstrapExecutor.new(
       probe_results: {
@@ -163,7 +163,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     bootstrap(executor).converge!
 
     Then "it raises and no install ran"
-    raises Dev::AgentBootstrap::StepFailedError
+    raises Dev::JobIdentity::StepFailedError
   end
 
   test "converge! provisions a fresh shared root with cooperative modes" do
@@ -486,12 +486,12 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     )
   end
 
-  test "ensure_agent_engine! converges colima, the agent's engine record, and its VM" do
+  test "ensure_engine! converges colima, the agent's engine record, and its VM" do
     Given "a host with none of the engine leg present"
     executor = RecordedBootstrapExecutor.new
 
     When "converging the engine"
-    bootstrap(executor).ensure_agent_engine!
+    bootstrap(executor).ensure_engine!
 
     Then "sudo primed; colima installed; record written agent-owned; VM started at defaults"
     executor.runs.fetch(0) == ["sudo", "-v"]
@@ -510,12 +510,12 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     executor.runs.length == 5
   end
 
-  test "ensure_agent_engine! sizes the VM from the repo's resources hint" do
+  test "ensure_engine! sizes the VM from the repo's resources hint" do
     Given "a resources hint"
     executor = RecordedBootstrapExecutor.new
 
     When "converging the engine with sizing"
-    bootstrap(executor).ensure_agent_engine!(cpus: 12, memory_gib: 24, disk_gib: 250)
+    bootstrap(executor).ensure_engine!(cpus: 12, memory_gib: 24, disk_gib: 250)
 
     Then
     executor.runs.last == [
@@ -524,7 +524,7 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     ]
   end
 
-  test "ensure_agent_engine! is a no-op (bar the sudo prime) when the leg is converged" do
+  test "ensure_engine! is a no-op (bar the sudo prime) when the leg is converged" do
     Given "colima installed, record written, VM running"
     executor = RecordedBootstrapExecutor.new(
       probe_results: { ["brew", "list", "--formula", "colima"] => true },
@@ -535,14 +535,14 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     )
 
     When "converging the engine"
-    bootstrap(executor).ensure_agent_engine!
+    bootstrap(executor).ensure_engine!
 
     Then
     executor.runs == [["sudo", "-v"]]
   end
 
-  test "ensure_agent_engine! merges the record into an existing agent config" do
-    Given "an agent config carrying another key"
+  test "ensure_engine! merges the record into the identity's existing config" do
+    Given "a config carrying another key"
     executor = RecordedBootstrapExecutor.new(
       probe_results: { ["brew", "list", "--formula", "colima"] => true },
       capture_results: {
@@ -553,10 +553,10 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     bs = bootstrap(executor)
 
     When "converging the engine"
-    bs.ensure_agent_engine!
+    bs.ensure_engine!
 
     Then "the staged content keeps the existing key alongside the record"
-    staged = bs.agent_config_content("plans_repo: d3mlabs/plans\n")
+    staged = bs.user_config_content("plans_repo: d3mlabs/plans\n")
     staged.include?("plans_repo: d3mlabs/plans")
     staged.include?("container_engine: colima")
   end
@@ -672,11 +672,11 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     bootstrap(executor).after_enroll!(runner_dir: runner_dir, slot: 1)
 
     Then
-    raises Dev::AgentBootstrap::StepFailedError
+    raises Dev::JobIdentity::StepFailedError
   end
 
-  test "after_enroll! warns (never raises) when the agent CLI is unresolvable" do
-    Given "no brew, so no cursor-agent, on the host"
+  test "after_enroll! is the grant and the service, nothing about an agent CLI — what the identity needs beyond is the declaring project's" do
+    Given "a brewless host"
     executor = RecordedBootstrapExecutor.new
     runner_dir = Dir.mktmpdir
     File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
@@ -685,53 +685,19 @@ class Dev::AgentBootstrap::DarwinTest < Minitest::Test
     When "converging the post-enrollment steps"
     bootstrap(executor, ui: ui).after_enroll!(runner_dir: runner_dir, slot: 1)
 
-    Then "the grant and the service are steps; a failed-state note names the missing CLI"
+    Then "the grant and the service are steps; no note follows"
     ui.rows.fetch(0) == [:step, "Granting the dev group cooperative access to #{File.join(runner_dir, "_work")}", 0]
     ui.rows.fetch(1).fetch(0) == :step
     ui.rows.fetch(1).fetch(1).start_with?("Writing Umask 002 + AI_FLOW_AGENT_USER=ai-agent + AI_FLOW_AGENT_GROUP=dev + AI_FLOW_RUNNER_SLOT=1 into ")
-    ui.rows.fetch(2) == [:note, "{{x}} no brew on this host, so the agent CLI (cursor-agent) has no channel to arrive through — install Homebrew, then run `dev up`", 0]
-    ui.rows.length == 3
+    ui.rows.length == 2
   end
 
-  # dev#547: the same probe as Linux's — the cask's link beside brew in the
-  # prefix's bin, the one place the Brewfile step puts it.
-  test "the agent CLI is read beside brew in the prefix's bin — #{what}" do
-    Given "a prefix holding brew#{" and cursor-agent" if present}, owned by the human"
-    prefix = Dir.mktmpdir
-    brew = File.join(prefix, "bin", "brew")
-    FileUtils.mkdir_p(File.dirname(brew))
-    File.write(brew, "")
-    cli = File.join(prefix, "bin", "cursor-agent")
-    if present
-      File.write(cli, "#!/bin/sh\n")
-      File.chmod(0o755, cli)
-    end
-    runner_dir = Dir.mktmpdir
-    File.write(File.join(runner_dir, ".service"), "actions.runner.d3mlabs-x.mac\n")
-    ui = RecordingUi.new
-    bs = bootstrap(RecordedBootstrapExecutor.new, ui: ui, brew_executable: brew, owner_of: ->(_path) { "human" })
-
-    When "converging the post-enrollment steps"
-    bs.after_enroll!(runner_dir: runner_dir, slot: 1)
-
-    Then "the path is the channel's, and the failed-state note (if any) names the human's dev up"
-    bs.agent_cli_path == cli
-    warnings = ui.rows.select { |row| row.fetch(0) == :note && row.fetch(1).start_with?("{{x}}") }
-    warnings.length == (present ? 0 : 1)
-    warnings.all? { |row| row.fetch(1).include?("`dev up` as human, who owns #{prefix}") }
-
-    Where
-    what                  | present
-    "present: no warning" | true
-    "absent: a warning"   | false
-  end
-
-  test "the agent user is a register-time parameter" do
-    Given "an overridden run-as user"
+  test "the user is the role's — whatever the declaration names" do
+    Given "a role whose job identity is `ci`"
     executor = RecordedBootstrapExecutor.new
 
     When "converging"
-    bootstrap(executor, agent_user: "ci").converge!
+    bootstrap(executor, user: "ci").converge!
 
     Then "every step targets the override"
     executor.runs.fetch(0) ==

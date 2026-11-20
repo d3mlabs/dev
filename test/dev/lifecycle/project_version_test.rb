@@ -54,6 +54,32 @@ class Dev::Lifecycle::ProjectVersionTest < Minitest::Test
     "v1.1.0"     | nil
   end
 
+  test "series_tag names a version's major: #{version} → #{expected}" do
+    Expect
+    Dev::Lifecycle::ProjectVersion.series_tag(version) == expected
+
+    Where
+    version  | expected
+    "1.4.2"  | "v1"
+    "0.8.0"  | "v0"
+    "12.0.1" | "v12"
+  end
+
+  test "series_tag refuses a version that is not three numbers — #{version.inspect} names no series" do
+    When
+    Dev::Lifecycle::ProjectVersion.series_tag(version)
+
+    Then
+    error = raises(Dev::Lifecycle::ProjectVersion::NotSemverError)
+    error.message == "#{version.inspect} is not major.minor.patch — a series is a major"
+
+    Where
+    version      | _
+    "1.1"        | nil
+    "3.0.0-rc.1" | nil
+    "v1.1.0"     | nil
+  end
+
   test "Part reads the bump words of `dev release`: #{word.inspect} → #{part.inspect}" do
     Expect
     Dev::Lifecycle::ProjectVersion::Part.try_deserialize(word) == part

@@ -80,8 +80,9 @@ is how `dev up` knows what to upgrade.
 ## Host tooling
 
 An org's `Brewfile`, installed beside `config.yml`, lists tools every
-developer machine needs regardless of project — an agent CLI, say. On
-every `dev up`, before project provisioning, dev:
+developer machine needs regardless of project. What one project's jobs
+need — an agent CLI, say — is that project's own dependency, not the
+org's. On every `dev up`, before project provisioning, dev:
 
 1. runs `brew update`;
 2. upgrades one formula: the `deployment_formula` setting when set, else

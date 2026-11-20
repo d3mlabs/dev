@@ -30,8 +30,8 @@ module Dev
   # runs with the operator's credentials.
   #
   # The runner user is in `docker` (the engine's socket) and the data
-  # root's group (DataRoot::GROUP: one tree, two writers — three on an
-  # agent host, AgentBootstrap::Linux). Its gh login is the machine
+  # root's group (DataRoot::GROUP: one tree, two writers — three on a
+  # host with a job identity, JobIdentity::Linux). Its gh login is the machine
   # user's token, pasted once by the
   # operator on stdin — dev never sees or stores it, and refuses to enroll
   # while the login is missing, naming the command.
@@ -51,8 +51,8 @@ module Dev
   # (`host_name`). Before a hand-over — no prefix, or the operator's own
   # — the rule's default stands.
   #
-  # macOS has no runner user: the service is a per-user LaunchAgent and the
-  # agent user is its own identity there (AgentBootstrap). `for_host`
+  # macOS has no runner user: the service is a per-user LaunchAgent and a
+  # job identity is its own identity there (JobIdentity). `for_host`
   # answers nil and register runs as it always has.
   class RunnerUser
     extend T::Sig
