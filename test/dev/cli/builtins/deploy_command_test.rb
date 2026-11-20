@@ -303,6 +303,58 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     @gh.calls == []
   end
 
+  # A publisher that reads its destination for the dry run (gh's heads
+  # and candidate).
+  class PreviewingPublisher < RecordingPublisher
+    def preview(shipments, channel:, track:)
+      ["Heads: v1 → v1.2.0 (abc123def456); latest v1.2.0", "Candidate: #{shipments.first} → #{channel} on the #{track} track"]
+    end
+  end
+
+  # A publisher whose destination refuses the read the dry run asks for.
+  class RefusingPreviewPublisher < RecordingPublisher
+    class RefusedError < RuntimeError; end
+
+    def preview(shipments, channel:, track:)
+      raise RefusedError, "the forge refused"
+    end
+  end
+
+  test "--dry-run reports the publisher's preview of its destination after the selection — what it holds and what would move (dev#655)" do
+    Given
+    win64 = stamp("cellbound-3d-win64-release")
+    linux64 = stamp("cellbound-3d-linux64-release")
+
+    When
+    execute(command(steam_channel, publishers: { "steam" => PreviewingPublisher.new }), "--dry-run")
+
+    Then
+    @out.string == <<~OUT
+      Deploying steam (testing track) — dry run
+        cellbound-3d-win64-release (1.2.3+#{head}): #{win64.archive}
+        cellbound-3d-linux64-release (1.2.3+#{head}): #{linux64.archive}
+        Heads: v1 → v1.2.0 (abc123def456); latest v1.2.0
+        Candidate: cellbound-3d-win64-release (1.2.3+#{head}) → steam on the testing track
+      Nothing shipped, nothing recorded (--dry-run)
+    OUT
+    @gh.calls == []
+  end
+
+  test "a preview that refuses under --dry-run bubbles without a failed deploy recorded: a dry run records nothing" do
+    Given
+    stamp("cellbound-3d-win64-release")
+    stamp("cellbound-3d-linux64-release")
+
+    When
+    execute(command(steam_channel, publishers: { "steam" => RefusingPreviewPublisher.new }), "--dry-run")
+
+    Then
+    raises(RefusingPreviewPublisher::RefusedError)
+    @out.string.lines.first == "Deploying steam (testing track) — dry run\n"
+    !@out.string.include?("Nothing shipped")
+    @gh.calls == []
+  end
+
   test "a seam that raises is recorded as a failed deploy carrying the error, then the error bubbles" do
     Given "a script that refuses, and a forge that takes the record"
     (@project / "stage.sh").write("exit 7\n")

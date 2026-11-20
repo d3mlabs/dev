@@ -58,6 +58,13 @@ module Dev
       # and the split's hint — nothing deployed, `deploy <channel>
       # --release` ships it. The artifacts cross from the seam to `after`
       # through the env: the template's one channel between the stages.
+      #
+      # A release moves no head. On a project deploying through the gh
+      # channel the forge's latest designation is that channel's head, so
+      # the release is created with `--latest=false` and `deploy gh`
+      # designates it. And a head is only safe on a release the forge has
+      # frozen: the epilogue warns when the release came out mutable,
+      # naming the repository setting that freezes the next one.
       class ReleaseCommand < LifecycleCommand
         extend T::Sig
 
@@ -132,6 +139,9 @@ module Dev
         # @param store [Lifecycle::Store] where `package` leaves the artifacts
         # @param releases [Lifecycle::GithubReleases] the release archive on the forge
         # @param listing [BuildListing] what the usage lists
+        # @param designates_latest [Boolean] whether the forge may designate
+        #   the release its latest; false on a project with a gh channel,
+        #   whose head the designation is
         # @param executor [LifecycleExecutor] runs `package` as itself
         # @param clock [Proc] the manifest's instant (injectable for tests)
         sig do
@@ -142,11 +152,12 @@ module Dev
             store: Lifecycle::Store,
             releases: Lifecycle::GithubReleases,
             listing: BuildListing,
+            designates_latest: T::Boolean,
             executor: LifecycleExecutor,
             clock: T.proc.returns(Time),
           ).void
         end
-        def initialize(release:, cut:, package:, store:, releases:, listing:, executor: LifecycleExecutor.new, clock: -> { Time.now })
+        def initialize(release:, cut:, package:, store:, releases:, listing:, designates_latest: true, executor: LifecycleExecutor.new, clock: -> { Time.now })
           super()
           @release = release
           @cut = cut
@@ -154,6 +165,7 @@ module Dev
           @store = store
           @releases = releases
           @listing = listing
+          @designates_latest = designates_latest
           @executor = executor
           @clock = clock
         end
@@ -237,7 +249,7 @@ module Dev
               ui.spin("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
               page
             end
-            report(env, sha, url, manifest, ui:)
+            report(env, sha, url, manifest, facts: @releases.facts(env.tag), ui:)
           end
         end
 
@@ -327,7 +339,8 @@ module Dev
             plan.resuming ? nil : "Tag #{plan.tag}",
             "Push #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}",
             "Package #{env.builds.map(&:name).join(", ")} at the tag",
-            "Create GitHub release #{plan.tag} and attach #{archives} archive#{"s" unless archives == 1} + #{Lifecycle::Manifest::Release::FILE_NAME}",
+            "Create GitHub release #{plan.tag} and attach #{archives} archive#{"s" unless archives == 1} + " \
+              "#{Lifecycle::Manifest::Release::FILE_NAME}#{" (not latest: `deploy gh` designates it)" unless @designates_latest}",
           ].compact
         end
 
@@ -345,7 +358,9 @@ module Dev
             return found
           end
 
-          ui.spin("Creating GitHub release #{env.tag}") { @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes) }
+          ui.spin("Creating GitHub release #{env.tag}") do
+            @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes, latest: @designates_latest)
+          end
         end
 
         # `--yes`, or the terminal's answer. No terminal is a refusal: a
@@ -387,19 +402,29 @@ module Dev
               "#{artifact ? "the store holds #{artifact.manifest.build_id}" : "it was packaged elsewhere"}; a release attaches what was packaged here"
         end
 
-        # The epilogue: what was released from where, each archive, and the
-        # split's hint — `release` deploys nothing.
+        # The epilogue: what was released from where, each archive, the
+        # warning when the forge left the release mutable, and the split's
+        # hint — `release` deploys nothing.
         #
         # @param env [ReleaseEnv]
         # @param sha [String] the tag's commit
         # @param url [URI] the release's page
         # @param manifest [Lifecycle::Manifest::Release]
+        # @param facts [Lifecycle::GithubReleases::Facts] the release as the forge holds it
         # @param ui [Ui]
         # @return [void]
-        sig { params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, ui: Ui).void }
-        def report(env, sha, url, manifest, ui:)
+        sig do
+          params(env: ReleaseEnv, sha: String, url: URI::Generic, manifest: Lifecycle::Manifest::Release, facts: Lifecycle::GithubReleases::Facts, ui: Ui).void
+        end
+        def report(env, sha, url, manifest, facts:, ui:)
           ui.note("{{v}} {{bold:#{env.tag} released!}} (#{sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}, from #{env.plan.branch}) → #{url}")
           manifest.archives.each { |archive| ui.note("  #{archive.name} (#{archive.build_id})") }
+          unless facts.immutable
+            ui.note(
+              "{{!}} #{env.tag}'s release is mutable: its tag and assets can still change, so no head may point at it — " \
+                "enable immutable releases on the repository (#{Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) before the next release",
+            )
+          end
           ui.note("Nothing deployed — ship it: dev deploy <channel> --release #{env.tag.version}")
         end
       end

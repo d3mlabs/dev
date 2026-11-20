@@ -21,6 +21,8 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
     Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
     Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+    Dev::Deps::Registry::Entry.new(symbol: :gh, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil,
+      publisher: RecordingPublisher, reached_by: Dev::Deps::Registry::Reach::Declaration),
   ].freeze
 
   def pin(name, integration, tap: nil)
@@ -28,11 +30,11 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     Dev::Deps::Dependency.new(name:, integration:, group: :app, version: "1.0", hash: nil, metadata:)
   end
 
-  test "the publishers are the write sides of what deps.lock pins, read once, over the checkout: #{what}" do
+  test "the publishers are the write sides of what deps.lock pins and of the channels dev.yml declares, read once, over the checkout: #{what}" do
     Given "a checkout with that lock"
     root = Pathname(Dir.mktmpdir("project-publishers-"))
     Dev::Deps::Lockfile.new(dir: root).lock(pins.map { |name, integration, tap| pin(name, integration, tap:) })
-    publishers = Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES)
+    publishers = Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, declared:, entries: ENTRIES)
 
     When
     contributed = publishers.contributed
@@ -48,22 +50,25 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     FileUtils.rm_rf(root)
 
     Where
-    what                                  | pins                                                                   | channels          | taps
-    "no lock at all"                      | []                                                                     | []                | []
-    "a pin reaching no publisher"         | [["boost", :cmake]]                                                    | []                | []
-    "a pin through an alias, from a tap"  | [["ruby", :ruby, "d3mlabs/d3mlabs"]]                                   | ["brew"]          | ["d3mlabs/d3mlabs"]
-    "two pins of one type, one tap"       | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["brew-thing", :brew, "d3mlabs/d3mlabs"]] | ["brew"]  | ["d3mlabs/d3mlabs"]
-    "pins from core and from a tap"       | [["jq", :brew], ["ruby", :ruby, "d3mlabs/d3mlabs"]]                    | ["brew"]          | ["d3mlabs/d3mlabs"]
-    "pins from two taps"                  | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["tool", :brew, "acme/tools"]]    | ["brew"]          | ["d3mlabs/d3mlabs", "acme/tools"]
-    "pins of two publishers"              | [["steamworks", :steam], ["ruby", :ruby, "d3mlabs/d3mlabs"]]           | ["brew", "steam"] | ["d3mlabs/d3mlabs"]
+    what                                  | pins                                                                   | declared        | channels          | taps
+    "no lock at all"                      | []                                                                     | []              | []                | []
+    "a pin reaching no publisher"         | [["boost", :cmake]]                                                    | []              | []                | []
+    "a pin through an alias, from a tap"  | [["ruby", :ruby, "d3mlabs/d3mlabs"]]                                   | []              | ["brew"]          | ["d3mlabs/d3mlabs"]
+    "two pins of one type, one tap"       | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["brew-thing", :brew, "d3mlabs/d3mlabs"]] | []      | ["brew"]          | ["d3mlabs/d3mlabs"]
+    "pins from core and from a tap"       | [["jq", :brew], ["ruby", :ruby, "d3mlabs/d3mlabs"]]                    | []              | ["brew"]          | ["d3mlabs/d3mlabs"]
+    "pins from two taps"                  | [["ruby", :ruby, "d3mlabs/d3mlabs"], ["tool", :brew, "acme/tools"]]    | []              | ["brew"]          | ["d3mlabs/d3mlabs", "acme/tools"]
+    "pins of two publishers"              | [["steamworks", :steam], ["ruby", :ruby, "d3mlabs/d3mlabs"]]           | []              | ["brew", "steam"] | ["d3mlabs/d3mlabs"]
+    "a declared gh channel, no lock"      | []                                                                     | ["gh"]          | ["gh"]            | []
+    "a declared gh channel and a pin"     | [["ruby", :ruby, "d3mlabs/d3mlabs"]]                                   | ["gh", "stage"] | ["brew", "gh"]    | ["d3mlabs/d3mlabs"]
+    "a declared channel no table ships"   | []                                                                     | ["steam"]       | []                | []
   end
 
-  test "reach is the table's map of channel to the pins that contribute it, independent of the lock (dev#509)" do
+  test "reach is the table's map of channel to the pins that contribute it, independent of the lock (dev#509) and silent on channels reached by declaration" do
     Given "a checkout with no lock"
     root = Pathname(Dir.mktmpdir("project-publishers-"))
 
     Expect
-    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES).reach == { "brew" => %i[brew ruby], "steam" => %i[steam] }
+    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, declared: ["gh"], entries: ENTRIES).reach == { "brew" => %i[brew ruby], "steam" => %i[steam] }
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -75,7 +80,7 @@ class Dev::Cli::ProjectPublishersTest < Minitest::Test
     (root / "build-deps.lock").write("")
 
     When
-    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, entries: ENTRIES).contributed
+    Dev::Cli::ProjectPublishers.new(root:, ui: Dev::NoUi.new, declared: [], entries: ENTRIES).contributed
 
     Then
     raises Dev::Deps::Lockfile::RetiredBuildLockError

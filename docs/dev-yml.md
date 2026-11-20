@@ -231,6 +231,12 @@ project does not declare appears as is, accepting every packageable build.
 A declared channel with neither `run:` nor a matching publisher is refused
 at load.
 
+One publisher is reached by the declaration itself, with no pin: `gh`
+ships to the project's own GitHub releases, moving the series tag
+`v<major>` and the latest designation ([gh](lifecycle.md#gh)). Declaring
+a `gh` channel without `run:` is what contributes it; a project that
+declares none has no `deploy gh`.
+
 ### The channel script's environment
 
 | Variable | Meaning |

@@ -18,6 +18,7 @@ require "dev/cli/command_runner"
 require "dev/cli/command_service"
 require "dev/cli/dependency_service"
 require "dev/cli/deploy_selector"
+require "dev/deps/gh_publisher"
 require "dev/deps/lockfile"
 require "dev/deps/staleness"
 require "dev/cli/dispatch_resolver"
@@ -311,7 +312,7 @@ module Dev
       def bind_placements(manifest, project)
         binder = PlacementBinder.new(images: project.project_images)
         targets = binder.bind_targets(manifest.targets)
-        project_publishers = ProjectPublishers.new(root: project.root, ui: @ui)
+        project_publishers = ProjectPublishers.new(root: project.root, ui: @ui, declared: manifest.channels.keys)
         publishers = project_publishers.contributed
         channel_binder = ChannelBinder.new(publishers:, reach: project_publishers.reach, targets: manifest.targets.values)
         channels = channel_binder.bind(manifest.channels)
@@ -565,6 +566,10 @@ module Dev
             store:,
             releases:,
             listing:,
+            # On a project deploying through the gh channel, the forge's
+            # latest designation is that channel's head: `deploy gh` moves
+            # it, so the cut must not.
+            designates_latest: !bindings.channels.key?(Deps::GhPublisher::CHANNEL),
           )
         end
         return verbs if bindings.channels.empty?
