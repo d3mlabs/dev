@@ -1461,6 +1461,31 @@ class Dev::Deps::BrewIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "keg answers a pin's Cellar keg by locked version, brew's revision suffix included; no keg is KegNotFoundError" do
+    Given "a Cellar with ruby@4.0.6 at a revised keg and no python"
+    dir = Dir.mktmpdir("dev-brew-int-test-")
+    prefix = File.join(dir, "homebrew")
+    lay_cellar(prefix, "ruby@4.0.6" => ["4.0.6_1"])
+    integration = Dev::Deps::BrewIntegration.new(
+      repository: Dev::Deps::BrewRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir), brew_prefix: prefix,
+    )
+    ruby = Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app,
+      version: "4.0.6", hash: nil, metadata: { "version_suffix" => "4.0.6", "tap" => "d3mlabs/d3mlabs" })
+    python = Dev::Deps::Dependency.new(name: "python", integration: :python, group: :app,
+      version: "3.12.8", hash: nil, metadata: { "version_suffix" => "3.12" })
+
+    When
+    keg = integration.keg(ruby)
+    error = assert_raises(Dev::Deps::BrewIntegration::KegNotFoundError) { integration.keg(python) }
+
+    Then
+    keg == Pathname(File.join(prefix, "Cellar", "ruby@4.0.6", "4.0.6_1"))
+    error.message.include?("python@3.12 3.12.8")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all raises when an interpreter pin's keg is not in the Cellar" do
     Given "a locked Python whose keg brew does not have"
     dir = Dir.mktmpdir("dev-brew-int-test-")
