@@ -2,14 +2,14 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/agent_bootstrap"
-require "dev/agent_bootstrap/darwin"
-require "dev/agent_bootstrap/linux"
+require "dev/job_identity"
+require "dev/job_identity/darwin"
+require "dev/job_identity/linux"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/deps/dependency"
 require "dev/host_reach"
-require "dev/label_contracts"
+require "dev/runner_role_aliases"
 require "dev/runner_status"
 require "dev/runner_user"
 require "dev/ui"
@@ -48,7 +48,7 @@ end unless defined?(CannedStatusExecutor)
 class CannedRegistry
   attr_reader :group_asks
 
-  PINS = Dev::LabelContracts::AI_FLOW_WORKFLOWS
+  PINS = Dev::RunnerRoleAliases::WORKFLOWS_AT_MAIN
 
   class << self
     def group(id:, name:, visibility: "selected", pinned: false)
@@ -105,7 +105,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   # writes, so it plays the runner user every slot is expected to run as.
   ME = Etc.getpwuid(Process.uid).name
 
-  AGENT_LABELS = Dev::LabelContracts::AI_FLOW_AGENT_LABELS
+  AGENT_LABELS = Dev::RunnerRoleAliases::AGENT.labels
 
   ALL_GREEN_PROBES = {
     ["id", "-u", "ai-agent"] => true,
@@ -119,8 +119,8 @@ class Dev::RunnerStatusTest < Minitest::Test
   # How the agent lists its own rules through the runner → agent edge.
   AGENT_SUDO_LIST = ["sudo", "-n", "-u", "ai-agent", "sudo", "-n", "-l"].freeze
 
-  # The brew a Mac whose prefix is the operator's has; the bootstrap's edge
-  # is read from it (its prefix owner answered as the bootstrap's runner
+  # The brew a Mac whose prefix is the operator's has; the identity's edge
+  # is read from it (its prefix owner answered as the identity's runner
   # user by build_status — "human" in the tests that read the edge).
   HUMAN_BREW = "/opt/homebrew/bin/brew"
 
@@ -128,7 +128,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   AGENT_RULES_HEADER = "User ai-agent may run the following commands on mac:\n"
 
   # The one reason the drop-in grants the agent no brew (dev#569).
-  NO_BREW_EDGE_REASON = Dev::AgentBootstrap::NO_BREW_EDGE.reason
+  NO_BREW_EDGE_REASON = Dev::JobIdentity::NO_BREW_EDGE.reason
 
   # The box's brew by realpath — the path a dev#330-era drop-in named.
   LINUXBREW_REALPATH = "/home/linuxbrew/.linuxbrew/Homebrew/bin/brew"
@@ -361,8 +361,73 @@ class Dev::RunnerStatusTest < Minitest::Test
       [:note, "{{x}} reach: jobs from d3mlabs/dev", 1],
       [:note, "#{INDENT}via any workflow — the agent role expects #{PINS_CLAUSE}", 1],
       [:note, "#{INDENT}runs-on ai-ask | ai-edit | ai-split | ai-build | ai-learn", 1],
-      [:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility selected, not restricted to workflows) — re-run `dev runner register --org --role agent` from a checkout at d3mlabs", 1],
+      [:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility selected, not restricted to workflows) — re-run `dev runner register --org --role agent` from the checkout whose dev.yml declares agent", 1],
     ]
+  end
+
+  # dev#657: a role is its project's declaration, so away from the
+  # declaring checkout (and past the aliases) a slot is known by its pool
+  # alone — its reach read, not judged.
+  test "a family of a role no declaration at hand names is known by its pool: the reach is a ? fact with the clauses as GitHub has them" do
+    Given "a slot in a pinned group `ue-farm`, status run with no declaration of such a role"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs", name: "box-ue-farm", pool: "ue-farm")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
+    group = Dev::RunnerRegistry::Group.new(id: 9, name: "ue-farm", visibility: "selected", allows_public_repositories: false,
+      restricted_to_workflows: true, selected_workflows: ["d3mlabs/cellbound-3d/.github/workflows/build.yml@refs/tags/v3"])
+    registry = CannedRegistry.new(group: group, repos: ["d3mlabs/cellbound-3d"], &responder)
+    status = build_status(ui: ui, home: home, registry: registry, roles: {})
+
+    When
+    status.report
+
+    Then "the frame is named for the pool; the reach is unknown, pointing at the declaring checkout; the slot facts are the slot's"
+    rows_from(ui, "ue-farm · 1 slot · d3mlabs") == [
+      [:frame, "ue-farm · 1 slot · d3mlabs", 0],
+      [:note, "{{?}} reach: jobs from d3mlabs/cellbound-3d — unverified: no declaration of a role in group `ue-farm` at hand " \
+              "(run `dev runner status` from the checkout whose dev.yml declares it)", 1],
+      [:note, "#{INDENT}via d3mlabs/cellbound-3d/build.yml@v3 only", 1],
+      [:note, "#{INDENT}runs-on ue | gpu", 1],
+      [:note, "{{v}} box-ue-farm — online · service installed · runs as #{ME}", 1],
+      [:note, "posture: 1 slot · 3 facts · 0 drifted", 0],
+    ]
+  end
+
+  test "the same family from the declaring checkout is held against its declaration, pins at the project's series and all" do
+    Given "the ue-farm role as cellbound-3d's dev.yml declares it, bound to the repo at v3"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs", name: "box-ue-farm", pool: "ue-farm")
+    declaration = Dev::RunnerRole::Declaration.new(
+      name: "ue-farm", labels: %w[ue gpu], group: "ue-farm", workflows: [".github/workflows/build.yml"], job_identity: "ue-builder",
+    )
+    role = declaration.bind(repo: "d3mlabs/cellbound-3d", version: "3.1.0")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
+    group = Dev::RunnerRegistry::Group.new(id: 9, name: "ue-farm", visibility: "selected", allows_public_repositories: false,
+      restricted_to_workflows: true, selected_workflows: ["d3mlabs/cellbound-3d/.github/workflows/build.yml@refs/tags/v3"])
+    registry = CannedRegistry.new(group: group, repos: ["d3mlabs/cellbound-3d"], &responder)
+    shared_root = Dir.mktmpdir
+    executor = CannedStatusExecutor.new(
+      probe_results: { ["id", "-u", "ue-builder"] => true, ["sudo", "-n", "-u", "ue-builder", "true"] => false },
+      capture_results: cooperative_work_trees(home, "actions-runner-ue-farm"),
+    )
+    status = build_status(ui: ui, home: home, registry: registry, roles: { "ue-farm" => role }, executor: executor, shared_root: shared_root)
+
+    When
+    status.report
+
+    Then "the reach reads ok against the declaration, and the host frame carries the declared job identity's facts"
+    rows_from(ui, "ue-farm · 1 slot · d3mlabs").take(5) == [
+      [:frame, "ue-farm · 1 slot · d3mlabs", 0],
+      [:note, "{{v}} reach: jobs from d3mlabs/cellbound-3d", 1],
+      [:note, "#{INDENT}via d3mlabs/cellbound-3d/build.yml@v3 only", 1],
+      [:note, "#{INDENT}runs-on ue | gpu", 1],
+      [:note, "{{v}} box-ue-farm — online · service installed · runs as #{ME} · _work shared with group dev", 1],
+    ]
+    ui.rows.include?([:note, "{{v}} job identity ue-builder exists", 1])
+    ui.rows.include?([:note, "{{x}} runner → ue-builder sudoers edge missing (#{ME} → ue-builder, NOPASSWD:SETENV) — ue-builder's rules cannot be read without it (run `dev runner register`)", 1])
+    ui.rows.none? { |_kind, text, _depth| text.include?("job identity ai-agent") }
   end
 
   test "an agent family's group drifted to every repo: the from clause names the expected shape" do
@@ -379,7 +444,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     ui.rows.include?([:note, "{{x}} reach: jobs from every d3mlabs repo — the agent role expects a selection", 1])
-    ui.rows.include?([:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility all, restricted to 2 workflows) — re-run `dev runner register --org --role agent` from a checkout at d3mlabs", 1])
+    ui.rows.include?([:note, "#{INDENT}cause: slots sit in org group `ai-flow` (visibility all, restricted to 2 workflows) — re-run `dev runner register --org --role agent` from the checkout whose dev.yml declares agent", 1])
   end
 
   test "a build host found in an org group that pins workflows (dev#471): the via clause drifts and the group is named as the cause" do
@@ -705,7 +770,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     reach = typed_mock(Dev::HostReach)
     reach.expects(:check).never
     executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => false, as_runner("gh", "auth", "status") => false })
-    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
+    status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach, operator: "human")
 
     When
     status.report
@@ -814,7 +879,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     out.string.include?("✓ svc-runner can read d3mlabs/unreal-engine (this checkout's lock)")
   end
 
-  test "without a host identity (a Mac) the host frame has no runner-user facts, and a slot is expected to run as the bootstrap's runner user" do
+  test "without a host identity (a Mac) the host frame has no runner-user facts, and a slot is expected to run as the operator" do
     Given
     ui = RecordingUi.new
     home = Dir.mktmpdir
@@ -953,7 +1018,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   # --- the host frame: the agent host --------------------------------------
 
   test "an agent family puts the agent host's facts in the host frame, and each slot's _work tree in its own line" do
-    Given "an agent-labeled enrollment over an all-green host"
+    Given "an agent enrollment over an all-green host"
     ui = RecordingUi.new
     home = Dir.mktmpdir
     runner_dir = write_runner(home, "actions-runner-cellbound3d", scope: "d3mlabs", name: "mac-box")
@@ -967,7 +1032,7 @@ class Dev::RunnerStatusTest < Minitest::Test
         AGENT_SUDO_LIST => AGENT_RULES_HEADER,
       },
     )
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 42, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(
       ui: ui, home: home, registry: CannedRegistry.new(group: CannedRegistry::AI_FLOW_GROUP, repos: ["d3mlabs/dev"], &responder),
       executor: executor, shared_root: shared_root,
@@ -980,10 +1045,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     Then "every agent host fact reads ok inside the host frame"
     ui.rows.take(10) == [
       [:frame, "mac1 · darwin · launchd", 0],
-      [:note, "{{v}} agent user ai-agent exists", 1],
+      [:note, "{{v}} job identity ai-agent exists", 1],
       [:note, "{{v}} human in the dev group", 1],
       [:note, "{{v}} ai-agent in the dev group", 1],
-      [:note, "{{v}} runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)", 1],
+      [:note, "{{v}} runner → ai-agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)", 1],
       [:note, "{{v}} no brew edge (#{NO_BREW_EDGE_REASON})", 1],
       [:note, "{{v}} data root #{shared_root} shared with group dev (setgid)", 1],
       [:note, "{{v}} brew lock dir /opt/homebrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)", 1],
@@ -993,7 +1058,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     # the slot's _work tree is the slot's fact, in the family frame, and it
     # holds (the slot's one finding is that it runs as this test's user,
-    # not the bootstrap's "human")
+    # not the identity's "human")
     ui.rows.none? { |_kind, text, depth| depth == 1 && text.include?("_work") && !text.include?("mac-box") }
     ui.rows.none? { |_kind, text, _depth| text.include?("_work tree not cooperative") }
     ui.rows.none? { |_kind, text, _depth| text.include?("{{x}}") && !text.include?("mac-box") }
@@ -1003,7 +1068,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   # probes through the Linux adapter — the runner user is dev#310's, the
   # engine fact says there is none to have.
   test "inspects a Linux agent host through the Linux adapter: the same facts, the runner user as the grantor, no engine" do
-    Given "an agent-labeled enrollment on an all-green Linux host, for a repo that pins an image"
+    Given "an agent enrollment on an all-green Linux host, for a repo that pins an image"
     out = StringIO.new
     home = Dir.mktmpdir
     runner_dir = write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
@@ -1019,29 +1084,29 @@ class Dev::RunnerStatusTest < Minitest::Test
         AGENT_SUDO_LIST => AGENT_RULES_HEADER,
       },
     )
-    bootstrap = Dev::AgentBootstrap::Linux.new(
-      runner_user: "runner", executor: executor, data_root: data_root, tap: nil,
+    identity = Dev::JobIdentity::Linux.new(
+      user: "ai-agent", runner_user: "runner", executor: executor, data_root: data_root, tap: nil,
       brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: ->(_path) { "runner" },
     )
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     registry = CannedRegistry.new(group: CannedRegistry::AI_FLOW_GROUP, repos: ["d3mlabs/dev"], &responder)
-    status = build_status(out: out, home: home, registry: registry, executor: executor, bootstrap: bootstrap, container_required: true)
+    status = build_status(out: out, home: home, registry: registry, executor: executor, identity: identity, container_required: true)
 
     When
     status.report
 
     Then "every host fact reads ok but the engine, which names where the agent runs instead"
-    out.string.include?("✓ agent user ai-agent exists")
+    out.string.include?("✓ job identity ai-agent exists")
     out.string.include?("✓ runner in the dev group")
     out.string.include?("✓ ai-agent in the dev group")
-    out.string.include?("✓ runner → agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("✓ runner → ai-agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)")
     out.string.include?("✓ no brew edge (#{NO_BREW_EDGE_REASON})")
     out.string.include?("✓ data root #{data_root} shared with group dev (setgid)")
     out.string.include?("✓ brew lock dir /home/linuxbrew/.linuxbrew/var/homebrew/locks shared with group dev (setgid, locks group-writable)")
-    out.string.include?("✗ agent engine: ")
+    out.string.include?("✗ engine: ")
     out.string.include?("inside the project's container")
     !out.string.include?("_work tree not cooperative")
-    out.string.scan("✗ agent engine").length == 1
+    out.string.scan("✗ engine:").length == 1
   end
 
   # dev#365 / dev#569: the drop-in is root-owned 0440, so the agent's rules
@@ -1050,7 +1115,7 @@ class Dev::RunnerStatusTest < Minitest::Test
   # runs brew as anyone, whatever its tags or path (a drop-in from before
   # the edge was retired, or a realpath one), is drift register rewrites.
   test "the agent's own sudo rules decide the brew edge fact — #{what}" do
-    Given "an agent-labeled enrollment on a host where the agent's rules list #{what}"
+    Given "an agent enrollment on a host where the agent's rules list #{what}"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
@@ -1058,14 +1123,14 @@ class Dev::RunnerStatusTest < Minitest::Test
       probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => true },
       capture_results: { AGENT_SUDO_LIST => rules },
     )
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: HUMAN_BREW, runner_user: "human")
 
     When
     status.report
 
     Then "the runner → agent edge reads ok, and the brew edge line names the shape found"
-    out.string.include?("✓ runner → agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
+    out.string.include?("✓ runner → ai-agent sudoers edge (human → ai-agent, NOPASSWD:SETENV)")
     out.string.include?(expected)
 
     Where
@@ -1079,30 +1144,30 @@ class Dev::RunnerStatusTest < Minitest::Test
   end
 
   test "a refused runner → agent probe is the finding: one red line, no prompt, and the agent's rules are not read" do
-    Given "an agent-labeled enrollment on a host whose drop-in grants the operator nothing"
+    Given "an agent enrollment on a host whose drop-in grants the operator nothing"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
     executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => false })
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: HUMAN_BREW)
 
     When
     status.report
 
     Then
-    out.string.include?("✗ runner → agent sudoers edge missing (#{ME} → ai-agent, NOPASSWD:SETENV) — the agent's rules cannot be read without it (run `dev runner register`)")
+    out.string.include?("✗ runner → ai-agent sudoers edge missing (#{ME} → ai-agent, NOPASSWD:SETENV) — ai-agent's rules cannot be read without it (run `dev runner register`)")
     !out.string.include?("brew edge (")
     !out.string.include?("brew edge present")
   end
 
   test "a brewless host reads the same no-brew-edge fact: the posture does not depend on the prefix" do
-    Given "an agent-labeled enrollment on a brewless host"
+    Given "an agent enrollment on a brewless host"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
     executor = CannedStatusExecutor.new(probe_results: { ["sudo", "-n", "-u", "ai-agent", "true"] => true })
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), executor: executor, brew: nil)
 
     When
@@ -1114,11 +1179,11 @@ class Dev::RunnerStatusTest < Minitest::Test
   end
 
   test "flags every missing agent host fact, the slot's _work tree among the slot's own" do
-    Given "an agent-labeled enrollment over a cold host"
+    Given "an agent enrollment over a cold host"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-learn"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(
       out: out, home: home, registry: CannedRegistry.new(group: CannedRegistry::AI_FLOW_GROUP, repos: ["d3mlabs/dev"], &responder),
       shared_root: File.join(Dir.mktmpdir, "absent"),
@@ -1134,11 +1199,11 @@ class Dev::RunnerStatusTest < Minitest::Test
   end
 
   test "the engine line appears only when the served repo builds in a container" do
-    Given "an agent-labeled enrollment without a container"
+    Given "an agent enrollment without a container"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-x", scope: "d3mlabs", name: "box")
-    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-build"], status: "online") }
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     status = build_status(out: out, home: home, registry: CannedRegistry.new(&responder), container_required: false)
 
     When
@@ -1160,12 +1225,12 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
-    !out.string.include?("agent user")
+    !out.string.include?("job identity")
     !out.string.include?("_work")
   end
 
   test "the agent host's facts are inspected when the agent user is on the host, with no agent family enrolled" do
-    Given "an orchestrator-only host whose agent user exists (register bootstrapped it; the agent slots were retired)"
+    Given "an orchestrator-only host whose agent user exists (register converged it; the agent slots were retired)"
     out = StringIO.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
@@ -1177,8 +1242,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "the agent host facts land, the user green and the rest red"
-    out.string.include?("✓ agent user ai-agent exists")
-    out.string.include?("✗ runner → agent sudoers edge missing")
+    out.string.include?("✓ job identity ai-agent exists")
+    out.string.include?("✗ runner → ai-agent sudoers edge missing")
   end
 
   # --- --check (dev#571): the host's posture alone, GitHub not asked ---------
@@ -1204,10 +1269,11 @@ class Dev::RunnerStatusTest < Minitest::Test
         AGENT_SUDO_LIST => AGENT_RULES_HEADER,
       },
     )
-    bootstrap = Dev::AgentBootstrap::Linux.new(
-      runner_user: "runner", executor: executor, data_root: data_root, tap: nil, brew_executable: nil, owner_of: ->(_path) { "runner" },
+    identity = Dev::JobIdentity::Linux.new(
+      user: "ai-agent", runner_user: "runner", executor: executor, data_root: data_root, tap: nil, brew_executable: nil,
+      owner_of: ->(_path) { "runner" },
     )
-    status = build_status(ui: ui, home: home, registry: registry, executor: executor, bootstrap: bootstrap, host: "box", host_os: "linux")
+    status = build_status(ui: ui, home: home, registry: registry, executor: executor, identity: identity, host: "box", host_os: "linux")
 
     When
     status.check
@@ -1215,10 +1281,10 @@ class Dev::RunnerStatusTest < Minitest::Test
     Then "the ledger is the host frame's facts and the posture; the slots are counted, not inspected"
     ui.rows == [
       [:frame, "box · linux · systemd", 0],
-      [:note, "{{v}} agent user ai-agent exists", 1],
+      [:note, "{{v}} job identity ai-agent exists", 1],
       [:note, "{{v}} runner in the dev group", 1],
       [:note, "{{v}} ai-agent in the dev group", 1],
-      [:note, "{{v}} runner → agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)", 1],
+      [:note, "{{v}} runner → ai-agent sudoers edge (runner → ai-agent, NOPASSWD:SETENV)", 1],
       [:note, "{{v}} no brew edge (#{NO_BREW_EDGE_REASON})", 1],
       [:note, "{{v}} data root #{data_root} shared with group dev (setgid)", 1],
       [:note, "{{v}} no org Brewfile shipped (nothing to check)", 1],
@@ -1239,7 +1305,7 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then "the host frame and the posture were rendered before the raise, and the message names the count"
     ui.rows.fetch(0) == [:frame, "mac1 · darwin · launchd", 0]
-    ui.rows.include?([:note, "{{x}} agent user ai-agent exists", 1])
+    ui.rows.include?([:note, "{{x}} job identity ai-agent exists", 1])
     ui.rows.last == [:note, "posture: 1 slot · 6 facts · 5 drifted", 0]
     error.message == "host posture: 5 of 6 facts drifted — the red lines above name each remedy (`dev runner register` converges the host; `dev up` the tooling)"
   end
@@ -1276,8 +1342,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     error = assert_raises(Dev::RunnerStatus::PostureDriftError) { status.check }
 
     Then
-    out.string.include?("✓ agent user ai-agent exists")
-    out.string.include?("✗ runner → agent sudoers edge missing")
+    out.string.include?("✓ job identity ai-agent exists")
+    out.string.include?("✗ runner → ai-agent sudoers edge missing")
     error.message.start_with?("host posture: ")
   end
 
@@ -1292,7 +1358,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.check
 
     Then
-    !out.string.include?("agent user")
+    !out.string.include?("job identity")
     out.string.include?("posture: 1 slot · 1 fact · 0 drifted")
   end
 
@@ -1403,7 +1469,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     dir
   end
 
-  # The Darwin bootstrap's `_work` stat answers for cooperative trees under
+  # The Darwin identity's `_work` stat answers for cooperative trees under
   # each of the dirs, created on the way.
   def cooperative_work_trees(home, *dir_names)
     dir_names.to_h do |dir_name|
@@ -1449,24 +1515,29 @@ class Dev::RunnerStatusTest < Minitest::Test
     }.merge(overrides))
   end
 
-  # The agent host bootstrap status reads its facts through: by default a
+  # The job identity status reads a user's facts through: by default a
   # Mac's, over the same canned executor, with `runner_user` as the runner
   # user — this test's user by default, since it owns the enrollment dirs;
-  # "human" where the sudoers edge's grantor must differ from the agent —
-  # a brew (if any) whose prefix is that user's, and no tap.
-  def darwin_bootstrap(executor, shared_root:, brew:, runner_user:)
-    Dev::AgentBootstrap::Darwin.new(
-      runner_user: runner_user, executor: executor, data_root: shared_root,
+  # "human" where the sudoers edge's grantor must differ from the identity
+  # — a brew (if any) whose prefix is that user's, and no tap.
+  def darwin_identity(user, executor, shared_root:, brew:, runner_user:)
+    Dev::JobIdentity::Darwin.new(
+      user: user, runner_user: runner_user, executor: executor, data_root: shared_root,
       home_dev: File.join(Dir.mktmpdir, "absent"), launch_agents_dir: Dir.mktmpdir,
       brew_executable: brew, owner_of: ->(_path) { runner_user }, tap: nil,
     )
   end
 
+  # The roles at hand default to the aliases — ai-flow's agent and
+  # orchestrator as they were builtin — so a host's slots read as they did;
+  # `identity:` is one adapter for every user (a Linux host's), else the
+  # Mac's per user. The operator is the runner user on a Mac: the same name
+  # by default, since every slot is expected to run as it.
   def build_status(out: StringIO.new, ui: Dev::NoUi.new(out: out), home: Dir.mktmpdir, registry: CannedRegistry.new,
-                   executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil, runner_user: ME,
-                   bootstrap: darwin_bootstrap(executor, shared_root: shared_root, brew: brew, runner_user: runner_user), brewfile_path: nil,
+                   executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil, runner_user: ME, identity: nil,
+                   roles: Dev::RunnerRoleAliases::ALL, brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach },
-                   wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: "human")
+                   wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: runner_user)
     # :default leaves RunnerStatus's own reach factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     Dev::RunnerStatus.new(
@@ -1483,7 +1554,8 @@ class Dev::RunnerStatusTest < Minitest::Test
       host: host,
       host_os: host_os,
       host_identity: host_identity,
-      bootstrap: bootstrap,
+      roles: roles,
+      identity_factory: ->(user) { identity || darwin_identity(user, executor, shared_root: shared_root, brew: brew, runner_user: runner_user) },
       brewfile_path: brewfile_path,
       container_required: container_required,
     )

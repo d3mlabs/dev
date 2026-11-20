@@ -2,4 +2,7 @@
 # sets are disjoint by design), installed by the d3mlabs deployment formula
 # into $(brew --prefix)/etc/dev/Brewfile and converged by `dev up` via
 # brew bundle. See docs/configuration.md, "Host tooling".
-cask "cursor-cli"
+#
+# Empty for now: what a job identity needs on a host beyond dev (an agent
+# CLI, say) is the project declaring the role's to converge, through its
+# own dependencies.

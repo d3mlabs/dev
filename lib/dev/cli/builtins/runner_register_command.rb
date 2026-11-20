@@ -1,15 +1,16 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "dev/agent_bootstrap"
-require "dev/agent_bootstrap/darwin"
 require "dev/cli/command"
 require "dev/data_root"
 require "dev/deps/lockfile"
 require "dev/engine_provisioner"
 require "dev/enrolled_runner"
 require "dev/host_reach"
-require "dev/label_contracts"
+require "dev/job_identity"
+require "dev/job_identity/darwin"
+require "dev/job_identity/linux"
+require "dev/lifecycle/project_version"
 require "dev/linux_data_root_provisioner"
 require "dev/operator_access"
 require "dev/cli/project_manifest"
@@ -20,6 +21,7 @@ require "dev/runner_groups"
 require "dev/runner_registry"
 require "dev/reach"
 require "dev/runner_role"
+require "dev/runner_role_aliases"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
@@ -37,13 +39,13 @@ module Dev
       #
       #   dev runner register                    # the repo's build host; label = the repo name
       #   dev runner register --labels ue-engine # a build host with custom capabilities
-      #   dev runner register --org --role agent # the org agent host, the full ai-flow set (--ai-flow)
-      #   dev runner register --org --role orchestrator --slots 4   # the thin pool
       #   dev runner register --role ue-farm     # a role dev.yml declares under runner_roles:
+      #   dev runner register --org --role agent # a declared role with a group, at the org
       #
       # Scope follows the checkout: a registration is the repo's unless
-      # `--org` puts it at the repo's org, where a pinned role joins its
-      # group. A repo owned by a user account has no org and `--org` is
+      # `--org` puts it at the repo's org, where a declared role with a
+      # group joins it — pinned to the project's own workflows at its
+      # series. A repo owned by a user account has no org and `--org` is
       # refused there. Any role at a public repo at repo scope is refused
       # (Reach::ExposedError). `--slots N` enrolls N runners with the same
       # labels; re-running keeps the count it finds, a smaller N retires the
@@ -53,8 +55,8 @@ module Dev
       # The order of work: the operator's gh login is probed; the engine is
       # brought up when the checkout pins an image; on Linux the runner user
       # is converged (RunnerUser) and inside WSL2 the Windows side
-      # (WslRunnerHost); each advertised label's contract is converged
-      # (LabelContracts); then the enrollment. An existing enrollment at the
+      # (WslRunnerHost); the role's job identity, when it declares one, is
+      # converged (JobIdentity); then the enrollment. An existing enrollment at the
       # scope has its labels amended in place on GitHub; only a scope
       # nothing serves gets the full enrollment (RunnerSetup).
       #
@@ -89,7 +91,8 @@ module Dev
         ORG_FLAG = "--org"
         ROLE_FLAG = "--role"
         LABELS_FLAG = "--labels"
-        AI_FLOW_FLAG = "--ai-flow"
+        # One release's alias of `--role agent` from an ai-flow checkout (RunnerRoleAliases).
+        AI_FLOW_FLAG = RunnerRoleAliases::AI_FLOW_FLAG
         SLOTS_FLAG = "--slots"
         GROUP_FLAG = "--group"
 
@@ -99,7 +102,6 @@ module Dev
         DIR_FLAG = "--dir"
         NAME_FLAG = "--name"
         REPO_FLAG = "--repo"
-        AGENT_USER_FLAG = "--agent-user"
         AS_FLAG = "--as"
         YES_FLAG = "--yes"
 
@@ -131,16 +133,16 @@ module Dev
         # The reach check for an identity; injected for tests.
         ReachFactory = T.type_alias { T.proc.params(identity: Dev::RunnerUser).returns(Dev::HostReach) }
 
-        # Resolves the advertised labels' contracts for the agent user and
-        # the host rule's runner user (nil on a Mac), speaking on the Ui;
-        # injected for tests.
-        ContractsFactory = T.type_alias do
+        # Builds the job identity a role declares, for this host: the user
+        # its jobs run as, spawned from the host rule's runner user (nil on
+        # a Mac, where the operator is), speaking on the Ui; injected for
+        # tests.
+        IdentityFactory = T.type_alias do
           T.proc.params(
-            labels: String,
-            agent_user: T.nilable(String),
+            user: String,
             runner_user: T.nilable(String),
             ui: Ui,
-          ).returns(T::Array[Dev::LabelContracts::AgentHostContract])
+          ).returns(Dev::JobIdentity)
         end
 
         # Answers "owner/repo" for the enclosing checkout, or echoes the
@@ -150,7 +152,7 @@ module Dev
         sig do
           params(
             runner_setup_factory: RunnerSetupFactory,
-            contracts_factory: ContractsFactory,
+            identity_factory: IdentityFactory,
             repo_resolver: RepoResolver,
             discovery: Dev::RunnerDiscovery,
             registry: T.untyped,
@@ -169,8 +171,8 @@ module Dev
           runner_setup_factory: ->(config, repo, org, runner_user, ui) {
             Dev::RunnerSetup.new(config:, repo:, org:, as_user: runner_user&.name, home: runner_user&.home, path: runner_user&.path, ui:)
           },
-          contracts_factory: ->(labels, agent_user, runner_user, ui) {
-            Dev::LabelContracts.for(labels, agent_user: agent_user, runner_user: runner_user, ui: ui)
+          identity_factory: ->(user, runner_user, ui) {
+            Dev::JobIdentity.for_host(user: user, runner_user: runner_user, ui: ui)
           },
           repo_resolver: ->(override) { override || Dev::RunnerSetup.current_repo },
           discovery: Dev::RunnerDiscovery.new,
@@ -201,7 +203,7 @@ module Dev
             Dev::OperatorAccess,
           )
           @runner_setup_factory = runner_setup_factory
-          @contracts_factory = contracts_factory
+          @identity_factory = identity_factory
           @repo_resolver = repo_resolver
           @discovery = discovery
           @registry = registry
@@ -227,30 +229,30 @@ module Dev
           <<~DESC
             Enroll this host as a self-hosted runner in a role, converging its contracts
 
-            Converges (engine, label contracts), then enrolls — or amends an existing
-            enrollment's labels in place. Re-running is the idempotent no-op and the
-            drift repair.
+            Converges (engine, host rule, the role's job identity), then enrolls — or
+            amends an existing enrollment's labels in place. Re-running is the
+            idempotent no-op and the drift repair.
 
             A registration declares the ROLE its slots play; labels, group, scope, name
             and directory derive from it.
 
-              #{RunnerRole::AGENT_NAME.ljust(13)} the ai-flow agent set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}),
-                            the pinned '#{LabelContracts::AI_FLOW_GROUP.name}' group, the agent host bootstrap. --ai-flow is its sugar.
-              #{RunnerRole::ORCHESTRATOR_NAME.ljust(13)} #{LabelContracts::ORCHESTRATOR_LABEL}, its own pinned group. --labels #{LabelContracts::ORCHESTRATOR_LABEL} is its sugar.
               build host    the default: bare register advertises the repo's own label,
-                            --labels a custom set; no group.
-              <dev.yml>     a role this repo declares under runner_roles:
-                            (`ue-farm: { labels: [ue, gpu] }`), enrolled with --role ue-farm.
+                            --labels a custom set; no group, no job identity.
+              <dev.yml>     a role this repo declares under runner_roles:, enrolled with
+                            --role <name>. Its labels; optionally a runner `group:` pinned
+                            to this project's own `workflows:` at the project's series
+                            (v<major>, read from VERSION — never typed), and a
+                            `job_identity:` — the OS user its jobs run as.
 
             Scope follows the checkout: without --org the slots are this repo's — its
             jobs through any of its workflows, no runner group — for every role. --org
-            puts them at the repo's org: agent and orchestrator join their pinned group
-            (the group carries the workflow pin), --labels makes a custom set an org
-            pool. A dev.yml role is always its repo's. A repo owned by a user account
-            has no org, so --org is refused there. --role x with no declaration, or
-            together with --labels, is refused; so is any role at repo scope for a
-            PUBLIC repo, since any of its workflows — a fork PR's included — could
-            then run on this host.
+            puts them at the repo's org: a declared role with a group joins it (the group
+            carries the workflow pin), --labels makes a custom set an org pool in a
+            human's --group. A declared role without a group is always its repo's. A
+            repo owned by a user account has no org, so --org is refused there. --role x
+            with no declaration, or together with --labels, is refused; so is any role
+            at repo scope for a PUBLIC repo, since any of its workflows — a fork PR's
+            included — could then run on this host.
 
             Runner names are <hostname>-<role>[-n] (JPSFF-agent, JPSFF-agent-2, beside
             JPSFF-orchestrator…), the bare hostname for a build host; dirs are
@@ -264,17 +266,16 @@ module Dev
             same labels on all. Re-running keeps the size it finds; a smaller --slots
             retires the surplus (asked first). Which repos may use an org host's slots is
             their runner group, and the repo this registration is for — the checkout's,
-            or --repo's — is admitted to it. Agent labels sit in the '#{LabelContracts::AI_FLOW_GROUP.name}' group,
-            which dev owns: created when missing, pinned to ai-flow's workflows, healed
-            when the console drifted — nothing to remember; its selection is
-            each repo's build concurrency on the host, so admission is deliberate.
-            #{LabelContracts::ORCHESTRATOR_LABEL} sits in its own '#{LabelContracts::ORCHESTRATOR_GROUP.name}' group, same pin, open to
-            every repo (nothing to gate; nothing admitted); mixing the two in --labels is
-            refused — one enrollment, one group. --group names a
-            human's group for other pools. A public repo may only use a pinned group;
-            register refuses otherwise. A repo-scoped enrollment is that repo's alone
-            (cellbound-3d's editor): its own label, which no org slot advertises, so its
-            jobs never pool with the org's; its concurrency is its own --slots.
+            or --repo's — is admitted to it. A declared role's group is dev's: created
+            when missing, pinned to the project's workflows at its series, healed when
+            the console drifted — nothing to remember; a selected group's selection is
+            each repo's build concurrency on the host, so admission is deliberate, and
+            a group declared `visibility: all` is open to every repo (nothing to gate;
+            nothing admitted). --group names a human's group for other pools. A public
+            repo may only use a pinned group; register refuses otherwise. A repo-scoped
+            enrollment is that repo's alone (cellbound-3d's editor): its own label,
+            which no org slot advertises, so its jobs never pool with the org's; its
+            concurrency is its own --slots.
 
             Register never steals a registration. Runner names are unique per scope, and
             `config.sh --replace` would turn GitHub's refusal of a duplicate into a silent
@@ -285,19 +286,11 @@ module Dev
             labels and status: pass --name to enroll beside another family; unregister the
             stale dir when another host took this name after the registration was lost.
 
-            Two kinds of ai-flow host. An agent host (--role agent; --ai-flow, or --labels over
-            #{LabelContracts::AI_FLOW_AGENT_LABELS.join(" ")}) runs the agent: one slot is one agent
-            run, sized for it, and the agent host bootstrap converges. An orchestrator
-            (--role orchestrator) runs `/build --split`'s poll loop — API calls and
-            sleep for a plan's whole critical path — so it is for an always-on thin
-            box: nothing converges beyond the runner host rule, slots are cheap (a
-            listener each), and --ai-flow never includes it, so an agent host does not
-            lose a build slot to it. A host may carry both families at different
-            scopes (the box: its repo-scoped build runner, plus the org's
-            orchestrators); each scope's enrollments are discovered and sized on their
-            own. If the orchestrate job sits at "Waiting for a runner" GitHub says no
-            more than its requested labels: the org's Runners page must list an Idle
-            runner carrying #{LabelContracts::ORCHESTRATOR_LABEL} in the '#{LabelContracts::ORCHESTRATOR_GROUP.name}' group.
+            A host may carry several families at different scopes (the box: its
+            repo-scoped build runner, plus the org's slots of a declared role); each
+            scope's enrollments are discovered and sized on their own. If a job sits at
+            "Waiting for a runner" GitHub says no more than its requested labels: the
+            org's Runners page must list an Idle runner carrying them in the role's group.
 
             Three identities meet in a registration:
               you (gh auth)         mints the registration token — repo admin, or admin:org with --org
@@ -338,7 +331,7 @@ module Dev
               #{runner_user.login_command}
             An enrollment running as anyone else is drift: register offers to retire it
             and enroll fresh as the runner user. On macOS the enrollment is yours (a
-            per-user LaunchAgent); the agent user is the second identity there, and its
+            per-user LaunchAgent); a job identity is the second identity there, and its
             own brew user — register has it trust the deployment's tap the same way.
 
             Inside a WSL2 distro, register also converges what a runner there needs to
@@ -353,34 +346,38 @@ module Dev
             script registered as an administrator takes one UAC prompt. A restart dev asks
             for is yours (`wsl --shutdown`, then `Start-ScheduledTask` or a new logon).
 
-            An agent host is a Mac or a Linux dev host. Agent labels converge the
-            same facts on both: the non-admin agent user (`#{AgentBootstrap::DEFAULT_AGENT_USER}`, --agent-user
-            renames it) in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
-            sudoers edge from the runner user to the agent (NOPASSWD, SETENV — the operator on a
-            Mac, `#{runner_user.name}` on Linux) and no edge back — the agent writes no brew prefix
-            (pins are the dispatcher's, gems the agent's own home), so a brew edge an earlier
-            register wrote is retired; the tap
-            trusted as the agent; the `_work` tree group-writable; and the service env naming
-            the agent user, the group and the slot (#{AgentBootstrap::AGENT_USER_ENV}, #{AgentBootstrap::AGENT_GROUP_ENV},
-            #{AgentBootstrap::RUNNER_SLOT_ENV}) under a 002 umask — a LaunchAgent plist on a Mac, a systemd unit
+            A role with a `job_identity:` runs its jobs as that OS user, on a Mac or a
+            Linux dev host. Register converges the same facts on both: the non-admin
+            user in the data root's `#{DataRoot::GROUP}` group beside the runner user; the one-way
+            sudoers edge from the runner user to it (NOPASSWD, SETENV — the operator on a
+            Mac, `#{runner_user.name}` on Linux) and no edge back — the identity writes no brew
+            prefix (pins are the dispatcher's, gems its own home), so a brew edge an
+            earlier register wrote is retired; the tap trusted as the identity; the
+            `_work` tree group-writable; and the service env naming the user, the group
+            and the slot (#{JobIdentity::AGENT_USER_ENV}, #{JobIdentity::AGENT_GROUP_ENV},
+            #{JobIdentity::RUNNER_SLOT_ENV}) under a 002 umask — a LaunchAgent plist on a Mac, a systemd unit
             drop-in on Linux. A Mac provisions the shared root (#{DataRoot::SHARED_ROOT}) and
-            gives the agent its own colima when the checkout pins an image; a Linux host
-            joins the agent to the root `dev up` made and has no agent engine — an
-            image-built repo's agent runs inside the project's container, so
-            agent labels for such a repo are refused there. A Mac whose shared root is
-            not what `dev runner status` inspects (group `#{DataRoot::GROUP}`, setgid, group-writable
-            throughout — a root from before the one group name, or re-grouped without
-            setgid) is re-granted, tree and all, on its next register.
+            gives the identity its own colima when the checkout pins an image; a Linux host
+            joins the identity to the root `dev up` made and has no engine for it — an
+            image-built repo's agent runs inside the project's container, so such a role
+            for such a repo is refused there. A Mac whose shared root is not what `dev
+            runner status` inspects (group `#{DataRoot::GROUP}`, setgid, group-writable throughout
+            — a root from before the one group name, or re-grouped without setgid) is
+            re-granted, tree and all, on its next register. What the identity needs on
+            the host beyond this (an agent CLI, say) is the declaring project's to
+            converge.
+
+            #{AI_FLOW_FLAG} and --labels #{RunnerRoleAliases::ORCHESTRATOR_LABEL} are one release's aliases for the `agent` and
+            `orchestrator` roles ai-flow's dev.yml declares, pinned at @main as the old
+            builtins were; each warns and names the register run that replaces it.
 
             Examples:
               dev runner register                      # this repo's build host: repo scope, label = the repo name, named <hostname>
               dev runner register --labels ue-engine   # a build host with custom capabilities
-              dev runner register --org --role agent   # the org agent host, the full ai-flow set, named <hostname>-agent (--ai-flow is the same)
-              dev runner register --org --labels ai-build      # an agent host advertising a subset
+              dev runner register --role ue-farm       # a role this repo's dev.yml declares (runner_roles:)
+              dev runner register --org --role agent   # a declared role with a group, at the org, named <hostname>-agent
               dev runner register --org --role agent --slots 3 # three jobs at once; this repo may use them
-              dev runner register --ai-flow --slots 2          # this repo's own agent slots, no group
-              dev runner register --org --role orchestrator --slots 4   # the orchestrator pool, on an always-on thin box
-              dev runner register --role ue-farm               # a role this repo's dev.yml declares (runner_roles:)
+              dev runner register --role agent --slots 2       # this repo's own slots of the role, no group
               dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
           DESC
         end
@@ -393,16 +390,15 @@ module Dev
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
           [
-            Cli::Flag.new(ORG_FLAG, desc: "enroll at the repo's org (needs admin:org): agent and orchestrator join their pinned group there; with --labels, an org pool instead of this repo's runner. Without it the slots are this repo's"),
-            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: #{RunnerRole::BUILTINS.keys.join(" | ")} (builtin, named <host>-<role>), or a role dev.yml declares under runner_roles:; default: this repo's build host"),
-            Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels for a build host; default: the repo's name. An agent or orchestrator label is that role's sugar"),
-            Cli::Flag.new(AI_FLOW_FLAG, desc: "--role #{RunnerRole::AGENT_NAME}: the agent host's ai-flow label set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); the orchestrator pool is --role #{RunnerRole::ORCHESTRATOR_NAME}"),
+            Cli::Flag.new(ORG_FLAG, desc: "enroll at the repo's org (needs admin:org): a declared role with a group joins it there; with --labels, an org pool instead of this repo's runner. Without it the slots are this repo's"),
+            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: a role this checkout's dev.yml declares under runner_roles: (named <host>-<role>); default: this repo's build host"),
+            Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels for a build host; default: the repo's name"),
+            Cli::Flag.new(AI_FLOW_FLAG, desc: "one release's alias for --role #{RunnerRoleAliases::AGENT.name} from an ai-flow checkout (warns)"),
             Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
-            Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group the slots join (made once in the org's settings); agent labels imply '#{LabelContracts::AI_FLOW_GROUP.name}', #{LabelContracts::ORCHESTRATOR_LABEL} implies '#{LabelContracts::ORCHESTRATOR_GROUP.name}'; default: #{DEFAULT_GROUP}"),
+            Cli::Flag.new(GROUP_FLAG, takes_value: true, desc: "--org: the runner group a build host's slots join (made once in the org's settings); a declared role's group is its own; default: #{DEFAULT_GROUP}"),
             Cli::Flag.new(DIR_FLAG, takes_value: true, desc: "the runner directory (one slot); default: actions-runner-<role> under the enrollment owner's home (a build host: -<first label>), -<n> per further slot"),
             Cli::Flag.new(NAME_FLAG, takes_value: true, desc: "the runner's name on GitHub (slot 1; further slots are <name>-<n>); default: <hostname>-<role>, the bare hostname for a build host. A name another family holds at the scope is refused, never replaced"),
             Cli::Flag.new(REPO_FLAG, takes_value: true, desc: "enroll for owner/repo instead of the enclosing checkout"),
-            Cli::Flag.new(AGENT_USER_FLAG, takes_value: true, desc: "the OS user agent labels run the agent as; default: #{AgentBootstrap::DEFAULT_AGENT_USER}"),
             Cli::Flag.new(AS_FLAG, takes_value: true, desc: "Linux: the OS user the runner service runs as; default: the owner of brew's prefix once a register handed it over, #{Dev::RunnerUser::DEFAULT_NAME} before"),
             Cli::Flag.new(YES_FLAG, desc: "answer yes without asking: unregister superseded enrollments and surplus slots, leave the org's pool"),
           ]
@@ -426,7 +422,6 @@ module Dev
           # The group is an org-side contract: a pinned role registered at
           # its repo joins none.
           contract = org ? role.group : nil
-          labels = role.labels.join(",")
           config = RunnerSetupConfig.new(
             role: role,
             dir: args.value(DIR_FLAG),
@@ -446,8 +441,8 @@ module Dev
 
           container = context.project&.project_images&.containerized? || false
           engine = context.project&.engine
-          # The engine this host will build in, sized for this repo, before any
-          # label contract (whose agent-host steps assume an engine exists).
+          # The engine this host will build in, sized for this repo, before
+          # the job identity (whose engine step assumes an engine exists).
           @engine_provisioner.provision!(resources: engine) if container
 
           # The host rule: who the enrollment belongs to. Its sudo work rides
@@ -472,23 +467,12 @@ module Dev
           # down at the next reboot is not one to enroll on.
           @wsl_runner_host&.converge!(resources: engine)
 
-          # The agent host contract spawns the agent from the enrolling
-          # user's service: the runner user on Linux, the operator on a Mac.
-          # Its frame is named for the agent user, and opens only when there
-          # is a contract to converge in it.
-          contracts = @contracts_factory.call(labels, args.value(AGENT_USER_FLAG), runner_user&.name, context.ui)
-          unless contracts.empty?
-            context.ui.frame("Agent host (#{args.value(AGENT_USER_FLAG) || Dev::AgentBootstrap::DEFAULT_AGENT_USER})") do
-              contracts.each do |contract|
-                contract.converge!(
-                  container: container,
-                  cpus: engine&.cpus,
-                  memory_gib: engine&.memory_gib,
-                  disk_gib: engine&.disk_gib,
-                )
-              end
-            end
-          end
+          # The role's job identity, spawned from the enrolling user's
+          # service: the runner user on Linux, the operator on a Mac. Its
+          # frame is named for the user, and opens only for a role that
+          # declares one; its engine is converged only where the served
+          # repo pins an image.
+          identity = converge_identity(role, container: container, engine: engine, runner_user: runner_user, ui: context.ui)
 
           setup = @runner_setup_factory.call(config, args.value(REPO_FLAG), org, runner_user, context.ui)
           scope = setup.resolve_scope
@@ -550,7 +534,7 @@ module Dev
             if enrollment && runner
               amend_enrollment(scope, enrollment, runner, config, ui: context.ui)
               @groups.place!(group, runner, org: scope, ui: context.ui) if group
-              contracts.each { |contract| contract.after_enroll!(runner_dir: enrollment.dir, slot: slot) }
+              identity&.after_enroll!(runner_dir: enrollment.dir, slot: slot)
               next
             end
 
@@ -572,13 +556,45 @@ module Dev
               slot_setup = @runner_setup_factory.call(slot_config, args.value(REPO_FLAG), org, runner_user, context.ui)
             end
             slot_setup.run
-            contracts.each { |contract| contract.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot) }
+            identity&.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot)
           end
 
           converge_access!(scope, group, repo, ui: context.ui) if org
         end
 
         private
+
+        # The role's job identity, converged: the user, the group, the
+        # sudoers edge, the data root, brew's locks, the tap — and its own
+        # engine when the served repo pins an image, sized from the repo's
+        # hint. nil for a role whose jobs run as the runner user.
+        #
+        # @param role [Dev::RunnerRole]
+        # @param container [Boolean] whether the served repo's lock pins an image
+        # @param engine [Dev::EngineResources::Hint, nil] the repo's engine hint
+        # @param runner_user [Dev::RunnerUser, nil] the host rule's user; nil on a Mac
+        # @param ui [Ui]
+        # @return [Dev::JobIdentity, nil]
+        sig do
+          params(
+            role: RunnerRole,
+            container: T::Boolean,
+            engine: T.nilable(Dev::EngineResources::Hint),
+            runner_user: T.nilable(Dev::RunnerUser),
+            ui: Ui,
+          ).returns(T.nilable(Dev::JobIdentity))
+        end
+        def converge_identity(role, container:, engine:, runner_user:, ui:)
+          user = role.job_identity
+          return nil unless user
+
+          identity = @identity_factory.call(user, runner_user&.name, ui)
+          ui.frame("Job identity (#{user})") do
+            identity.converge!
+            identity.ensure_engine!(cpus: engine&.cpus, memory_gib: engine&.memory_gib, disk_gib: engine&.disk_gib) if container
+          end
+          identity
+        end
 
         # Who may use the slots: the repo this registration is for — the
         # checkout's, or `--repo`'s, the same derivation as the org and the
@@ -624,11 +640,12 @@ module Dev
         # families'. A family is `(scope, host, role)`: the slots one
         # `register` enrolls. An enrollment GitHub still lists is this
         # role's when the role claims its labels (RunnerRole#claims?): they
-        # oblige this role's group, or none — a bare label set is amended
-        # into whichever role registers. One GitHub has lost is told by the
-        # pool its own `.runner` record names: this role's pool is this
-        # family's; Default (a registration placed in no group) is any
-        # role's to take over; another role's pool is another family's.
+        # share a label with the role's — drift within the family is
+        # amended in place; a set with nothing in common is another role's
+        # family. One GitHub has lost is told by the pool its own `.runner`
+        # record names: this role's pool is this family's; Default (a
+        # registration placed in no group) is any role's to take over;
+        # another role's pool is another family's.
         # Neither the dir's name nor the runner's is parsed for this. An
         # enrollment of another role is never sized, amended or retired
         # here.
@@ -988,18 +1005,6 @@ module Dev
           end
         end
 
-        # The role this registration declares, by precedence: `--role` (a
-        # builtin by name, else one the checkout's dev.yml declares under
-        # `runner_roles:`; anything else is refused pointing at dev.yml),
-        # `--ai-flow` (the agent), `--labels` (an agent or orchestrator
-        # label is that role's sugar; a bare set is a build host with those
-        # capabilities, in a human's `--group` at the org), else the repo's
-        # build host with the repo's GitHub name, lowercased, as label
-        # (Dev::EnrolledRunner). Bare --org is a usage error: org scope has
-        # nothing to derive a role from. So is bare register outside a
-        # project. `--role x --labels y`, `--org` with a dev.yml role, and
-        # `--group` with a pinned role are refused.
-        #
         # Whether the registration is made at the org: `--org` says so, for
         # any role. A repo owned by a user account has no org — a user
         # account has no runner groups, so there is nothing to register at
@@ -1019,13 +1024,28 @@ module Dev
             "#{owner} is a user account: it has no runner groups, so the registration is #{repository.full_name}'s — drop #{ORG_FLAG}"
         end
 
+        # The role this registration declares, by precedence: `--role` (one
+        # the checkout's dev.yml declares under `runner_roles:`, bound to
+        # the repo and its series; anything else is refused pointing at
+        # dev.yml), `--ai-flow` (one release's alias of the agent role,
+        # warning), `--labels` (the orchestrator's label is that role's
+        # alias for one release, warning; a bare set is a build host with
+        # those capabilities, in a human's `--group` at the org), else the
+        # repo's build host with the repo's GitHub name, lowercased, as
+        # label (Dev::EnrolledRunner). Bare --org is a usage error: org
+        # scope has nothing to derive a role from. So is bare register
+        # outside a project. `--role x --labels y`, `--org` with a declared
+        # role that has no group, and `--group` with a role that has its
+        # own are refused.
+        #
         # @param args [Cli::ParsedArgs]
         # @param context [Dev::Cli::ExecutionContext]
-        # @param resolve_repo [Proc] derives the repo this registration is for, asked only when the label derives from it
+        # @param resolve_repo [Proc] derives the repo this registration is for, asked only when the role derives from it
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError] on an underivable or contradictory request
         # @raise [Dev::EnrolledRunner::MalformedRepoError] when the repo (`--repo`) is not an owner/repo
         # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
+        # @raise [Dev::RunnerRole::DeclarationError] when a declared role pins workflows and the checkout keeps no semver VERSION
         sig { params(args: Cli::ParsedArgs, context: ExecutionContext, resolve_repo: T.proc.returns(String)).returns(RunnerRole) }
         def resolve_role(args, context, resolve_repo)
           org = args.flag?(ORG_FLAG)
@@ -1040,20 +1060,25 @@ module Dev
               raise ArgumentError,
                 "#{ROLE_FLAG} #{named_role} declares the labels — drop #{explicit ? LABELS_FLAG : AI_FLOW_FLAG}"
             end
-            declared_role(named_role, context, org)
+            declared_role(named_role, context, org, resolve_repo)
           elsif ai_flow
             if explicit
               raise ArgumentError,
-                "--ai-flow enrolls the agent host's ai-flow set (#{LabelContracts::AI_FLOW_AGENT_LABELS.join(",")}); " \
-                  "pass --labels alone for a custom set"
+                "#{AI_FLOW_FLAG} is an alias for --role #{RunnerRoleAliases::AGENT.name}; pass --labels alone for a custom set"
             end
-            RunnerRole::AGENT
+            alias_role(RunnerRoleAliases::AGENT, flag: AI_FLOW_FLAG, ui: context.ui)
           elsif explicit
-            RunnerRole.for_labels(explicit.split(",").map(&:strip), group: group && RunnerGroupContract.new(name: group))
+            labels = explicit.split(",").map(&:strip)
+            aliased = RunnerRoleAliases.for_labels(labels)
+            if aliased
+              alias_role(aliased, flag: "#{LABELS_FLAG} #{explicit}", ui: context.ui)
+            else
+              RunnerRole.build_host(labels: labels, group: group && RunnerGroupContract.new(name: group))
+            end
           else
             if org
               raise ArgumentError,
-                "an org runner's role is not derivable — pass #{ROLE_FLAG} #{RunnerRole::BUILTINS.keys.join("|")}, --ai-flow (the agent host) or --labels"
+                "an org runner's role is not derivable — pass #{ROLE_FLAG} <name> (a role this checkout's dev.yml declares) or --labels"
             end
             if context.project.nil?
               raise ArgumentError,
@@ -1065,37 +1090,54 @@ module Dev
 
           if group && role.org_scoped? && group != T.must(role.group).name
             raise ArgumentError,
-              "these labels sit in the '#{T.must(role.group).name}' runner group (pinned to ai-flow's workflows) — drop #{GROUP_FLAG} #{group}"
+              "the #{role.name} role sits in the '#{T.must(role.group).name}' runner group (pinned to its project's workflows) — drop #{GROUP_FLAG} #{group}"
           end
           role
         end
 
-        # The role `--role` names: a builtin, else the checkout's dev.yml
-        # declaration. A dev.yml role is its repo's (org scope is
-        # builtin-only) and sits in no group.
+        # An alias resolved: the role it stands for, after the warning that
+        # names the register run replacing it.
+        #
+        # @param role [Dev::RunnerRole]
+        # @param flag [String] what the operator typed
+        # @param ui [Ui]
+        # @return [Dev::RunnerRole]
+        sig { params(role: RunnerRole, flag: String, ui: Ui).returns(RunnerRole) }
+        def alias_role(role, flag:, ui:)
+          ui.note("{{yellow:#{RunnerRoleAliases.warning(role, flag: flag)}}}")
+          role
+        end
+
+        # The role `--role` names: the checkout's dev.yml declaration, bound
+        # to the repo this registration is for and the checkout's series.
+        # A declared role without a group is its repo's — org scope needs a
+        # group to fix the slots' reach — and `--org` is refused for it.
         #
         # @param name [String]
         # @param context [Dev::Cli::ExecutionContext]
         # @param org [Boolean] `--org`
+        # @param resolve_repo [Proc] the repo this registration is for
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError]
-        sig { params(name: String, context: ExecutionContext, org: T::Boolean).returns(RunnerRole) }
-        def declared_role(name, context, org)
-          builtin = RunnerRole.builtin(name)
-          return builtin if builtin
-
-          declared = context.project&.runner_roles&.fetch(name, nil)
-          unless declared
+        # @raise [Dev::RunnerRole::DeclarationError]
+        sig { params(name: String, context: ExecutionContext, org: T::Boolean, resolve_repo: T.proc.returns(String)).returns(RunnerRole) }
+        def declared_role(name, context, org, resolve_repo)
+          project = context.project
+          declaration = project&.runner_roles&.fetch(name, nil)
+          unless declaration
             raise ArgumentError,
-              "runner role '#{name}' is neither builtin (#{RunnerRole::BUILTINS.keys.join(", ")}) nor declared in " \
-                "#{context.project ? "this checkout's" : "a"} dev.yml — declare it once: runner_roles: { #{name}: { labels: [...] } }"
-          end
-          if org
-            raise ArgumentError,
-              "runner role '#{name}' is this repo's (dev.yml roles enroll at repo scope; org scope is builtin-only) — drop #{ORG_FLAG}"
+              "runner role '#{name}' is not declared in #{project ? "this checkout's" : "a"} dev.yml — declare it once: " \
+                "runner_roles: { #{name}: { labels: [...] } }"
           end
 
-          declared
+          role = declaration.bind(repo: resolve_repo.call, version: Lifecycle::ProjectVersion.declared(T.must(project).root))
+          if org && !role.org_scoped?
+            raise ArgumentError,
+              "runner role '#{name}' is this repo's — a role enrolls at the org only in a group pinned to this project's " \
+                "workflows (group: + workflows: in dev.yml) — drop #{ORG_FLAG}"
+          end
+
+          role
         end
 
         # A thunk that computes once and answers the same thereafter.

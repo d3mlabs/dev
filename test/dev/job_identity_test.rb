@@ -2,18 +2,19 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/agent_bootstrap"
-require "dev/agent_bootstrap/darwin"
-require "dev/agent_bootstrap/linux"
+require "dev/job_identity"
+require "dev/job_identity/darwin"
+require "dev/job_identity/linux"
 require "support/recorded_bootstrap_executor"
-require "stringio"
+require "etc"
 require "tmpdir"
 
-# The contract's own facts — what both adapters share: the sudoers
-# drop-in, the brew edge's absence, the service env, the executor boundary. The
-# platform steps are each adapter's test (agent_bootstrap/*_test.rb).
+# The job identity's own facts — what both adapters share: the
+# composition root, the sudoers drop-in, the brew edge's absence, the
+# service env, the executor boundary. The platform steps are each
+# adapter's test (job_identity/*_test.rb).
 transform!(RSpock::AST::Transformation)
-class Dev::AgentBootstrapTest < Minitest::Test
+class Dev::JobIdentityTest < Minitest::Test
   # The owner lookup the box answers: the Linuxbrew prefix is the runner
   # user's (dev#337), nothing else is anyone's.
   RUNNER_OWNS_LINUXBREW = ->(path) { path == "/home/linuxbrew/.linuxbrew" ? "runner" : nil }
@@ -22,21 +23,53 @@ class Dev::AgentBootstrapTest < Minitest::Test
   # class methods so Where tables (evaluated in class scope) can build them.
   class << self
     def darwin(**kwargs)
-      Dev::AgentBootstrap::Darwin.new(
-        runner_user: "human", executor: RecordedBootstrapExecutor.new, tap: nil,
+      Dev::JobIdentity::Darwin.new(
+        user: "ai-agent", runner_user: "human", executor: RecordedBootstrapExecutor.new, tap: nil,
         data_root: Dir.mktmpdir, home_dev: File.join(Dir.mktmpdir, "absent"), brew_executable: nil, **kwargs
       )
     end
 
     def linux(**kwargs)
-      Dev::AgentBootstrap::Linux.new(
-        executor: RecordedBootstrapExecutor.new, tap: nil,
+      Dev::JobIdentity::Linux.new(
+        user: "ai-agent", executor: RecordedBootstrapExecutor.new, tap: nil,
         data_root: Dir.mktmpdir, systemd_dir: Dir.mktmpdir, brew_executable: nil, **kwargs
       )
     end
   end
 
-  test "sudoers content grants the one-way SETENV edge from the enrolling user with the agent umask defaults — #{platform}" do
+  # --- the composition root -----------------------------------------------------
+
+  test "for_host builds the #{host_os} adapter for the user, spawned from the runner user given" do
+    When
+    identity = Dev::JobIdentity.for_host(user: "ci", runner_user: "runner", executor: RecordedBootstrapExecutor.new, host_os: host_os)
+
+    Then
+    identity.is_a?(adapter)
+    identity.user == "ci"
+    identity.runner_user == "runner"
+
+    Where
+    host_os  | adapter
+    "darwin" | Dev::JobIdentity::Darwin
+    "linux"  | Dev::JobIdentity::Linux
+  end
+
+  test "for_host without a runner user takes the platform's: the rule's default on Linux, the operator on a Mac" do
+    Expect
+    Dev::JobIdentity.for_host(user: "ci", executor: RecordedBootstrapExecutor.new, host_os: "linux").runner_user == Dev::RunnerUser::DEFAULT_NAME
+    Dev::JobIdentity.for_host(user: "ci", executor: RecordedBootstrapExecutor.new, host_os: "darwin").runner_user == Etc.getpwuid(Process.uid).name
+  end
+
+  test "for_host refuses a platform with no job identity to converge" do
+    When
+    Dev::JobIdentity.for_host(user: "ci", host_os: "windows")
+
+    Then
+    error = raises(Dev::JobIdentity::UnsupportedPlatformError)
+    error.message.include?("windows host")
+  end
+
+  test "sudoers content grants the one-way SETENV edge from the enrolling user with the identity's umask defaults — #{platform}" do
     Expect "the grantor is the platform's runner user: the operator on a Mac, `runner` on Linux"
     content.include?("#{grantor} ALL=(ai-agent) NOPASSWD:SETENV: ALL")
     content.include?("Defaults>ai-agent env_reset, umask=0002, umask_override")
@@ -49,12 +82,12 @@ class Dev::AgentBootstrapTest < Minitest::Test
     "linux"  | "runner" | linux.sudoers_content
   end
 
-  # dev#569: the agent writes no prefix, so no host grants it brew — not
-  # a Mac whose prefix is the operator's, not the box whose prefix is the
-  # runner user's (a docker-group user: brew as them is root). The agent
-  # is named explicitly because on an agent host the suite itself runs as
-  # `ai-agent`.
-  test "sudoers content grants the agent no brew edge on a prefix another user owns — #{platform}" do
+  # dev#569: the identity writes no prefix, so no host grants it brew —
+  # not a Mac whose prefix is the operator's, not the box whose prefix is
+  # the runner user's (a docker-group user: brew as them is root). The
+  # user is named explicitly because on an agent host the suite itself
+  # runs as `ai-agent`.
+  test "sudoers content grants the identity no brew edge on a prefix another user owns — #{platform}" do
     Given "a host with brew at a prefix owned by #{owner}"
     bootstrap = builder.call
 
@@ -62,30 +95,30 @@ class Dev::AgentBootstrapTest < Minitest::Test
     bootstrap.sudoers_content.lines.size == 2
     !bootstrap.sudoers_content.include?("brew")
     !bootstrap.sudoers_content.include?("ci ALL=")
-    bootstrap.brew_edge.is_a?(Dev::AgentBootstrap::NoBrewEdge)
+    bootstrap.brew_edge.is_a?(Dev::JobIdentity::NoBrewEdge)
     bootstrap.brew_edge.reason == "the agent writes no prefix: pins are the dispatcher's, gems are the agent's own home — plans#26 G"
 
     Where
     platform | owner    | builder
-    "darwin" | "human"  | -> { Dev::AgentBootstrapTest.darwin(agent_user: "ci", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) }
-    "linux"  | "runner" | -> { Dev::AgentBootstrapTest.linux(agent_user: "ci", brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW) }
+    "darwin" | "human"  | -> { Dev::JobIdentityTest.darwin(user: "ci", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) }
+    "linux"  | "runner" | -> { Dev::JobIdentityTest.linux(user: "ci", brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW) }
   end
 
   test "the no-brew-edge fact is the same whether the host has brew or not — #{what}" do
     Expect "one reason, independent of the prefix: the posture, not a waiver"
-    bootstrap.brew_edge.equal?(Dev::AgentBootstrap::NO_BREW_EDGE)
+    bootstrap.brew_edge.equal?(Dev::JobIdentity::NO_BREW_EDGE)
     bootstrap.sudoers_content.lines.size == 2
 
     Where
     what                        | bootstrap
     "no brew discovered"        | darwin(brew_executable: nil)
     "a prefix no longer there"  | darwin(brew_executable: "/dev-test-gone-#{Process.pid}/bin/brew")
-    "the agent owns the prefix" | darwin(agent_user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" })
+    "the identity owns the prefix" | darwin(user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" })
   end
 
   # dev#558: the lock-dir grant was keyed on the brew edge; with the edge
-  # retired it is keyed on what it was always about — a prefix the agent
-  # reads but does not own.
+  # retired it is keyed on what it was always about — a prefix the
+  # identity reads but does not own.
   test "the shared brew prefix is the one another user owns — #{what}" do
     Expect "the prefix and its lock dir, or neither"
     [bootstrap.shared_brew_prefix, bootstrap.brew_locks_dir] == [prefix, prefix && File.join(prefix, "var", "homebrew", "locks")]
@@ -94,15 +127,16 @@ class Dev::AgentBootstrapTest < Minitest::Test
     what                             | bootstrap                                                                                               | prefix
     "the runner user's Linuxbrew"    | linux(brew_executable: "/home/linuxbrew/.linuxbrew/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)          | "/home/linuxbrew/.linuxbrew"
     "the operator's Mac prefix"      | darwin(brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" })                      | "/opt/homebrew"
-    "a prefix the agent owns itself" | darwin(agent_user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) | nil
+    "a prefix the identity owns itself" | darwin(user: "human", brew_executable: "/opt/homebrew/bin/brew", owner_of: ->(_path) { "human" }) | nil
     "a prefix no longer there"       | linux(brew_executable: "/dev-test-gone-#{Process.pid}/bin/brew", owner_of: RUNNER_OWNS_LINUXBREW)       | nil
     "no brew"                        | linux(brew_executable: nil)                                                                             | nil
   end
 
-  # plans#59: one record of the env both services carry — the agent user,
-  # the group ai-flow shares fresh workspaces with (read from here rather
-  # than defaulted), and the slot (dev#485).
-  test "the service env names the agent user, the data root's group and the slot — #{platform}" do
+  # plans#59: one record of the env both services carry — the user, the
+  # group the dispatcher shares fresh workspaces with (read from here
+  # rather than defaulted), and the slot (dev#485). The keys keep their
+  # AI_FLOW_ spelling: they are the contract with ai-flow's dispatcher.
+  test "the service env names the user, the data root's group and the slot — #{platform}" do
     Expect
     bootstrap.service_env(3) == {
       "AI_FLOW_AGENT_USER" => "ci",
@@ -113,8 +147,8 @@ class Dev::AgentBootstrapTest < Minitest::Test
 
     Where
     platform | bootstrap
-    "darwin" | darwin(agent_user: "ci")
-    "linux"  | linux(agent_user: "ci")
+    "darwin" | darwin(user: "ci")
+    "linux"  | linux(user: "ci")
   end
 
   test "a cooperative dir is in the data root's group and setgid, read with the platform's stat — #{platform}" do
@@ -129,17 +163,17 @@ class Dev::AgentBootstrapTest < Minitest::Test
 
     Where
     platform | builder                                                        | stat_argv                                | answer              | cooperative
-    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwsr-x\n"  | true
-    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "ai drwxrwsr-x\n"   | false
-    "darwin" | ->(ex) { Dev::AgentBootstrapTest.darwin(executor: ex) }        | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwxr-x\n"  | false
-    "linux"  | ->(ex) { Dev::AgentBootstrapTest.linux(executor: ex) }         | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxrwsr-x\n"  | true
-    "linux"  | ->(ex) { Dev::AgentBootstrapTest.linux(executor: ex) }         | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxr-xr-x\n"  | false
+    "darwin" | ->(ex) { Dev::JobIdentityTest.darwin(executor: ex) }           | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwsr-x\n"  | true
+    "darwin" | ->(ex) { Dev::JobIdentityTest.darwin(executor: ex) }           | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "ai drwxrwsr-x\n"   | false
+    "darwin" | ->(ex) { Dev::JobIdentityTest.darwin(executor: ex) }           | ->(p) { ["stat", "-f", "%Sg %Sp", p] }   | "dev drwxrwxr-x\n"  | false
+    "linux"  | ->(ex) { Dev::JobIdentityTest.linux(executor: ex) }            | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxrwsr-x\n"  | true
+    "linux"  | ->(ex) { Dev::JobIdentityTest.linux(executor: ex) }            | ->(p) { ["stat", "-c", "%G %A", p] }     | "dev drwxr-xr-x\n"  | false
   end
 
-  test "SudoAgentExecutor crosses to the agent, with the adapter's prelude between sudo and the command" do
-    Given "a recorded executor behind the agent seam, with Linux's prelude"
+  test "SudoUserExecutor crosses to the user, with the adapter's prelude between sudo and the command" do
+    Given "a recorded executor behind the user seam, with Linux's prelude"
     executor = RecordedBootstrapExecutor.new(capture_results: { ["sudo", "-n", "-H", "-u", "ci", "--", "env", "-C", "/", "id"] => "ci\n" })
-    as_agent = Dev::AgentBootstrap::SudoAgentExecutor.new(executor: executor, agent_user: "ci", prelude: %w[env -C /])
+    as_agent = Dev::JobIdentity::SudoUserExecutor.new(executor: executor, user: "ci", prelude: %w[env -C /])
 
     When "running, probing and capturing"
     as_agent.run("true")
@@ -157,7 +191,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
   # with cheap real processes instead of mocking Kernel/Open3.
   test "Executor#run reports the child's success, honoring chdir" do
     Given "the real executor"
-    executor = Dev::AgentBootstrap::Executor.new
+    executor = Dev::JobIdentity::Executor.new
 
     Expect "success and failure map to true/false, in and out of a chdir"
     executor.run("true")
@@ -167,7 +201,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
 
   test "Executor#quiet? probes silently and survives a missing binary" do
     Given "the real executor"
-    executor = Dev::AgentBootstrap::Executor.new
+    executor = Dev::JobIdentity::Executor.new
 
     Expect
     executor.quiet?("true")
@@ -177,7 +211,7 @@ class Dev::AgentBootstrapTest < Minitest::Test
 
   test "Executor#capture returns stdout on success and empty otherwise" do
     Given "the real executor"
-    executor = Dev::AgentBootstrap::Executor.new
+    executor = Dev::JobIdentity::Executor.new
 
     Expect
     executor.capture("echo", "hello") == "hello\n"

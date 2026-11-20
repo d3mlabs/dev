@@ -41,9 +41,11 @@ module Dev
       # means the provisioner's defaults and no check.
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
       # The runner roles this repo declares (`runner_roles:`), which `dev
-      # runner register --role <name>` may enroll: identity and labels
-      # only. Empty when the project declares none.
-      const :runner_roles, T::Hash[String, Dev::RunnerRole], default: {}
+      # runner register --role <name>` may enroll: name and labels, and
+      # optionally a group pinned to this project's own workflows and a
+      # job identity. Declarations, not roles: the pins bind to the repo
+      # and the series at register. Empty when the project declares none.
+      const :runner_roles, T::Hash[String, Dev::RunnerRole::Declaration], default: {}
     end
   end
 end

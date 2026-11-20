@@ -71,7 +71,8 @@ module Dev
     attr_reader :fixed_by
 
     # What the role obliges; nil when the role refused the target
-    # (`exposure`).
+    # (`exposure`), or when no declaration of the role is at hand to say
+    # (`unverified?`).
     sig { returns(T.nilable(Reach)) }
     attr_reader :expected
 
@@ -105,6 +106,18 @@ module Dev
       def exposed(exposure:, observed:, fixed_by:)
         new(expected: nil, exposure: exposure, observed: observed, fixed_by: fixed_by)
       end
+
+      # The fact for a family known by its pool alone (RunnerRole.pooled):
+      # GitHub's reach is read, but no declaration is at hand to hold it
+      # against — the declaring checkout's `dev runner status` can.
+      #
+      # @param observed [Dev::Reach] GitHub's
+      # @param fixed_by [GroupPlacement] the group the slots sit in
+      # @return [Dev::ReachFact]
+      sig { params(observed: Reach, fixed_by: Provenance).returns(ReachFact) }
+      def unverified(observed:, fixed_by:)
+        new(expected: nil, exposure: nil, observed: observed, fixed_by: fixed_by)
+      end
     end
 
     # @param expected [Dev::Reach, nil]
@@ -127,6 +140,12 @@ module Dev
       !@exposure.nil?
     end
 
+    # Whether GitHub's reach was read with nothing to hold it against.
+    sig { returns(T::Boolean) }
+    def unverified?
+      @expected.nil? && @exposure.nil?
+    end
+
     # The clauses where GitHub's reach departs from the role's, in
     # CLAUSES order; empty when they agree or when the role refused.
     #
@@ -143,10 +162,11 @@ module Dev
       drifted
     end
 
-    # Whether the family's reach is what its role obliges.
+    # Whether the family's reach is what its role obliges; never for a
+    # fact nothing was held against.
     sig { returns(T::Boolean) }
     def ok?
-      !exposed? && drift.empty?
+      !exposed? && !unverified? && drift.empty?
     end
 
     private

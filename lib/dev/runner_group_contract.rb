@@ -32,6 +32,13 @@ module Dev
     extend T::Sig
     include Dev::ValueEquality::Derived
 
+    # GitHub's two visibilities: the repos register admits, or every repo.
+    SELECTED = "selected"
+    ALL = "all"
+
+    # The visibilities a dev.yml role may declare for its group.
+    VISIBILITIES = T.let([SELECTED, ALL].freeze, T::Array[String])
+
     sig { returns(String) }
     attr_reader :name
 
@@ -47,7 +54,7 @@ module Dev
     # @param workflows [Array<String>] the pins; empty = not dev's to pin
     # @param visibility [String] "selected" (default) or "all"
     sig { params(name: String, workflows: T::Array[String], visibility: String).void }
-    def initialize(name:, workflows: [], visibility: "selected")
+    def initialize(name:, workflows: [], visibility: SELECTED)
       @name = name
       @workflows = workflows
       @visibility = visibility
@@ -56,7 +63,7 @@ module Dev
     # Whether every repo in the org may use the group (no selection to converge).
     sig { returns(T::Boolean) }
     def open?
-      @visibility == "all"
+      @visibility == ALL
     end
 
     # Whether dev owns the group's access (creates it, re-pins it).

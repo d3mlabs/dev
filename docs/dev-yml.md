@@ -43,7 +43,7 @@ commands:
 | `engine` | Optional. `cpus`, `memory_gib`, `disk_gib`: the smallest container engine this project's builds were tuned for. dev sizes the engine up to it and refuses to run a containerized command on a smaller one. See [Containers](containers.md#engine-resources). |
 | `commands` | Map of command name to spec. |
 | `targets` | Optional. What the project builds. Declaring any makes `dev build` and `dev package` exist. |
-| `runner_roles` | Optional. Roles `dev runner register --role <name>` may enroll for this repo: `<name>: { labels: [...] }`. See [Runners](runners.md#roles). |
+| `runner_roles` | Optional. Roles `dev runner register --role <name>` enrolls for this repo: `<name>: { labels: [...] }`, plus `group:` and `workflows:` (this repo's, pinned at `v<major>` of `VERSION`) for an org role and `job_identity: <user>` for jobs that run as another user. See [Runners](runners.md#roles). |
 
 ## Commands
 

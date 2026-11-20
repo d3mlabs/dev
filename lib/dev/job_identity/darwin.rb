@@ -6,7 +6,7 @@ require "fileutils"
 require "tempfile"
 require "yaml"
 
-require "dev/agent_bootstrap"
+require "dev/job_identity"
 require "dev/colima_provisioner"
 require "dev/data_root"
 require "dev/data_root_migration"
@@ -14,21 +14,21 @@ require "dev/runner_user"
 require "dev/tap_trust"
 
 module Dev
-  class AgentBootstrap
-    # The agent host contract on a Mac: the admin
-    # CLIs are Darwin's (sysadminctl, dseditgroup, PlistBuddy), the runner
-    # user is the operator (the service is a per-user LaunchAgent, so the
-    # sudoers edge is operator → agent), the data root is the shared root
-    # this adapter provisions (DataRoot::SHARED_ROOT, with the one-off
-    # `~/.dev` migration), and the agent has an engine of its own — colima,
-    # per-user by nature — when the served repo pins an image.
+  class JobIdentity
+    # A job identity on a Mac: the admin CLIs are Darwin's (sysadminctl,
+    # dseditgroup, PlistBuddy), the runner user is the operator (the
+    # service is a per-user LaunchAgent, so the sudoers edge is operator →
+    # <user>), the data root is the shared root this adapter provisions
+    # (DataRoot::SHARED_ROOT, with the one-off `~/.dev` migration), and
+    # the identity has an engine of its own — colima, per-user by nature —
+    # when the served repo pins an image.
     #
     # A shared root that is not the cooperative space `dev runner status`
     # inspects — in a group from before the one group name (`ai`), or in
     # the group without the setgid bit — is re-granted on the next run,
     # tree and all, so one name serves every host and ai-flow reads it
     # from the service env.
-    class Darwin < AgentBootstrap
+    class Darwin < JobIdentity
       extend T::Sig
 
       # The shared DDC directory under the shared root. UE disables a shared
@@ -38,11 +38,11 @@ module Dev
       # the shared root itself).
       DDC_DIR = "ddc"
 
-      # @param agent_user [String] the run-as user to provision
+      # @param user [String] the OS user to provision
       # @param runner_user [String] the enrolling user (the sudoers grantor);
       #   defaults to whoever is running register
       # @param executor [#run, #quiet?, #capture] admin CLI seam
-      # @param ui [Ui] where the convergence is told (AgentBootstrap)
+      # @param ui [Ui] where the convergence is told (JobIdentity)
       # @param data_root [String] where the shared data root is provisioned
       # @param home_dev [String] the per-user data dir migrated out of
       # @param launch_agents_dir [String] where svc.sh installs runner plists
@@ -53,7 +53,7 @@ module Dev
       # @param tap [Dev::TapTrust::Tap, nil] the deployment's tap; nil for none
       sig do
         params(
-          agent_user: String,
+          user: String,
           runner_user: String,
           executor: T.untyped,
           ui: Ui,
@@ -65,24 +65,24 @@ module Dev
           tap: T.nilable(TapTrust::Tap),
         ).void
       end
-      def initialize(agent_user: DEFAULT_AGENT_USER, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
+      def initialize(user:, runner_user: T.must(Etc.getpwuid(Process.uid)).name,
                      executor: Executor.new, ui: NoUi.new,
                      data_root: DataRoot::SHARED_ROOT, home_dev: File.expand_path(DataRoot::HOME_ROOT),
                      launch_agents_dir: File.join(Dir.home, "Library", "LaunchAgents"),
                      brew_executable: RunnerUser.brew_path,
                      owner_of: ->(path) { RunnerUser.owner_of(path) },
                      tap: TapTrust.deployment_tap)
-        super(agent_user: agent_user, runner_user: runner_user, executor: executor, ui: ui, data_root: data_root,
+        super(user: user, runner_user: runner_user, executor: executor, ui: ui, data_root: data_root,
           brew_executable: brew_executable, owner_of: owner_of, tap: tap)
         @home_dev = home_dev
         @launch_agents_dir = launch_agents_dir
       end
 
-      # Step 6: the agent's own engine — colima installed (the macOS
-      # engine, per-user by nature), the agent's `container_engine: colima`
-      # record written into its own config (resolution never crosses the
-      # sudo boundary), and its VM provisioned, sized from the repo's
-      # resources hint. Every colima invocation crosses to the agent via sudo.
+      # Step 6: the identity's own engine — colima installed (the macOS
+      # engine, per-user by nature), its `container_engine: colima` record
+      # written into its own config (resolution never crosses the sudo
+      # boundary), and its VM provisioned, sized from the repo's resources
+      # hint. Every colima invocation crosses to the identity via sudo.
       #
       # @param cpus [Integer, nil] VM sizing hint (repo resources block)
       # @param memory_gib [Integer, nil] VM sizing hint
@@ -91,24 +91,24 @@ module Dev
       # @raise [StepFailedError] when a converge step fails
       # @raise [Dev::ColimaProvisioner::StartFailedError] when the VM won't start
       sig { override.params(cpus: T.nilable(Integer), memory_gib: T.nilable(Integer), disk_gib: T.nilable(Integer)).void }
-      def ensure_agent_engine!(cpus: nil, memory_gib: nil, disk_gib: nil)
+      def ensure_engine!(cpus: nil, memory_gib: nil, disk_gib: nil)
         # Prime the sudo credential once, visibly, so the -n probes below
         # never hang on a captured password prompt.
         step!("sudo", "-v")
         ensure_colima_installed!
-        ensure_agent_engine_record!
+        ensure_engine_record!
         ColimaProvisioner
-          .new(executor: @as_agent)
+          .new(executor: @as_user)
           .provision!(cpus: cpus, memory_gib: memory_gib, disk_gib: disk_gib)
       end
 
-      # The agent config content carrying the engine record, merged over
-      # whatever the agent's config already holds (never clobbers other keys).
+      # The identity's config content carrying the engine record, merged
+      # over whatever its config already holds (never clobbers other keys).
       #
-      # @param existing [String] current agent config YAML ("" when absent)
+      # @param existing [String] current config YAML ("" when absent)
       # @return [String]
       sig { params(existing: String).returns(String) }
-      def agent_config_content(existing)
+      def user_config_content(existing)
         parsed = YAML.safe_load(existing)
         config = parsed.is_a?(Hash) ? parsed : {}
         YAML.dump(config.merge("container_engine" => "colima"))
@@ -136,13 +136,13 @@ module Dev
       private
 
       # Hidden and non-admin by construction: no -admin flag, IsHidden set
-      # right after creation, home materialized so the agent's per-user
+      # right after creation, home materialized so the identity's per-user
       # state has a place to land before the first job.
       sig { override.void }
-      def create_agent_user!
-        step!("sudo", "sysadminctl", "-addUser", @agent_user, "-fullName", "AI Agent", "-shell", "/bin/zsh")
-        step!("sudo", "dscl", ".", "create", "/Users/#{@agent_user}", "IsHidden", "1")
-        step!("sudo", "createhomedir", "-c", "-u", @agent_user)
+      def create_user!
+        step!("sudo", "sysadminctl", "-addUser", @user, "-fullName", "AI Agent", "-shell", "/bin/zsh")
+        step!("sudo", "dscl", ".", "create", "/Users/#{@user}", "IsHidden", "1")
+        step!("sudo", "createhomedir", "-c", "-u", @user)
       end
 
       sig { override.returns(T::Boolean) }
@@ -166,7 +166,7 @@ module Dev
       # expects to pre-exist (DDC_DIR). Fresh dirs get cooperative modes:
       # human-owned so `dev up` writes it, the group + setgid +
       # group-writable so cooperative caches (the shared DDC) work, world-
-      # readable so the agent reads it like /opt/homebrew. An existing root
+      # readable so the identity reads it like /opt/homebrew. An existing root
       # is held to what `dev runner status` inspects of it (#cooperative_dir?)
       # and re-granted when it falls short — its owner is never changed.
       # Then the one-off migration.
@@ -223,10 +223,10 @@ module Dev
         DataRootMigration.new(from: @home_dev, to: @data_root, ui: @ui).run!
       end
 
-      # @return [String] the agent's own settings file
+      # @return [String] the identity's own settings file
       sig { returns(String) }
-      def agent_config_path
-        "/Users/#{@agent_user}/.config/dev/config.yml"
+      def user_config_path
+        "/Users/#{@user}/.config/dev/config.yml"
       end
 
       # colima arrives via brew like every host tool ("brew converges brew").
@@ -237,21 +237,21 @@ module Dev
         @ui.step("Installing colima") { step!("brew", "install", "colima") }
       end
 
-      # Write `container_engine: colima` into the agent's own config, agent-
-      # owned, preserving any other keys already there.
+      # Write `container_engine: colima` into the identity's own config,
+      # owned by it, preserving any other keys already there.
       sig { void }
-      def ensure_agent_engine_record!
-        existing = @executor.capture("sudo", "cat", agent_config_path)
+      def ensure_engine_record!
+        existing = @executor.capture("sudo", "cat", user_config_path)
         parsed = YAML.safe_load(existing)
         return if parsed.is_a?(Hash) && parsed["container_engine"] == "colima"
 
-        @ui.step("Recording container_engine: colima for #{@agent_user}") do
-          step!("sudo", "-H", "-u", @agent_user, "--", "mkdir", "-p", File.dirname(agent_config_path))
+        @ui.step("Recording container_engine: colima for #{@user}") do
+          step!("sudo", "-H", "-u", @user, "--", "mkdir", "-p", File.dirname(user_config_path))
           Tempfile.create("agent-dev-config") do |staging|
-            staging.write(agent_config_content(existing))
+            staging.write(user_config_content(existing))
             staging.flush
             File.chmod(0o644, staging.path)
-            step!("sudo", "install", "-m", "0644", "-o", @agent_user, staging.path, agent_config_path)
+            step!("sudo", "install", "-m", "0644", "-o", @user, staging.path, user_config_path)
           end
         end
       end
