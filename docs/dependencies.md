@@ -355,6 +355,31 @@ or, for `cmake`, the `build/_deps/<name>-src` link `dev up` maintains. A
 `gh` tree that ships a `bin/` is also put on the project `PATH` through
 `.shadowenv.d/515_gh.lisp`.
 
+#### A tool's closure: at install or at release
+
+A `gh` tree that carries its own `dependencies.rb` and `deps.lock` is a
+tool written in Ruby (ai-flow, say) and runs under its own closure, not
+the project's. Before the tree publishes, `dev up` reads the tree's lock,
+installs the Ruby it pins through brew (the keg alone is shared with the
+project; nothing is exported into the project's environment), runs a
+frozen `bundle install` into the tree's own `vendor/bundle` under that
+keg's bundler, and writes one `bin/<name>` wrapper per `exe/<name>`. The
+wrapper clears the caller's Ruby and Bundler environment and runs the
+executable under the keg's Ruby with the tree's bundle, so the tool works
+the same from any project — or from no project. The closure lives and is
+collected with the tree; no project gem home is touched.
+
+The release side has the same shape. A target with `packager: { archive:
+{ vendor: true } }` vendors the bundle into the install before archiving
+it, so the asset ships the closure; installing such a tree asks brew for
+the Ruby and writes the wrappers only. Vendoring binds the asset to a
+platform when any gem compiles a native extension — pure-Ruby tools ship
+one asset for every machine.
+
+A gh tree is keyed by its version alone, so the materialised closure is
+the first installing machine's: a tree is per data root, and a data root
+is per machine or per side of a build container.
+
 A steam pin is the branch's build id at lock time, with no `source`:
 SteamCMD's `app_update` installs the branch tip, and its `download_depot`
 writes one depot's files without the app manifest and refuses large

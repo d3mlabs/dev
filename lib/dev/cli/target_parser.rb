@@ -16,8 +16,8 @@ module Dev
     # CommandParser does). The builder and packager keys become their
     # declarations: `build:` a script builder; `package:` a script packager,
     # or `packager:` one of dev's built-ins by name — `archive` (the default,
-    # with its options as a mapping: `{ archive: { format: tar, split: 2GiB } }`),
-    # `as-is`, `none`. The rules a single target owns (its name's shape and
+    # with its options as a mapping: `{ archive: { format: tar, split: 2GiB,
+    # vendor: true } }`), `as-is`, `none`. The rules a single target owns (its name's shape and
     # suffix, duplicate axis values, a per-platform environment's fit with
     # its platforms) are Target's and surface from its constructor; the
     # rules that span targets and commands are ProjectManifestLoader's.
@@ -64,7 +64,8 @@ module Dev
       NONE_NAME = "none"
       ARCHIVE_FORMAT_KEY = "format"
       ARCHIVE_SPLIT_KEY = "split"
-      ARCHIVE_OPTION_KEYS = T.let([ARCHIVE_FORMAT_KEY, ARCHIVE_SPLIT_KEY].freeze, T::Array[String])
+      ARCHIVE_VENDOR_KEY = "vendor"
+      ARCHIVE_OPTION_KEYS = T.let([ARCHIVE_FORMAT_KEY, ARCHIVE_SPLIT_KEY, ARCHIVE_VENDOR_KEY].freeze, T::Array[String])
 
       TargetHash = T.type_alias { T::Hash[String, T.untyped] }
 
@@ -193,7 +194,8 @@ module Dev
         end
 
         case packager_name
-        when ARCHIVE_NAME then Lifecycle::PackagerSpec::Archive.new(form: archive_form(name, options))
+        when ARCHIVE_NAME
+          Lifecycle::PackagerSpec::Archive.new(form: archive_form(name, options), vendor: archive_vendor(name, options))
         when AS_IS_NAME then optionless(name, AS_IS_NAME, options, Lifecycle::PackagerSpec::AsIs.new)
         when NONE_NAME then optionless(name, NONE_NAME, options, Lifecycle::PackagerSpec::None.new)
         else
@@ -228,7 +230,7 @@ module Dev
       end
 
       # @param name [String] the target, for messages
-      # @param options [Hash] the `archive:` options: `format`, `split`
+      # @param options [Hash] the `archive:` options: `format`, `split`, `vendor`
       # @return [Lifecycle::Archive::Form]
       # @raise [InvalidPackagerError]
       sig { params(name: String, options: T::Hash[T.untyped, T.untyped]).returns(Lifecycle::Archive::Form) }
@@ -251,6 +253,21 @@ module Dev
       rescue Lifecycle::Archive::UnknownFormatError, Lifecycle::ByteSize::InvalidByteSizeError,
              Lifecycle::Archive::SplitNeedsTarError => e
         raise InvalidPackagerError, "target '#{name}': #{ARCHIVE_NAME}: #{e.message}"
+      end
+
+      # The `vendor:` option: a YAML boolean, absent meaning false.
+      #
+      # @param name [String] the target, for messages
+      # @param options [Hash] the `archive:` options
+      # @return [Boolean]
+      # @raise [InvalidPackagerError]
+      sig { params(name: String, options: T::Hash[T.untyped, T.untyped]).returns(T::Boolean) }
+      def archive_vendor(name, options)
+        vendor = options.fetch(ARCHIVE_VENDOR_KEY, false)
+        return vendor if vendor == true || vendor == false
+
+        raise InvalidPackagerError,
+          "target '#{name}': #{ARCHIVE_NAME}: `#{ARCHIVE_VENDOR_KEY}:` is true or false, got #{vendor.inspect}"
       end
 
       # @param name [String] the target, for messages
