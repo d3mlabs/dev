@@ -183,6 +183,7 @@ module Dev
             root: Dev.target_project_root,
             engine: manifest.engine,
             runner_roles: manifest.runner_roles,
+            channels: manifest.channels,
           ),
         )
       end
@@ -605,6 +606,7 @@ module Dev
             desc: "Enroll, inspect or unenroll this host as a self-hosted runner",
             category: Command::Category::Environment,
             children: {
+              "follow" => Builtins::RunnerFollowCommand.new,
               "register" => Builtins::RunnerRegisterCommand.new,
               "status" => Builtins::RunnerStatusCommand.new,
               "unregister" => Builtins::RunnerUnregisterCommand.new,

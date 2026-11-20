@@ -23,7 +23,10 @@ One class per noun, none playing two roles.
 | Channel | `Lifecycle::Channel` | Where shipments go: a name, the build patterns it accepts and a publisher spec. Declared under `commands: deploy:`, or contributed by the lock under an integration's name. |
 | Shipment | `Lifecycle::Shipment` | One archive as `deploy` hands it to a publisher: file, build, build id, digest and its **provenance** (`Lifecycle::Provenance`, sealed): `Store` (the tree it was packaged from) or `Release` (the tag and the commit `release.json` records). The provenance decides the track and what a script is told; how a publisher ships the bytes does not depend on it. |
 | Track | `Lifecycle::Track` | `testing` or `live`. Decided by the provenance, never the operator. |
-| Publisher | `Lifecycle::Publisher` | The channel's protocol: ships the selected shipments on a track with a scratch and answers with a receipt. `ScriptPublisher` is the `run:` form; an integration publisher is set on its registry entry. |
+| Publisher | `Lifecycle::Publisher` | The channel's protocol: ships the selected shipments on a track with a scratch and answers with a receipt, and declares how its destination keeps its head. `ScriptPublisher` is the `run:` form; an integration publisher is set on its registry entry. |
+| Head | `Lifecycle::Head` | What a follower of a channel installs when it asks for nothing in particular. `release` never moves a head; `deploy` moves exactly one. Distinct from the resolver's greatest-satisfying version — a lock wants that, a follower wants what is deployed, and after a rollback the two differ — so it reads no `Requirement` or `VersionScheme`. Holds dev's half of the mechanism, `Head.derive`: the greatest non-prerelease version among a store's, within a series. |
+| Head strategy | `Lifecycle::HeadStrategy` | How a destination keeps its head, declared by every publisher: `pointed` (a movable pointer — a tag, a formula's stable spec, a branch's live build, a label — that `deploy` moves and a rollback moves back) or `derived` (versions and no pointer — rubygems.org, bare tags — so dev computes the head by `Head.derive`). A closed set: a destination fitting neither is a third strategy to name here, never a publisher's special case. |
+| Series | `Lifecycle::Series` | Every version of one major, named `v<major>`. What a follower is on (`~> 1`, `@v1`) and what a head is kept per: one pointer per series on a pointed channel, that major's greatest release on a derived one. Following never crosses a major. |
 | Receipt | `Lifecycle::Receipt` | The publisher's one-line statement of what it did, and an optional hint. What the deployment's status carries. |
 | Deployment record | `Lifecycle::DeploymentRecord` | What dev says about one deploy: channel, ref, track, builds with ids, outcome, receipt. One per distinct commit among the shipped artifacts. |
 | Deployment ledger | `Lifecycle::GithubDeployments` | The records as GitHub Deployments, written and read through `gh api`. `Lifecycle::Deployment` is one as the forge holds it (id, time, page); `Lifecycle::DeploymentState` is its status. |
@@ -54,7 +57,7 @@ toolchain; the publisher never selects and never rewrites an archive.
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
-| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt` | `ScriptPublisher`; the lock's integration publishers | a channel's `run: <command>`; a registry entry's `publisher:` |
+| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy` | `ScriptPublisher`; the lock's integration publishers | a channel's `run: <command>`; a registry entry's `publisher:` |
 
 `Lifecycle::Ports` maps a target's specs and a channel's to port
 instances. It is the one place that matches the sealed `BuilderSpec`,
@@ -93,8 +96,9 @@ An integration's publisher is declared on its `Deps::Registry::Entry`:
 taken from the composition context (`project_root`), and `channel:` the
 channel's name when it differs from the integration's (`rubygems` for
 `gem`, `ghcr` for `image`, `brew` for `taps`). The registry's consistency
-test fails on a `*_publisher.rb` no entry wires and on two entries
-claiming one channel.
+test fails on a `*_publisher.rb` no entry wires, on two entries claiming
+one channel, and on a wired publisher that does not declare its own
+`head_strategy`.
 
 ## The verbs' output
 
@@ -173,7 +177,10 @@ channel's deploy as a child invocation.
 
 A new builder implements `Lifecycle::Builder` (`build`, `name`,
 `version`); a new packager `Lifecycle::Packager` (`package`); a new
-publisher `Lifecycle::Publisher` (`publish`). A builder or packager is
+publisher `Lifecycle::Publisher` (`publish`, and `head_strategy` — say
+whether the destination keeps a pointer `deploy` moves or versions dev
+derives the head over; a destination that does neither is a third
+strategy to add to `HeadStrategy` first). A builder or packager is
 wired in `Lifecycle::Ports` from a new `BuilderSpec` or `PackagerSpec`
 variant, and nowhere else. An integration's publisher needs no new spec:
 set it as `publisher:` on the integration's registry entry and every

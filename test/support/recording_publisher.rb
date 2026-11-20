@@ -38,6 +38,13 @@ class RecordingPublisher
     Dev::Lifecycle::Receipt.new(summary: "recorded #{shipments.map(&:name).join(", ")}")
   end
 
+  # Pointed: the last call recorded is what the double "holds".
+  #
+  # @return [Dev::Lifecycle::HeadStrategy]
+  def head_strategy
+    Dev::Lifecycle::HeadStrategy::Pointed
+  end
+
   # @return [String]
   def to_s
     "recording"

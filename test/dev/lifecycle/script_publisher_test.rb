@@ -111,4 +111,9 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     Then
     raises Dev::Lifecycle::Shell::SpawnError
   end
+
+  test "a run: channel's head is pointed: each deploy replaces what the destination holds, and dev reads nothing back" do
+    Expect
+    Dev::Lifecycle::ScriptPublisher.new(command: "true", project_root: @project).head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+  end
 end

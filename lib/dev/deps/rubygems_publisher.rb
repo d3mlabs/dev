@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/credentials"
 require "dev/lifecycle/channel"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/shell"
@@ -31,6 +32,12 @@ module Dev
     # a hosted runner with a trusted-publishing key in `GEM_HOST_API_KEY`.
     # A project carrying no copy of it is refused with the copy named, as
     # the remote dispatch refuses without its workflow.
+    #
+    # The channel's head is derived: rubygems.org keeps every pushed
+    # version and no pointer — what `gem install <name>` takes is the
+    # greatest non-prerelease version, computed from the versions there —
+    # so a deploy moves the head by pushing a greater version, and nothing
+    # moves it back.
     #
     # The project root (where `gem` runs), the shell and the credential
     # provider are fixed for a checkout and constructor-owned; the
@@ -107,6 +114,12 @@ module Dev
         env = { API_KEY_ENV_VAR => api_key }
         shipments.each { |shipment| push(shipment, env:) }
         Lifecycle::Receipt.new(summary: "pushed to #{HOST}: #{shipments.map { |shipment| shipment.archive.basename }.join(", ")}")
+      end
+
+      # Derived: rubygems.org has versions and no pointer.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Derived
       end
 
       # The declaration as `dev help` renders it.
