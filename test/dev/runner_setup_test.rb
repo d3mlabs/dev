@@ -166,7 +166,7 @@ class Dev::RunnerSetupTest < Minitest::Test
 
     Expect "the dir derives from the role"
     setup.resolve_dir == File.expand_path("~/actions-runner-ue-engine")
-    Dev::RunnerSetup.new(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole::AGENT)).resolve_dir == File.expand_path("~/actions-runner-agent")
+    Dev::RunnerSetup.new(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.declared(name: "agent", labels: ["ai-build"]))).resolve_dir == File.expand_path("~/actions-runner-agent")
   end
 
   test "resolve_dir expands an explicit dir" do

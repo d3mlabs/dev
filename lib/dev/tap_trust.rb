@@ -10,10 +10,10 @@ module Dev
   # per user (`~/.homebrew/trust.json`), so the operator's does not carry
   # over to the other identities a host runs brew as: the Linux runner user
   # (the first `brew upgrade` of dev in a job was refused the
-  # formula) and the macOS agent user (a `/build` pass ran
+  # formula) and a macOS job identity (a `/build` pass ran
   # `brew trust` itself, a per-user host mutation mid-run, before `dev deps`
   # would resolve a tap-sourced pin). One step, called by both bootstraps
-  # (RunnerUser, AgentBootstrap); each hands it the way it runs a command
+  # (RunnerUser, JobIdentity); each hands it the way it runs a command
   # as its user, which is the only thing that differs between them.
   #
   # Idempotent — trusting a trusted tap changes nothing. A brew too old for

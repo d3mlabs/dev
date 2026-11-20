@@ -16,7 +16,7 @@ module Dev
   # The WSL runner host: what a runner enrolled in a WSL2 distro
   # needs of the Windows side to survive a reboot, converged by `dev runner
   # register` before it enrolls and re-derived by `dev runner status`. The
-  # same seam as the agent host bootstrap — host facts a label-less
+  # same seam as a job identity — host facts a label-less
   # enrollment still depends on — with different contract facts:
   #
   # - the **logon keepalive** (WslKeepaliveTask): a Task Scheduler task that

@@ -1070,7 +1070,7 @@ class RunnerTest < Minitest::Test
     runner.run(["test"])
 
     Then
-    contexts.fetch(0).last.project!.runner_roles == { "ue-farm" => Dev::RunnerRole.user(name: "ue-farm", labels: %w[ue gpu]) }
+    contexts.fetch(0).last.project!.runner_roles == { "ue-farm" => Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu]) }
   end
 
   test "run without a dev.yml assembles a projectless context" do

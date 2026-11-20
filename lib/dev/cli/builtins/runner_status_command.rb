@@ -3,6 +3,9 @@
 
 require "dev/cli/command"
 require "dev/deps/lockfile"
+require "dev/lifecycle/project_version"
+require "dev/runner_role"
+require "dev/runner_role_aliases"
 require "dev/runner_setup"
 require "dev/runner_status"
 require "dev/ui"
@@ -13,7 +16,9 @@ module Dev
       # `dev runner status` — inspect-only: this machine's discovered runner
       # enrollments and their contract facts (see Dev::RunnerStatus). Needs no
       # project (the machine view), but reports the container contract when
-      # run inside a project that declares a build container. `--check` is
+      # run inside a project that declares a build container, and holds the
+      # slots of the roles that project's dev.yml declares against those
+      # declarations. `--check` is
       # the host's posture alone, GitHub not asked, exiting 1 on any red
       # fact — what a job runs after `dev up`. A leaf of the `runner` group
       # (RunnerRegisterCommand and RunnerUnregisterCommand are the others).
@@ -24,17 +29,24 @@ module Dev
 
         # Builds the status inspector over the context's Ui; injected for tests.
         StatusFactory = T.type_alias do
-          T.proc.params(container_required: T::Boolean, project_root: T.nilable(Pathname), ui: Dev::Ui).returns(Dev::RunnerStatus)
+          T.proc.params(
+            container_required: T::Boolean,
+            project_root: T.nilable(Pathname),
+            declarations: T::Hash[String, Dev::RunnerRole::Declaration],
+            ui: Dev::Ui,
+          ).returns(Dev::RunnerStatus)
         end
 
         sig { params(runner_status_factory: StatusFactory).void }
-        def initialize(runner_status_factory: ->(container_required, project_root, ui) {
+        def initialize(runner_status_factory: ->(container_required, project_root, declarations, ui) {
           # The lock is what the host identity's reach is checked over, and the
-          # checkout's repo is whose access to each org scope's slots is reported;
-          # neither outside a checkout (an unresolvable checkout is no repo).
+          # checkout's repo is whose access to each org scope's slots is reported
+          # and what its declared roles bind to; none of it outside a checkout
+          # (an unresolvable checkout is no repo).
           pins = project_root ? Dev::Deps::Lockfile.new(dir: project_root).read : []
           repo = project_root ? self.class.current_repo : nil
-          Dev::RunnerStatus.new(container_required:, pins:, repo:, ui:)
+          roles = self.class.roles_at_hand(declarations, project_root: project_root, repo: repo)
+          Dev::RunnerStatus.new(container_required:, pins:, repo:, roles:, ui:)
         })
           super()
           @runner_status_factory = runner_status_factory
@@ -53,6 +65,28 @@ module Dev
           rescue Dev::RunnerSetup::Error
             nil
           end
+
+          # The roles status holds this host's slots against: the one-release
+          # aliases, and the checkout's declarations bound to its repo and
+          # series — only when the checkout resolves to a repo, since a
+          # declared role's pins are spelled with it.
+          #
+          # @param declarations [Hash{String => Dev::RunnerRole::Declaration}] the checkout's dev.yml roles
+          # @param project_root [Pathname, nil] the checkout; nil outside one
+          # @param repo [String, nil] the checkout's "owner/repo"; nil when unresolvable
+          # @return [Hash{String => Dev::RunnerRole}]
+          # @raise [Dev::RunnerRole::DeclarationError] a declaration pins workflows and the checkout keeps no semver VERSION
+          sig do
+            params(declarations: T::Hash[String, Dev::RunnerRole::Declaration], project_root: T.nilable(Pathname), repo: T.nilable(String))
+              .returns(T::Hash[String, Dev::RunnerRole])
+          end
+          def roles_at_hand(declarations, project_root:, repo:)
+            return Dev::RunnerRoleAliases::ALL if project_root.nil? || repo.nil?
+
+            version = Dev::Lifecycle::ProjectVersion.declared(project_root)
+            bound = declarations.transform_values { |declaration| declaration.bind(repo: repo, version: version) }
+            Dev::RunnerRoleAliases::ALL.merge(bound)
+          end
         end
 
         # The summary line, then what `--check` is for.
@@ -67,9 +101,13 @@ module Dev
             re-derived from the host and GitHub each time, and the remedy is named
             on each red line (most: re-run `dev runner register`).
 
+            In a checkout, the roles its dev.yml declares (runner_roles:) are the
+            ones a slot is held against; a slot of a role declared elsewhere is
+            known by its runner group, its reach shown but not judged.
+
             #{CHECK_FLAG} inspects the host's posture alone — the runner user and its login,
-            the toolchain, the agent host (its user, group memberships, sudoers edge,
-            data root, brew locks), the WSL runner host, host tooling — and exits 1
+            the toolchain, each job identity (its user, group memberships, sudoers
+            edge, data root, brew locks), the WSL runner host, host tooling — and exits 1
             when any fact is red. GitHub is not asked: the family facts need the org
             token and are the human's run. Which roles are enrolled is read from each
             enrollment's own record, so it runs in every job on the job's identity;
@@ -96,7 +134,13 @@ module Dev
         # @raise [Dev::RunnerStatus::PostureDriftError] `--check`, with a red fact
         sig { override.params(args: Cli::ParsedArgs, context: ExecutionContext).void }
         def call(args:, context:)
-          status = @runner_status_factory.call(context.project&.project_images&.containerized? || false, context.project&.root, context.ui)
+          project = context.project
+          status = @runner_status_factory.call(
+            project&.project_images&.containerized? || false,
+            project&.root,
+            project&.runner_roles || {},
+            context.ui,
+          )
           args.flag?(CHECK_FLAG) ? status.check : status.report
         end
       end
