@@ -2,6 +2,8 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "dev/deps/shadowenv_exec"
+require "dev/deps/toolchain_exec"
 require_relative "archive"
 require_relative "as_is_packager"
 require_relative "builder"
@@ -17,6 +19,7 @@ require_relative "script_packager"
 require_relative "script_publisher"
 require_relative "shell"
 require_relative "target"
+require_relative "vendored_packager"
 
 module Dev
   module Lifecycle
@@ -26,8 +29,9 @@ module Dev
     # naming an integration the publisher the lock contributed under that
     # name. The one place the sealed specs are matched.
     #
-    # The project root, the shell and the lock's publishers are fixed for
-    # a checkout and so are constructor-owned; the target is per call.
+    # The project root, the shell, the project's toolchain seam and the
+    # lock's publishers are fixed for a checkout and so are
+    # constructor-owned; the target is per call.
     class Ports
       extend T::Sig
 
@@ -41,11 +45,22 @@ module Dev
       # @param shell [Shell] the process boundary the script forms and the archive share
       # @param publishers [Hash{String => Publisher}] the publishers the
       #   lock contributes, by channel name
-      sig { params(project_root: Pathname, shell: Shell, publishers: T::Hash[String, Publisher]).void }
-      def initialize(project_root:, shell: Shell.new, publishers: {})
+      # @param toolchain_exec [Deps::ToolchainExec] the project's Ruby, which
+      #   a vendored archive installs the tree's gems under
+      sig do
+        params(
+          project_root: Pathname,
+          shell: Shell,
+          publishers: T::Hash[String, Publisher],
+          toolchain_exec: Deps::ToolchainExec,
+        ).void
+      end
+      def initialize(project_root:, shell: Shell.new, publishers: {},
+        toolchain_exec: Deps::ShadowenvExec.new(project_root: project_root))
         @project_root = project_root
         @shell = shell
         @publishers = publishers
+        @toolchain_exec = toolchain_exec
       end
 
       # The target's builder, or nil when it declares nothing to compile.
@@ -67,7 +82,8 @@ module Dev
       end
 
       # The target's packager — a NonePackager for `packager: none`, which
-      # a caller checks with Target#packageable? before reaching for it.
+      # a caller checks with Target#packageable? before reaching for it; an
+      # archive with `vendor: true` is the Archive behind a VendoredPackager.
       #
       # @param target [Target]
       # @return [Packager]
@@ -76,7 +92,7 @@ module Dev
         spec = target.packager
         case spec
         when PackagerSpec::Script then ScriptPackager.new(command: spec.command, project_root: @project_root, shell: @shell)
-        when PackagerSpec::Archive then Archive.new(form: spec.form, shell: @shell)
+        when PackagerSpec::Archive then archive_packager(spec)
         when PackagerSpec::AsIs then AsIsPackager.new
         when PackagerSpec::None then NonePackager.new
         else
@@ -110,6 +126,18 @@ module Dev
           T.absurd(spec)
           # simplecov:enable
         end
+      end
+
+      private
+
+      # @param spec [PackagerSpec::Archive]
+      # @return [Packager] the Archive in the declared form, vendoring first when asked
+      sig { params(spec: PackagerSpec::Archive).returns(Packager) }
+      def archive_packager(spec)
+        archive = Archive.new(form: spec.form, shell: @shell)
+        return archive unless spec.vendor
+
+        VendoredPackager.new(packager: archive, exec: @toolchain_exec)
       end
     end
   end

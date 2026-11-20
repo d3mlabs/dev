@@ -38,6 +38,8 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     spec                                                                                                           | port_class                       | rendered
     Dev::Lifecycle::PackagerSpec::Archive.new                                                                      | Dev::Lifecycle::Archive          | "archive"
     Dev::Lifecycle::PackagerSpec::Archive.new(form: Dev::Lifecycle::Archive::Form::Tar.new)                        | Dev::Lifecycle::Archive          | "archive (tar)"
+    Dev::Lifecycle::PackagerSpec::Archive.new(vendor: true)                                                        | Dev::Lifecycle::VendoredPackager | "archive, vendored"
+    Dev::Lifecycle::PackagerSpec::Archive.new(form: Dev::Lifecycle::Archive::Form::Tar.new, vendor: true)          | Dev::Lifecycle::VendoredPackager | "archive (tar), vendored"
     Dev::Lifecycle::PackagerSpec::AsIs.new                                                                         | Dev::Lifecycle::AsIsPackager     | "as-is"
     Dev::Lifecycle::PackagerSpec::None.new                                                                         | Dev::Lifecycle::NonePackager     | "none"
     Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/package")                                             | Dev::Lifecycle::ScriptPackager   | "./bin/package"
