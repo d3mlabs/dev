@@ -11,16 +11,19 @@ require "dev/ui"
 
 module Dev
   module Cli
-    # The publishers the project's lock contributes:
-    # the write side of every integration the lock reaches, by the `deploy`
-    # channel each contributes — `steam` for a project pinning the
-    # Steamworks SDK, `ficsit` for one pinning SML, `brew` for one whose
-    # Ruby installs through brew. The lock is the only declaration, as it is
-    # for the images (ProjectImages): a store is publishable exactly when
-    # the project already depends on it, because the store *is* that
-    # integration, both directions. Nothing in dev.yml names a
-    # publisher; a `deploy` child of a contributed channel's name configures
-    # it (ChannelBinder).
+    # The publishers the project reaches: the write side of every
+    # integration the lock reaches, by the `deploy` channel each
+    # contributes — `steam` for a project pinning the Steamworks SDK,
+    # `ficsit` for one pinning SML, `brew` for one whose Ruby installs
+    # through brew — and the one reached by declaration, `gh`, for a
+    # project whose dev.yml names it. The lock is the declaration for the
+    # first kind, as it is for the images (ProjectImages): a store is
+    # publishable exactly when the project already depends on it, because
+    # the store *is* that integration, both directions. The `gh` channel's
+    # store is the project's own releases, which no pin names, so the
+    # channel line in dev.yml is its declaration (Deps::Registry::Reach).
+    # Either way a `deploy` child of a contributed channel's name
+    # configures it (ChannelBinder).
     #
     # Reads deps.lock once, on first use; the Registry decides which entries
     # the pins reach. The lock also says which **taps** the project pins
@@ -37,12 +40,15 @@ module Dev
       # @param root [Pathname] the checkout (its deps.lock is read, once)
       # @param ui [Dev::Ui] the terminal a publisher onboards a first-time
       #   credential at
+      # @param declared [Array<String>] the channel names dev.yml declares
+      #   under `deploy:` — what reaches a declaration-reached publisher
       # @param entries [Array<Deps::Registry::Entry>] the registry table to
       #   read the write sides from (tests substitute one)
-      sig { params(root: Pathname, ui: Dev::Ui, entries: T::Array[Deps::Registry::Entry]).void }
-      def initialize(root:, ui:, entries: Deps::Registry::INTEGRATIONS)
+      sig { params(root: Pathname, ui: Dev::Ui, declared: T::Array[String], entries: T::Array[Deps::Registry::Entry]).void }
+      def initialize(root:, ui:, declared:, entries: Deps::Registry::INTEGRATIONS)
         @root = root
         @ui = ui
+        @declared = declared
         @entries = entries
         @contributed = T.let(nil, T.nilable(T::Hash[String, Lifecycle::Publisher]))
       end
@@ -55,14 +61,17 @@ module Dev
       def contributed
         @contributed ||= begin
           pins = Deps::Lockfile.new(dir: @root).read
-          Deps::Registry.publishers(project_root: @root, pinned: pinned_types(pins), taps: pinned_taps(pins), ui: @ui, entries: @entries)
+          Deps::Registry.publishers(
+            project_root: @root, pinned: pinned_types(pins), declared: @declared, taps: pinned_taps(pins), ui: @ui, entries: @entries,
+          )
         end
       end
 
-      # What this dev could contribute: each channel the table can ship to,
-      # with the types a pin of which reaches it (Registry.publisher_reach) —
-      # the lock plays no part. The ChannelBinder's diagnosis of a declared
-      # channel the lock leaves protocol-less.
+      # What this dev could contribute by a pin: each channel the table
+      # ships to that way, with the types a pin of which reaches it
+      # (Registry.publisher_reach) — the lock plays no part. The
+      # ChannelBinder's diagnosis of a declared channel the lock leaves
+      # protocol-less.
       #
       # @return [Hash{String => Array<Symbol>}]
       sig { returns(T::Hash[String, T::Array[Symbol]]) }

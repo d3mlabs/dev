@@ -15,6 +15,7 @@ require_relative "ficsit_repository"
 require_relative "ficsit_integration"
 require_relative "gh_repository"
 require_relative "gh_integration"
+require_relative "gh_publisher"
 require_relative "steam_repository"
 require_relative "steam_integration"
 require_relative "egs_integration"
@@ -52,7 +53,9 @@ module Dev
     # The single source of truth for how each dependency type is wired.
     # Each Entry says which Repository resolves the type, which Integration
     # (if any) installs it, which Publisher (if any) is its write side (the
-    # `deploy` channel a project pinning the type gets), and which extra
+    # `deploy` channel a project gets by pinning the type — or, for the one
+    # whose destination is the project's own repo, by declaring the
+    # channel: Reach), and which extra
     # constructor arguments each side needs. The runner derives its
     # resolution and install tables from it, and
     # registry_consistency_test.rb fails when a repository, integration or
@@ -65,6 +68,26 @@ module Dev
       # Beside Entry rather than inside it: a class body in Data.define's
       # block is lexically the module's.
       class ChannelWithoutPublisherError < ArgumentError; end
+
+      # An Entry says how its publisher is reached but has none.
+      class ReachWithoutPublisherError < ArgumentError; end
+
+      # How a project reaches an entry's publisher — what contributes its
+      # `deploy` channel.
+      class Reach < T::Enum
+        enums do
+          # The lock pins the type, or one installing through it: the
+          # store the pin resolves from is the destination (a tap, Steam,
+          # SMR, rubygems.org), so the pin is the declaration.
+          Pin = new("pin")
+          # dev.yml declares the channel. The destination is the project's
+          # own repo on the forge, which every project that releases has,
+          # so no pin names it — and a head there means something only to
+          # a project followers install from, so the channel is never
+          # contributed unasked.
+          Declaration = new("declaration")
+        end
+      end
 
       # @param symbol [Symbol] the DSL/declaration integration symbol (e.g. :brew)
       # @param repository [Class] Repository subclass that reports this type's universes
@@ -96,9 +119,11 @@ module Dev
       #   publisher contributes, when the destination is not called as the
       #   dependency type is: gems (`bundler`) ship to `rubygems`, an `image`
       #   is pushed to `ghcr`. nil names the channel after the entry.
+      # @param reached_by [Reach] how a project reaches the publisher: by
+      #   pinning the type (the default), or by declaring the channel
       Entry = Data.define(
         :symbol, :repository, :repository_needs, :scheme, :locker, :locker_needs,
-        :integration, :integration_needs, :install_alias, :publisher, :publisher_needs, :channel,
+        :integration, :integration_needs, :install_alias, :publisher, :publisher_needs, :channel, :reached_by,
       ) do
         extend T::Sig
 
@@ -166,6 +191,11 @@ module Dev
           to_h.fetch(:channel)
         end
 
+        sig { returns(Reach) }
+        def reached_by
+          to_h.fetch(:reached_by)
+        end
+
         sig do
           params(
             symbol: Symbol,
@@ -180,15 +210,20 @@ module Dev
             publisher: T.nilable(T::Class[Lifecycle::Publisher]),
             publisher_needs: T::Array[Symbol],
             channel: T.nilable(String),
+            reached_by: Reach,
           ).void
         end
         def initialize(symbol:, repository:, scheme:, integration:,
                        repository_needs: [], locker: nil, locker_needs: [],
-                       integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [], channel: nil)
+                       integration_needs: [], install_alias: nil, publisher: nil, publisher_needs: [], channel: nil,
+                       reached_by: Reach::Pin)
           super
-          return if channel.nil? || publisher
+          return if publisher
 
-          raise ChannelWithoutPublisherError, "entry #{symbol} names channel #{channel.inspect} but has no publisher to contribute it"
+          raise ChannelWithoutPublisherError, "entry #{symbol} names channel #{channel.inspect} but has no publisher to contribute it" if channel
+          return if reached_by == Reach::Pin
+
+          raise ReachWithoutPublisherError, "entry #{symbol} is reached by #{reached_by.serialize} but has no publisher to reach"
         end
 
         # @return [Boolean] whether this type installs on a build host (an
@@ -318,12 +353,21 @@ module Dev
             publisher: FicsitRepository,
             publisher_needs: %i[ui],
           ),
+          # The write side is the project's own releases on the forge: a
+          # project declaring `deploy gh` gets the publisher that moves the
+          # channel's head — the series tag and the latest designation —
+          # to a release it cut. No pin reaches it: every project that
+          # releases has the destination, and only a project followers
+          # install from wants a head there.
           Entry.new(
             symbol: :gh,
             repository: GhRepository,
             scheme: TagScheme,
             integration: GhIntegration,
             integration_needs: %i[project_root],
+            publisher: GhPublisher,
+            publisher_needs: %i[project_root],
+            reached_by: Reach::Declaration,
           ),
           # The write side is the repository class: one client (steamcmd)
           # reads a depot and uploads a build.
@@ -488,14 +532,16 @@ module Dev
         end
 
         # Build the channel-name -> Publisher hash of the write sides the
-        # lock reaches: every publishing entry whose type the lock pins,
-        # directly or through an alias (a project pinning only `ruby`
-        # installs it through brew, so brew's publisher is its too). These
-        # are the channels `deploy` contributes with no dev.yml line.
-        # Built-in entries only.
+        # project reaches: every publishing entry reached by a pin — its
+        # type pinned, directly or through an alias (a project pinning only
+        # `ruby` installs it through brew, so brew's publisher is its too)
+        # — or by a declaration — its channel declared in dev.yml
+        # (Reach). The pin-reached ones are the channels `deploy`
+        # contributes with no dev.yml line. Built-in entries only.
         #
         # @param project_root [Pathname] project root (threaded to publishers that need it)
         # @param pinned [Array<Symbol>] the integration types the lock pins
+        # @param declared [Array<String>] the channel names dev.yml declares
         # @param ui [Dev::Ui] the terminal a publisher onboards a first-time
         #   credential at (threaded to publishers that prompt)
         # @param taps [Array<Tap>] the taps the lock pins formulae from (the
@@ -503,13 +549,14 @@ module Dev
         # @param entries [Array<Entry>] the table to read (tests substitute one)
         # @return [Hash{String => Lifecycle::Publisher}] in table order
         sig do
-          params(project_root: Pathname, pinned: T::Array[Symbol], ui: Dev::Ui, taps: T::Array[Tap], entries: T::Array[Entry])
-            .returns(T::Hash[String, Lifecycle::Publisher])
+          params(
+            project_root: Pathname, pinned: T::Array[Symbol], ui: Dev::Ui, declared: T::Array[String], taps: T::Array[Tap], entries: T::Array[Entry],
+          ).returns(T::Hash[String, Lifecycle::Publisher])
         end
-        def publishers(project_root:, pinned:, ui:, taps: [], entries: INTEGRATIONS)
+        def publishers(project_root:, pinned:, ui:, declared: [], taps: [], entries: INTEGRATIONS)
           context = { project_root:, taps:, ui: }
-          reached = entries.select { |entry| pinned.include?(entry.symbol) }.flat_map { |entry| [entry.symbol, entry.install_alias] }
-          entries.select { |entry| entry.publishes? && reached.include?(entry.symbol) }.to_h do |entry|
+          pin_reached = entries.select { |entry| pinned.include?(entry.symbol) }.flat_map { |entry| [entry.symbol, entry.install_alias].compact }
+          entries.select { |entry| entry.publishes? && reached?(entry, pin_reached:, declared:) }.to_h do |entry|
             # T.unsafe: the keyword set is runtime-selected (publisher_needs);
             # the publisher constructors' own sigs validate at runtime.
             publisher = T.unsafe(T.must(entry.publisher)).new(**T.unsafe(context).slice(*entry.publisher_needs))
@@ -517,22 +564,45 @@ module Dev
           end
         end
 
-        # Every channel a table can ship to, with the types whose pin
-        # reaches its publisher: the entry's own, and each entry that
-        # installs through it (`ruby` → brew). What a project must pin for a
-        # channel it declares without `run:`; a name absent here is one this
-        # dev ships no publisher for.
+        # Every channel a table ships to by a pin, with the types whose
+        # pin reaches its publisher: the entry's own, and each entry that
+        # installs through it (`ruby` → brew). What a project must pin for
+        # a channel it declares without `run:`; a name absent here is one
+        # this dev ships no pin-reached publisher for. A channel reached
+        # by declaration is not here: declaring it is what reaches it, so
+        # there is no pin to name.
         #
         # @param entries [Array<Entry>] the table to read (tests substitute one)
         # @return [Hash{String => Array<Symbol>}] channel name => types, in table order
         sig { params(entries: T::Array[Entry]).returns(T::Hash[String, T::Array[Symbol]]) }
         def publisher_reach(entries: INTEGRATIONS)
-          entries.select(&:publishes?).to_h do |entry|
+          entries.select { |entry| entry.publishes? && entry.reached_by == Reach::Pin }.to_h do |entry|
             [entry.channel_name, [entry.symbol] + entries.select { |other| other.install_alias == entry.symbol }.map(&:symbol)]
           end
         end
 
         private
+
+        # Whether a project reaches a publishing entry's publisher, by the
+        # way the entry says it is reached.
+        #
+        # @param entry [Entry] a publishing entry
+        # @param pin_reached [Array<Symbol>] the types the lock pins, with the targets they install through
+        # @param declared [Array<String>] the channel names dev.yml declares
+        # @return [Boolean]
+        sig { params(entry: Entry, pin_reached: T::Array[Symbol], declared: T::Array[String]).returns(T::Boolean) }
+        def reached?(entry, pin_reached:, declared:)
+          reach = entry.reached_by
+          case reach
+          when Reach::Pin then pin_reached.include?(entry.symbol)
+          when Reach::Declaration then declared.include?(entry.channel_name)
+          else
+            # simplecov:disable — the enum has no other member; T.absurd
+            # keeps the static proof.
+            T.absurd(reach)
+            # simplecov:enable
+          end
+        end
 
         # Instantiate the given entries' integrations, then alias the types
         # that install through another entry's instance.

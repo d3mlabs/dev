@@ -63,6 +63,61 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     gh.calls.first.stdin == "abc1234 add b\n"
   end
 
+  test "create with latest: false leaves the forge's latest designation where it is — a head's to move, never a cut's (dev#655)" do
+    Given
+    gh = FakeGh.new.answers(["release", "create"], with: "#{URL}\n")
+
+    When
+    releases(gh).create(TAG, title: "v1.2.0", notes: "", latest: false)
+
+    Then
+    gh.calls.map(&:argv) == [["release", "create", "v1.2.0", "--title", "v1.2.0", "--notes-file", "-", "--verify-tag", "--latest=false"]]
+  end
+
+  test "facts reads the release as the forge holds it: whether it is frozen and whether it is a pre-release (dev#655)" do
+    Given
+    gh = FakeGh.new.answers(["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"], with: { "immutable" => immutable, "prerelease" => prerelease, "url" => URL })
+
+    When
+    facts = releases(gh).facts(TAG)
+
+    Then
+    facts == Dev::Lifecycle::GithubReleases::Facts.new(immutable:, prerelease:)
+    gh.calls.map(&:argv) == [["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
+
+    Where
+    immutable | prerelease
+    true      | false
+    false     | true
+    false     | false
+  end
+
+  test "facts reads a release object without the immutable field — a forge predating it — as mutable" do
+    Given
+    gh = FakeGh.new.answers(["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"], with: { "prerelease" => false })
+
+    Expect
+    !releases(gh).facts(TAG).immutable
+  end
+
+  test "facts maps #{what} to the archive's own error" do
+    Given
+    gh = refusal ? FakeGh.new.refuses(["api"], with: refusal) : FakeGh.new.answers(["api"], with: printed)
+
+    When
+    releases(gh).facts(TAG)
+
+    Then
+    raises(error)
+
+    Where
+    what                       | refusal                       | printed       | error
+    "a tag with no release"    | "HTTP 404: Not Found"         | nil           | Dev::Lifecycle::GithubReleases::ReleaseMissingError
+    "a refused read"           | "HTTP 401: Bad credentials"   | nil           | Dev::Lifecycle::GithubReleases::ApiError
+    "an answer not JSON"       | nil                           | "not json\n"  | Dev::Lifecycle::GithubReleases::MalformedReleaseError
+    "an answer not a release"  | nil                           | "[]\n"        | Dev::Lifecycle::GithubReleases::MalformedReleaseError
+  end
+
   test "a refused create is the archive's error" do
     Given
     gh = FakeGh.new.refuses(["release", "create"], with: "tag v1.2.0 doesn't exist")
