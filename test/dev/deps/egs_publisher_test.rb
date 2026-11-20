@@ -225,4 +225,9 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
     Then
     raises Dev::Deps::EgsChannelOptions::MissingOptionError
   end
+
+  test "the channel's head is pointed: the track's label sits on one binary at a time" do
+    Expect
+    publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+  end
 end

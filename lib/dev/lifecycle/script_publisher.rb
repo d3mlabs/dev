@@ -23,6 +23,12 @@ module Dev
     #
     # The project root and the shell are fixed for a checkout and so are
     # constructor-owned; the shipments are per call.
+    #
+    # The channel's head is pointed: a `run:` line is run over its
+    # destination once per deploy, and the destination holds what the last
+    # deploy left there until the next one replaces it — a pointer the
+    # script moves. dev reads nothing back from a script, so the pointer is
+    # the script's to keep and never dev's to read.
     class ScriptPublisher
       extend T::Sig
       include Publisher
@@ -63,6 +69,12 @@ module Dev
             "deploy script `#{@command}` for #{shipment.name} → #{channel} #{Shell.describe(status)}"
         end
         Receipt.new(summary: "run: #{@command}")
+      end
+
+      # Pointed: each deploy replaces what the destination holds.
+      sig { override.returns(HeadStrategy) }
+      def head_strategy
+        HeadStrategy::Pointed
       end
 
       # The declaration as `dev help` renders it: the line itself.

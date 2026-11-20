@@ -5,6 +5,7 @@ require "pathname"
 require "dev/container_engine"
 require "dev/lifecycle/build_id"
 require "dev/lifecycle/channel"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/shipment"
@@ -28,6 +29,12 @@ module Dev
     # deploy with nothing uploaded. The archives are read-only input;
     # nothing lands in the scratch. Credentials are the registry login's
     # (RegistryLogin), held for the pushes only.
+    #
+    # The channel's head is pointed: a registry tag is a movable pointer
+    # at a digest (what `latest` is on every registry), so a head is a tag
+    # moved to a release's image and a rollback moves it back. This
+    # publisher pushes each release under its own version tag and moves
+    # no head tag yet; the strategy is the destination's regardless.
     #
     # The engine and the login are resolved on first use, not at
     # construction, since every contributed publisher is built at load for
@@ -120,6 +127,12 @@ module Dev
         uploads = shipments.map { |shipment| upload_for(shipment, channel:, track:) }
         login.with(REGISTRY, publish: true) { uploads.each { |upload| push(upload) } }
         Lifecycle::Receipt.new(summary: "pushed #{uploads.map(&:target).join(", ")}")
+      end
+
+      # Pointed: a registry tag is a pointer at a digest.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Pointed
       end
 
       # The declaration as `dev help` renders it.

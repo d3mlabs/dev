@@ -457,6 +457,8 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     error = raises Dev::Cli::Builtins::DeployCommand::UnboundChannelError
     error.message == fault.message
     verb.details.fetch(1) == "Protocol: run: sh ./stage.sh — deps.lock pins no `steam`"
+    # No publisher to ask, so no head line.
+    verb.details.length == 2
   end
 
   test "`--runner` sends the verb to the label re-spelled as given — the channel, the build, the selection flags — and the host selects from its own store: nothing is read, shipped or recorded here" do
@@ -581,7 +583,7 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     @gh.posted == []
   end
 
-  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run, --runner and --container, its placement, the accept set and protocol as details" do
+  test "the verb's traits: the channel's desc, the selector's flags plus --dry-run, --runner and --container, its placement, the accept set, protocol and head strategy as details" do
     Given
     verb = command
 
@@ -591,9 +593,9 @@ class Dev::Cli::Builtins::DeployCommandTest < Minitest::Test
     verb.flags.map(&:name) == ["--config", "--release", "--allow-stale", "--force", "--dry-run", "--runner", "--container"]
     verb.placement == Dev::Cli::Placement::Host.new
     verb.listing.nil?
-    verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh"]
+    verb.details == ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev, rspock", "Protocol: run: sh ./stage.sh", "Head: pointed"]
     verb.completions([]) == ["cellbound-3d-dev", "cellbound-3d-win64-dev", "cellbound-3d-linux64-dev", "rspock"]
     command(steam_channel, publishers: { "steam" => RecordingPublisher.new }).details ==
-      ["Accepts: cellbound-3d-win64-release, cellbound-3d-linux64-release", "Protocol: publisher: steam"]
+      ["Accepts: cellbound-3d-win64-release, cellbound-3d-linux64-release", "Protocol: publisher: steam", "Head: pointed"]
   end
 end

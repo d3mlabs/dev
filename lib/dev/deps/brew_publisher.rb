@@ -6,6 +6,7 @@ require "dev/lifecycle/channel"
 require "dev/lifecycle/gh"
 require "dev/lifecycle/git_state"
 require "dev/lifecycle/github_releases"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/release_tag"
@@ -37,6 +38,11 @@ module Dev
     #
     # Separate from BrewRepository, the read side: `brew info` and git over
     # a clone share nothing, so the two change for different reasons.
+    #
+    # The channel's head is pointed: a formula's stable `url`/`sha256` is
+    # the pointer `brew install <formula>` follows, and this publisher is
+    # what moves it — to the release's asset on a deploy, back to a
+    # previous release's when that release is deployed again.
     class BrewPublisher
       extend T::Sig
       include Lifecycle::Publisher
@@ -96,6 +102,12 @@ module Dev
         clone.commit!(message: "#{rewritten.map(&:name).join(", ")}: #{tag.version}", files: rewritten)
         clone.push!
         Lifecycle::Receipt.new(summary: "#{tap.name}@#{clone.head[0, Lifecycle::GitState::SHORT_SHA_LENGTH]}: #{rewritten.map(&:name).join(", ")} → #{tag}", hint:)
+      end
+
+      # Pointed: the formula's stable spec is the pointer.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Pointed
       end
 
       # The declaration as `dev help` renders it.

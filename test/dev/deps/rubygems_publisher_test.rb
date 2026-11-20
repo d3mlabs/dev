@@ -239,8 +239,9 @@ class Dev::Deps::RubygemsPublisherTest < Minitest::Test
     ENV["PATH"] = original_path if original_path
   end
 
-  test "the publisher renders as the tool it runs" do
+  test "the publisher renders as the tool it runs, and declares a derived head: rubygems.org has versions and no pointer" do
     Expect
     @publisher.to_s == "gem push"
+    @publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Derived
   end
 end

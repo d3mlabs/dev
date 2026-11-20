@@ -5,6 +5,7 @@ require "pathname"
 require "dev/credentials"
 require "dev/ui"
 require "dev/lifecycle/channel"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/shell"
@@ -68,6 +69,10 @@ module Dev
     # password login issues a fresh Steam Guard challenge. Both ride a
     # steamcmd script file (`+runscript`) created `0600` in the scratch and
     # removed after the run, so the password is on no command line.
+    #
+    # The channel's head is pointed: a branch is a pointer at one build
+    # (the buildid the read side resolves as the branch's tip), set live
+    # on a deploy and set back to a previous build on a rollback.
     class SteamRepository < Repository
       extend T::Sig
       include Lifecycle::Publisher
@@ -171,6 +176,12 @@ module Dev
         )
         build_id = run_app_build(app_build.write(scratch), scratch)
         Lifecycle::Receipt.new(summary: summary(build_id, options, branch, content_roots.keys))
+      end
+
+      # Pointed: a branch is a pointer at one build.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Pointed
       end
 
       private

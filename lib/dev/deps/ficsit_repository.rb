@@ -5,6 +5,7 @@ require "pathname"
 require "dev/credentials"
 require "dev/ui"
 require "dev/lifecycle/channel"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
 require "dev/lifecycle/shipment"
@@ -45,6 +46,11 @@ module Dev
     # it made. The credential is the user's API key, `dev cred get ficsit
     # api_key` (or `FICSIT_API_KEY`); nothing in dev.yml names the mod —
     # the `.uplugin` does.
+    #
+    # The channel's head is derived: SMR keeps a mod's versions, ordered by
+    # their `SemVersion`, and no pointer a publisher moves — the mod
+    # manager installs the greatest release-stability version — so a
+    # deploy moves the head by uploading a greater version.
     class FicsitRepository < Repository
       extend T::Sig
       include Lifecycle::Publisher
@@ -230,6 +236,12 @@ module Dev
         published = await_processing(plugin, mod_id, upload_id, token)
 
         Lifecycle::Receipt.new(summary: "ficsit: #{plugin} → #{stability}, #{published}")
+      end
+
+      # Derived: SMR has versions and no pointer.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Derived
       end
 
       # The declaration as `dev help` renders it.
