@@ -96,6 +96,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  an edit to the copy, and the verb needing it checks presence through
  `Lifecycle::ShippedWorkflow`.
  → .cursor/skills/learnings/shipped-workflow-verbatim/
+- [architecture/another-projects-facts-are-declarations] Another
+ project's facts (its labels, group, workflow paths, job user, CLI) never
+ live in dev as constants, builtins or flags: the project declares them in
+ its dev.yml (`runner_roles:`), dev binds the declaration where it is read,
+ and a migration is a one-release warning alias in one module.
+ → .cursor/skills/learnings/another-projects-facts-are-declarations/
 
 ## toolchain
 
