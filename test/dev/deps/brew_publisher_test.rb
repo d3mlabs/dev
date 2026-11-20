@@ -276,8 +276,9 @@ class Dev::Deps::BrewPublisherTest < Minitest::Test
     origin_git.capture(["log", "--format=%s", "main"]).lines.length == 1
   end
 
-  test "to_s is the channel's name, as dev help renders a protocol" do
+  test "to_s is the channel's name, as dev help renders a protocol; the head is pointed, the formula's stable spec being the pointer" do
     Expect
     publisher(forge(lookups: 0)).to_s == "brew"
+    publisher(forge(lookups: 0)).head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
   end
 end

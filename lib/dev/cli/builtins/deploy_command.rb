@@ -193,12 +193,15 @@ module Dev
         sig { override.returns(T.nilable(Placement)) }
         attr_reader :placement
 
-        # The accept set, expanded, and where the protocol comes from — what
-        # `dev help deploy` says of each channel.
+        # The accept set, expanded, where the protocol comes from and how
+        # the destination keeps its head — what `dev help deploy` says of
+        # each channel. A faulted channel has no publisher to ask for a
+        # head, so its line is the fault's.
         sig { override.returns(T::Array[String]) }
         def details
           protocol = ["Protocol: #{@channel.publisher}", @fault&.summary].compact.join(" — ")
-          ["Accepts: #{@channel.builds.map(&:name).join(", ")}", protocol]
+          head = @fault.nil? ? ["Head: #{@ports.publisher_for(@channel).head_strategy}"] : []
+          ["Accepts: #{@channel.builds.map(&:name).join(", ")}", protocol, *head]
         end
 
         # Every name the positional admits: the accept patterns and the

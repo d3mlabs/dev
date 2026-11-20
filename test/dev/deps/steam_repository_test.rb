@@ -197,6 +197,11 @@ class Dev::Deps::SteamRepositoryTest < Minitest::Test
     !(@root / "store/.steam").exist?
   end
 
+  test "the channel's head is pointed: a branch is a pointer at one build" do
+    Expect
+    Dev::Deps::SteamRepository.new.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+  end
+
   test "find reports the named branch's current buildid — the one version the coordinate's universe holds" do
     Given "an app with public and experimental branch tips"
     repo = Dev::Deps::SteamRepository.new

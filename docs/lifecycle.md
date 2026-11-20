@@ -29,6 +29,12 @@ ships artifacts from the store on the channel's **testing** track, or
 from a release on its **live** track. `dev release` cuts a tag and
 attaches archives to a GitHub release; it deploys nothing.
 
+Every channel has a **head**: what a follower installs when it asks for
+nothing in particular. `release` never moves a head; `deploy` moves
+exactly one. How the destination keeps it is the channel's **head
+strategy**, declared by its publisher ([The channel
+contract](#the-channel-contract)).
+
 ## Naming a build
 
 Every verb acts on one build, named three ways that mean the same thing:
@@ -390,8 +396,10 @@ project whose lock pins it. The two sets merge by name:
 | — | a publisher | the channel appears as the lock's: every packageable build accepted, a stock `desc`. A project with nothing packageable gets no row. |
 
 `dev help deploy` lists each channel with its environment, its accept set
-expanded to builds (`Accepts: …`) and where its protocol comes from
-(`Protocol: run: ./bin/stage`, `Protocol: publisher: steam`).
+expanded to builds (`Accepts: …`), where its protocol comes from
+(`Protocol: run: ./bin/stage`, `Protocol: publisher: steam`) and how its
+destination keeps its head (`Head: pointed`, `Head: derived`); a channel
+bound with a fault has no publisher to ask and shows no head line.
 
 ## The channel contract
 
@@ -411,6 +419,35 @@ the same over either:
 Credentials come from `dev cred` or the script's environment, never from
 `dev.yml`.
 
+**Head.** Every channel has a head — what a follower installs when it
+asks for nothing in particular — and one rule holds across channels:
+`release` never moves a head, `deploy` moves exactly one. The mechanism
+is the destination's, and every publisher declares which of two it has:
+
+- **pointed** — the store keeps a movable pointer (a registry tag, a
+  formula's stable `url`/`sha256`, a Steam branch's live build, an EGS
+  label, what a `run:` script's destination holds after the last run).
+  `deploy` moves it to the shipped version; deploying an earlier release
+  again moves it back, so the head may sit below the greatest version the
+  store carries.
+- **derived** — the store keeps versions and no pointer (rubygems.org,
+  SMR). dev computes the head by one rule: the greatest non-prerelease
+  version there. `deploy` moves the head by publishing a greater version,
+  and nothing moves it back.
+
+A head is kept per **series** — every version of one major, `v1`, `v2`:
+a pointed channel holds one pointer per series it serves, a derived
+channel's head within a series is that major's greatest release. A
+follower on a series (`~> 1`) never crosses a major by following.
+
+The head is not the resolver's greatest-satisfying version. A lock wants
+the greatest version that satisfies its requirement; a follower wants
+what is deployed; after a rollback the deployed version is lower than the
+greatest one there, and the two must be allowed to say so. The set of
+strategies is closed: a destination that keeps no pointer and whose
+versions are not totally ordered is a third strategy to name in dev
+before it gets a publisher, never a special case inside one.
+
 **Options.** What a publisher cannot know from a build — the
 destination's identifiers — the channel declares under its own name
 (`steam:` on the `steam` channel). The publisher reads them first thing
@@ -425,14 +462,17 @@ is replaced on each deploy so nothing from a previous one rides along.
 
 ### Built-in publishers
 
-| Channel | Contributed by | `testing` | `live` | Credentials |
-| --- | --- | --- | --- | --- |
-| `rubygems` | a `gem` declaration | refused: rubygems.org has no track that is not live | `gem push` of each `.gem` | `dev cred` `rubygems/api_key` (`GEM_HOST_API_KEY` overrides; the shipped publish workflow sets it from a trusted-publishing token) |
-| `ghcr` | an `image` block | pushed as `ghcr.io/<org>/<name>:testing-<build id>` | pushed as `ghcr.io/<org>/<name>:<version>` | the registry login's: gh's token with `write:packages`, or `DEV_REGISTRY_TOKEN` |
-| `steam` | a `steam` app pin | set live on the `beta` branch | uploaded; the operator sets it live on `default` in Steamworks | `dev cred` `steam/username`, `steam/password` (or steamcmd's cached login) |
-| `egs` | the `egs` BuildPatchTool pin | labelled `Testing` | labelled `Live` | `dev cred` `egs/client_id`, `egs/client_secret` |
-| `ficsit` | a `ficsit` mod pin | SMR stability `beta` | SMR stability `release` | `dev cred` `ficsit/api_key` (`FICSIT_API_KEY`) |
-| `brew` | a formula pinned from a tap | refused: a formula points at a release asset | the tap's formulae rewritten to the release's assets | the `gh` login, pushing to the tap |
+| Channel | Contributed by | `testing` | `live` | Head | Credentials |
+| --- | --- | --- | --- | --- | --- |
+| `rubygems` | a `gem` declaration | refused: rubygems.org has no track that is not live | `gem push` of each `.gem` | derived: the greatest non-prerelease version pushed | `dev cred` `rubygems/api_key` (`GEM_HOST_API_KEY` overrides; the shipped publish workflow sets it from a trusted-publishing token) |
+| `ghcr` | an `image` block | pushed as `ghcr.io/<org>/<name>:testing-<build id>` | pushed as `ghcr.io/<org>/<name>:<version>` | pointed: a tag at a digest (dev moves none yet) | the registry login's: gh's token with `write:packages`, or `DEV_REGISTRY_TOKEN` |
+| `steam` | a `steam` app pin | set live on the `beta` branch | uploaded; the operator sets it live on `default` in Steamworks | pointed: the branch's live build | `dev cred` `steam/username`, `steam/password` (or steamcmd's cached login) |
+| `egs` | the `egs` BuildPatchTool pin | labelled `Testing` | labelled `Live` | pointed: the label | `dev cred` `egs/client_id`, `egs/client_secret` |
+| `ficsit` | a `ficsit` mod pin | SMR stability `beta` | SMR stability `release` | derived: the greatest `SemVersion` at `release` stability | `dev cred` `ficsit/api_key` (`FICSIT_API_KEY`) |
+| `brew` | a formula pinned from a tap | refused: a formula points at a release asset | the tap's formulae rewritten to the release's assets | pointed: the formula's stable spec | the `gh` login, pushing to the tap |
+
+A `run:` channel's head is pointed: the script's destination holds what
+the last deploy left there, and dev reads nothing back from it.
 
 A contributed channel the project does not declare accepts every
 packageable build. A project with a gem target and a zip target declares
