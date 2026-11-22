@@ -58,7 +58,7 @@ toolchain; the publisher never selects and never rewrites an archive.
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
-| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
+| Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none), `#owns_release_designation? → Boolean` (default: false; `release` cuts with `--latest=false` when any contributed publisher answers true) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
 
 `Lifecycle::Ports` maps a target's specs and a channel's to port
 instances. It is the one place that matches the sealed `BuilderSpec`,
@@ -190,7 +190,9 @@ whether the destination keeps a pointer `deploy` moves or versions dev
 derives the head over; a destination that does neither is a third
 strategy to add to `HeadStrategy` first; override `preview` when the
 destination has state worth reading before a deploy, so `--dry-run`
-reports it). A builder or packager is wired in `Lifecycle::Ports` from a
+reports it; override `owns_release_designation?` when the destination's
+head is GitHub's latest designation on the project's releases, so the
+cut leaves it to `deploy`). A builder or packager is wired in `Lifecycle::Ports` from a
 new `BuilderSpec` or `PackagerSpec` variant, and nowhere else. An
 integration's publisher needs no new spec: set it as `publisher:` on the
 integration's registry entry and every project that reaches the entry —

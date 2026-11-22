@@ -259,13 +259,30 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
     raises(Dev::Deps::GhPublisher::WorkingArtifactError)
   end
 
-  test "the channel's head is pointed, and the publisher declares itself by the channel's name" do
+  test "the channel's head is pointed, the forge's latest designation is its to move, and the publisher declares itself by the channel's name" do
     Given
     publisher = Dev::Deps::GhPublisher.new(project_root: @project)
 
     Expect
     publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+    publisher.owns_release_designation?
     publisher.to_s == "gh"
     Dev::Deps::GhPublisher::CHANNEL == "gh"
+  end
+
+  # A candidate over an empty forge, each member overridable.
+  def candidate(version: "1.3.0", sha: SHA_130, immutable: true, latest: nil)
+    Dev::Deps::GhPublisher::Candidate.new(
+      tag: Dev::Lifecycle::ReleaseTag.new(version), sha:,
+      facts: Dev::Lifecycle::GithubReleases::Facts.new(immutable:, prerelease: false),
+      heads: Dev::Lifecycle::GithubHeads::Heads.new(pointers: [], releases: {}, latest: latest && Dev::Lifecycle::ReleaseTag.new(latest)),
+    )
+  end
+
+  test "a candidate is a value: the same release over the same forge state, member for member" do
+    Expect
+    assert_value_semantics candidate,
+      equal_to: candidate,
+      unequal_to: [candidate(version: "1.2.0"), candidate(sha: SHA_120), candidate(immutable: false), candidate(latest: "1.2.0")]
   end
 end

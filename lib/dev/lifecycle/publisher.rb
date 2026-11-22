@@ -35,6 +35,12 @@ module Dev
     # port's default previews nothing: most destinations are not read
     # back, and the verb's report of the selection is the dry run's whole
     # story; a pointed channel that reads its heads back says so here.
+    #
+    # A channel whose head *is* the forge's latest designation says so
+    # (#owns_release_designation?): the cut then leaves that designation
+    # alone, since `deploy` moves it. The verbs are identical over every
+    # publisher, so `release` learns this from the hook, never from a
+    # channel's name.
     module Publisher
       extend T::Sig
       extend T::Helpers
@@ -47,6 +53,18 @@ module Dev
       # @return [HeadStrategy]
       sig { abstract.returns(HeadStrategy) }
       def head_strategy; end
+
+      # Whether the forge's latest designation on the project's releases
+      # is this channel's head. False by default: most destinations are
+      # elsewhere than the project's own release archive, and the cut
+      # designates its release latest as it always has. A fact about the
+      # destination, like the head strategy, so no arguments.
+      #
+      # @return [Boolean]
+      sig { overridable.returns(T::Boolean) }
+      def owns_release_designation?
+        false
+      end
 
       # Ship the selected archives — one per accepted build the channel
       # resolved — to the destination, on the track the source decided.

@@ -359,9 +359,10 @@ release is never cut on an assumed yes.
    rewritten `<build>-<version>.MANIFEST`), with `release.json` beside
    them. The release is created once (`gh release create --verify-tag`,
    notes from the plan) and assets upload with `--clobber`. A project
-   with a [gh channel](#gh) creates it with `--latest=false`, and the
-   plan's step says so: GitHub's latest designation is that channel's
-   head, moved by `deploy gh`, never by a cut.
+   with a channel whose publisher owns the forge's latest designation
+   (the [gh channel](#gh)) creates it with `--latest=false`, and the
+   plan's step says so: the designation is that channel's head, moved
+   by `deploy`, never by a cut.
 
 ```
 ✓ v1.2.0 released! (0123456789ab, from main) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0

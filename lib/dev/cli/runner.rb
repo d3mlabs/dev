@@ -18,7 +18,6 @@ require "dev/cli/command_runner"
 require "dev/cli/command_service"
 require "dev/cli/dependency_service"
 require "dev/cli/deploy_selector"
-require "dev/deps/gh_publisher"
 require "dev/deps/lockfile"
 require "dev/deps/staleness"
 require "dev/cli/dispatch_resolver"
@@ -566,10 +565,9 @@ module Dev
             store:,
             releases:,
             listing:,
-            # On a project deploying through the gh channel, the forge's
-            # latest designation is that channel's head: `deploy gh` moves
-            # it, so the cut must not.
-            designates_latest: !bindings.channels.key?(Deps::GhPublisher::CHANNEL),
+            # A publisher whose head is the forge's latest designation
+            # moves it on `deploy`, so the cut must not.
+            designates_latest: bindings.publishers.values.none?(&:owns_release_designation?),
           )
         end
         return verbs if bindings.channels.empty?

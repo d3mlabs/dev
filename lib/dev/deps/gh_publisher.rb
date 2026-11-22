@@ -179,6 +179,14 @@ module Dev
         Lifecycle::HeadStrategy::Pointed
       end
 
+      # GitHub's latest designation is this channel's head: it follows
+      # the newest deployed series, so `deploy gh` moves it and the cut
+      # leaves it alone.
+      sig { override.returns(T::Boolean) }
+      def owns_release_designation?
+        true
+      end
+
       # The declaration as `dev help` renders it.
       sig { returns(String) }
       def to_s
