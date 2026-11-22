@@ -589,6 +589,25 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui.rows.include?([:note, "{{x}} reach: none — no org group at d3mlabs lists mac1 (re-run `dev runner register` from the repo's checkout)", 1])
   end
 
+  # dev#657: a slot whose record names a pool no org group lists any more
+  # (the group deleted under it) is known by its pool alone, so the only
+  # checkout that can converge it is the one declaring a role in that group.
+  test "a pooled-role slot no org group lists has no reach: the remedy names the declaring checkout by the pool" do
+    Given "a slot recorded in pool `ue-farm`, no declaration at hand, GitHub listing it in no group"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs", name: "box-ue-farm", pool: "ue-farm")
+    responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
+    status = build_status(ui: ui, home: home, registry: CannedRegistry.new(group: nil, &responder), roles: {})
+
+    When
+    status.report
+
+    Then
+    ui.rows.include?([:note, "{{x}} reach: none — no org group at d3mlabs lists box-ue-farm (re-run `dev runner register --org --role <role>` " \
+                             "from the checkout whose dev.yml declares the role in group `ue-farm`)", 1])
+  end
+
   test "a family GitHub has lost entirely: its role from the pool, no reach, each slot a stale enrollment" do
     Given
     ui = RecordingUi.new
@@ -877,6 +896,23 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     out.string.include?("✓ svc-runner can read d3mlabs/unreal-engine (this checkout's lock)")
+  end
+
+  test "the default identity factory is JobIdentity.for_host over the runner user and the executor" do
+    Given "a status with no identity factory injected, a declared job identity on the host, JobIdentity intercepted at its platform seam"
+    ui = RecordingUi.new
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ue-builder"] => true })
+    runner_user = host_identity("svc-runner")
+    role = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], job_identity: "ue-builder").bind(repo: "d3mlabs/cellbound-3d", version: nil)
+    built = darwin_identity("ue-builder", executor, shared_root: Dir.mktmpdir, brew: nil, runner_user: "svc-runner")
+    Dev::JobIdentity.expects(:for_host).once.with(user: "ue-builder", runner_user: "svc-runner", executor: executor).returns(built)
+    status = build_status(ui: ui, executor: executor, host_identity: runner_user, roles: { "ue-farm" => role }, identity_factory: :default)
+
+    When
+    status.report
+
+    Then "the identity's facts are the one for_host built"
+    ui.rows.include?([:note, "{{v}} job identity ue-builder exists", 1])
   end
 
   test "without a host identity (a Mac) the host frame has no runner-user facts, and a slot is expected to run as the operator" do
@@ -1535,15 +1571,18 @@ class Dev::RunnerStatusTest < Minitest::Test
   # by default, since every slot is expected to run as it.
   def build_status(out: StringIO.new, ui: Dev::NoUi.new(out: out), home: Dir.mktmpdir, registry: CannedRegistry.new,
                    executor: CannedStatusExecutor.new, shared_root: Dir.mktmpdir, brew: nil, runner_user: ME, identity: nil,
+                   identity_factory: ->(user) { identity || darwin_identity(user, executor, shared_root: shared_root, brew: brew, runner_user: runner_user) },
                    roles: Dev::RunnerRoleAliases::ALL, brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach },
                    wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: runner_user)
-    # :default leaves RunnerStatus's own reach factory in place.
+    # :default leaves RunnerStatus's own factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
+    identity_wiring = identity_factory == :default ? {} : { identity_factory: identity_factory }
     Dev::RunnerStatus.new(
       pins: pins,
       repo: repo,
       **reach_wiring,
+      **identity_wiring,
       # The WSL runner host (dev#261): nil is any host but a WSL2 distro.
       wsl_runner_host: wsl_runner_host,
       discovery: Dev::RunnerDiscovery.new(home: home),
@@ -1555,7 +1594,6 @@ class Dev::RunnerStatusTest < Minitest::Test
       host_os: host_os,
       host_identity: host_identity,
       roles: roles,
-      identity_factory: ->(user) { identity || darwin_identity(user, executor, shared_root: shared_root, brew: brew, runner_user: runner_user) },
       brewfile_path: brewfile_path,
       container_required: container_required,
     )

@@ -1925,6 +1925,45 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     true
   end
 
+  test "the default identity factory is JobIdentity.for_host over the role's user, the runner user and the Ui" do
+    Given "a checkout declaring a role with a job identity, register with default wiring, JobIdentity intercepted at its platform seam"
+    empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
+    Dev::RunnerDiscovery.expects(:new).returns(empty_discovery)
+    context = build_context(name: "Cellbound3D", runner_roles: { "ue-farm" => FARM })
+    # A Mac: no runner user, so the identity is spawned from the operator (nil).
+    Dev::RunnerUser.expects(:for_host).once.with(name: nil, ui: context.ui).returns(nil)
+    Dev::RunnerSetup.expects(:current_repo).once.returns("owner/repo")
+    identity = typed_mock(Dev::JobIdentity)
+    identity.expects(:converge!).once
+    identity.expects(:after_enroll!).once.with(runner_dir: "/tmp/runner-dir", slot: 1)
+    Dev::JobIdentity.expects(:for_host).once.with(user: "ue-builder", runner_user: nil, ui: context.ui).returns(identity)
+    registry = typed_mock(Dev::RunnerRegistry)
+    registry.stubs(:repository).returns(Dev::RunnerRegistry::Repository.new(id: 1, full_name: "owner/repo", visibility: "private"))
+    registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
+    registry.expects(:find).once.with(scope: "owner/repo", name: "box-ue-farm").returns(nil)
+    Dev::RunnerRegistry.expects(:new).returns(registry)
+    setup = typed_mock(Dev::RunnerSetup)
+    setup.expects(:run).once
+    setup.stubs(:resolve_dir).returns("/tmp/runner-dir")
+    # The host; a declared role's slot 1 is named apart from it
+    # (`<host>-<role>`), so the enrolling setup is a second construction
+    # told its name and dir.
+    setup.stubs(:resolve_name).returns("box")
+    setup.stubs(:resolve_scope).returns("owner/repo")
+    role = FARM.bind(repo: "owner/repo", version: nil)
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(role: role), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
+    Dev::RunnerSetup.expects(:new)
+      .with(config: Dev::RunnerSetupConfig.new(role: role, dir: "/tmp/runner-dir", name: "box-ue-farm", replace: false), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
+
+    When "registering the declared role in that checkout with default wiring"
+    command.call(args: parsed_args(command, ["--role", "ue-farm"]), context: context)
+
+    Then "the identity for_host built was the one converged and told of the slot"
+    true
+  end
+
   private
 
   Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :factory_uis, :reach_roots, :identities,
@@ -2100,10 +2139,10 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   # For a command built without a harness: a context whose Ui is never asked.
-  def build_context(name:, engine: nil, root: "/tmp/runner-test")
+  def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {})
     Dev::Cli::ExecutionContext.new(
       ui: RecordingUi.new,
-      project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine),
+      project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine, runner_roles: runner_roles),
     )
   end
 
