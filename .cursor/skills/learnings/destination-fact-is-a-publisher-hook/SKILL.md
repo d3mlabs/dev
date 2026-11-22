@@ -34,12 +34,6 @@ Right — the destination declares the fact, the verb asks every publisher:
     # Cli::Runner
     designates_latest: bindings.publishers.values.none?(&:owns_release_designation?)
 
-Why not a check: a name test cannot be seen from the publisher that
-should own it, so a second channel is added to the verb instead of
-declaring itself, and the channel contract (verbs identical over every
-publisher) is broken silently — no test or type reads a string literal.
-
-learned-from: dev#665 review (`designates_latest` keyed on the `gh` channel
-name → `Publisher#owns_release_designation?`); dev#661 shaped `head_strategy`
-the same way ("a third strategy to name here, never a publisher's special case")
+learned-from: dev#665 review (`designates_latest` keyed on the `gh` name →
+`Publisher#owns_release_designation?`); dev#661 shaped `head_strategy` the same way
 date: 2026-11-22
