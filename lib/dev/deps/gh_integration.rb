@@ -58,9 +58,10 @@ module Dev
     # locked Ruby is installed as a keg through brew, its gems are vendored
     # into the tree under that keg's bundler — unless the release shipped
     # them vendored already — and one `bin/` wrapper per `exe/` runs the
-    # executable under both. The closure is the tree's: it touches no
-    # project gem home, exports nothing, and goes when the tree is
-    # reclaimed. Only the keg is shared, as brew shares every keg.
+    # executable under the keg's Ruby, which selects the vendored gems
+    # itself. The closure is the tree's: it touches no project gem home,
+    # exports nothing, and goes when the tree is reclaimed. Only the keg is
+    # shared, as brew shares every keg.
     class GhIntegration < Integration
       extend T::Sig
 

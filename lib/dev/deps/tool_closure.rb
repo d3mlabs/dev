@@ -18,20 +18,41 @@ module Dev
     # A gh tree that carries `dependencies.rb` and `deps.lock` is a tool
     # with a closure ({.carried_by?}). Its executables are its `exe/`; the
     # closure lands beside them — the gems in `vendor/bundle` ({#vendor!}),
-    # one `bin/<name>` wrapper per executable ({#wrap!}) that execs the
-    # locked Ruby by its keg path with bundler pointed at the tree's own
-    # Gemfile and gems. The tree exports nothing: no lisp, no gem home, no
-    # entry in a project's activation; it shares only the Ruby keg, which
-    # brew owns. The closure lives in the tree and goes with it.
+    # one `bin/<name>` wrapper per executable ({#wrap!}). The tree exports
+    # nothing: no lisp, no gem home, no entry in a project's activation; it
+    # shares only the Ruby keg, which brew owns. The closure lives in the
+    # tree and goes with it.
     #
-    # Which side computes it is the producer's choice. At install, dev
-    # vendors the gems into the staging tree under the keg's own bundler
-    # (KegExec) before the tree publishes. At release, a target's
+    # The wrapper is bin/dev's sh half and nothing more: it unsets the
+    # harness activation ({HARNESS_ACTIVATION_KEYS}) and execs the locked
+    # Ruby by its keg path on `exe/<name>`. It exports nothing and clears
+    # nothing else — `GEM_HOME`/`GEM_PATH` are the caller's and pass
+    # through to the tool's children (a `dev` it runs in a checkout, the
+    # agent's `bundle exec`), as bin/dev keeps them for its own. Selecting
+    # the tree's gems is the executable's, in-process, as bin/dev's Ruby
+    # half selects dev's: by position relative to `__dir__`, from
+    # {VENDOR_DIR} under bundler's layout —
+    #
+    #   tree = File.expand_path("..", __dir__)
+    #   tree_gems = File.join(tree, "vendor/bundle/ruby", RbConfig::CONFIG["ruby_version"])
+    #   ruby_own_gems = File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version"])
+    #   Gem.use_paths(tree_gems, [tree_gems, ruby_own_gems])
+    #
+    # — the tree's closure plus the Ruby's bundled gems, nothing from the
+    # environment. `Gem.use_paths` touches no ENV, so the wrapper's scrub
+    # is the only thing between the caller's env and the tool's children.
+    # A wrapper that exported bundler's or a gem home's keys into the tool
+    # is the shape every regression in the harness-env family took
+    # (dev#180 → #274/#306 → #333/#336); spawn_seams_test guards the
+    # generated script against it.
+    #
+    # Which side vendors is the producer's choice. At install, dev vendors
+    # the gems into the staging tree under the keg's own bundler (KegExec)
+    # before the tree publishes. At release, a target's
     # `packager: { archive: { vendor: true } }` vendors them into the
     # install under the project's Ruby (ShadowenvExec), so the asset ships
     # them and install writes wrappers only ({#vendored?}). Both run the
-    # same {#vendor!} through a ToolchainExec; the wrapper's env is the
-    # same hash rendered into sh.
+    # same {#vendor!} through a ToolchainExec.
     class ToolClosure
       extend T::Sig
 
@@ -62,6 +83,9 @@ module Dev
       end
 
       GEMFILE = "Gemfile"
+      # Bundler's install path. Bundler lays the gems under it as
+      # `ruby/<RbConfig::CONFIG["ruby_version"]>` — a gem home — which is
+      # the path the executable selects in-process (see the class comment).
       VENDOR_DIR = "vendor/bundle"
       EXE_DIR = "exe"
       BIN_DIR = "bin"
@@ -71,18 +95,12 @@ module Dev
       # against the locked bundler and tool_closure_test keeps this one
       # equal to it). The harness activation — a `bundle exec` the caller
       # runs inside, a CI runner's — would boot the executable inside the
-      # caller's bundle instead of the tree's.
+      # caller's bundle instead of the tree's. Nothing else is touched.
       HARNESS_ACTIVATION_KEYS = T.let(
         %w[RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_LOCKFILE BUNDLE_PATH BUNDLE_APP_CONFIG BUNDLE_BIN BUNDLE_BIN_PATH
            BUNDLER_VERSION BUNDLER_SETUP].freeze,
         T::Array[String],
       )
-
-      # The caller's gem environment, which bin/dev keeps for its children
-      # because they run the caller's Ruby. A wrapper execs another Ruby —
-      # the keg the tree's lock pins — for which the caller's gem dirs are
-      # another ABI's, so it drops them too.
-      CALLER_GEM_ENV_KEYS = T.let(%w[GEM_HOME GEM_PATH].freeze, T::Array[String])
 
       class << self
         extend T::Sig
@@ -159,7 +177,17 @@ module Dev
       def vendor!(exec:, cache: nil)
         return unless gems?
 
-        env = T.let(bundler_env(@tree.to_s), T::Hash[String, T.nilable(String)])
+        # The bundle install's own env, for that one child: the tree's
+        # Gemfile, its own path, frozen to its lock, nothing shared.
+        env = T.let(
+          {
+            "BUNDLE_GEMFILE" => (@tree / GEMFILE).to_s,
+            "BUNDLE_PATH" => (@tree / VENDOR_DIR).to_s,
+            "BUNDLE_FROZEN" => "true",
+            "BUNDLE_DISABLE_SHARED_GEMS" => "true",
+          },
+          T::Hash[String, T.nilable(String)],
+        )
         env.merge!("BUNDLE_GLOBAL_GEM_CACHE" => "true", "BUNDLE_USER_CACHE" => cache.to_s) if cache
         _out, err, status = exec.capture3("bundle", "install", env:)
         return if status.success?
@@ -169,10 +197,10 @@ module Dev
 
       # Write one `bin/<name>` wrapper per executable: a sh script that
       # resolves the tree from its own location (so a tree published from
-      # staging keeps working at its final path), drops the caller's
-      # activation and gem env, and execs the locked Ruby on `exe/<name>` —
-      # with bundler set up on the tree's Gemfile and vendored gems when it
-      # has any.
+      # staging keeps working at its final path), unsets the harness
+      # activation, and execs the locked Ruby on `exe/<name>`. The same
+      # script whether the tree has gems or not: finding them is the
+      # executable's (class comment).
       #
       # @param ruby [Pathname] the locked Ruby's executable (`<keg>/bin/ruby`)
       # @return [void]
@@ -194,41 +222,22 @@ module Dev
 
       private
 
-      # The bundler env the closure runs under, for a tree at `root` — a
-      # path, or the sh expression a wrapper resolves at run time. Its own
-      # Gemfile, its own gems, frozen to its lock, nothing shared.
+      # The wrapper's source: bin/dev's sh half for this tree. No `export`
+      # and no gem-env key, ever — spawn_seams_test reads the output.
       #
-      # @param root [String] the tree's path, or `$tree` in a wrapper
-      # @return [Hash{String => String}]
-      sig { params(root: String).returns(T::Hash[String, String]) }
-      def bundler_env(root)
-        {
-          "BUNDLE_GEMFILE" => "#{root}/#{GEMFILE}",
-          "BUNDLE_PATH" => "#{root}/#{VENDOR_DIR}",
-          "BUNDLE_FROZEN" => "true",
-          "BUNDLE_DISABLE_SHARED_GEMS" => "true",
-        }
-      end
-
       # @param exe [Pathname] the executable the wrapper runs
       # @param ruby [Pathname] the locked Ruby's executable
-      # @return [String] the wrapper's source
+      # @return [String]
       sig { params(exe: Pathname, ruby: Pathname).returns(String) }
       def wrapper_script(exe, ruby)
         name = exe.basename
-        lines = [
-          "#!/bin/sh",
-          "# Generated by dev: #{name} under this tree's own closure, nothing of the caller's Ruby.",
-          %(tree="$(cd "$(dirname "$0")/.." && pwd -P)"),
-          "unset #{(HARNESS_ACTIVATION_KEYS + CALLER_GEM_ENV_KEYS).join(" ")}",
-        ]
-        setup = T.let([], T::Array[String])
-        if gems?
-          bundler_env("$tree").each { |key, value| lines << %(export #{key}="#{value}") }
-          setup << "-rbundler/setup"
-        end
-        lines << %(exec #{ruby.to_s.shellescape} #{[*setup, %("$tree/#{EXE_DIR}/#{name}")].join(" ")} "$@")
-        "#{lines.join("\n")}\n"
+        <<~SH
+          #!/bin/sh
+          # Generated by dev: #{name} under this tree's own Ruby. The executable selects the tree's gems itself.
+          tree="$(cd "$(dirname "$0")/.." && pwd -P)"
+          unset #{HARNESS_ACTIVATION_KEYS.join(" ")}
+          exec #{ruby.to_s.shellescape} "$tree/#{EXE_DIR}/#{name}" "$@"
+        SH
       end
     end
   end

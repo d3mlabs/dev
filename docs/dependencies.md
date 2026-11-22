@@ -364,10 +364,34 @@ installs the Ruby it pins through brew (the keg alone is shared with the
 project; nothing is exported into the project's environment), runs a
 frozen `bundle install` into the tree's own `vendor/bundle` under that
 keg's bundler, and writes one `bin/<name>` wrapper per `exe/<name>`. The
-wrapper clears the caller's Ruby and Bundler environment and runs the
-executable under the keg's Ruby with the tree's bundle, so the tool works
-the same from any project — or from no project. The closure lives and is
-collected with the tree; no project gem home is touched.
+closure lives and is collected with the tree; no project gem home is
+touched.
+
+The wrapper is `bin/dev`'s sh half and nothing more: it unsets the
+harness activation (`RUBYOPT`, `RUBYLIB`, `BUNDLE_*`, `BUNDLER_*` — the
+same list `bin/dev` unsets) and execs the keg's Ruby on `exe/<name>`. It
+exports nothing, and `GEM_HOME`/`GEM_PATH` pass through untouched: they
+are the caller's gem environment, and the tool's children (a `dev` it runs
+in a checkout, an agent's `bundle exec`) inherit them as they would from
+any other process.
+
+Selecting the tree's gems is the executable's job, in-process, the way
+`bin/dev` selects dev's own. Bundler lays the vendored gems under
+`vendor/bundle/ruby/<ruby_version>` — a gem home — so an `exe/<name>`
+finds them by position relative to `__dir__` and puts them in front of
+the Ruby's own bundled gems, nothing from the environment:
+
+```ruby
+tree = File.expand_path("..", __dir__)
+tree_gems = File.join(tree, "vendor/bundle/ruby", RbConfig::CONFIG["ruby_version"])
+ruby_own_gems = File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version"])
+Gem.use_paths(tree_gems, [tree_gems, ruby_own_gems])
+```
+
+`Gem.use_paths` touches no `ENV`, so the executable's gem selection is
+invisible to its children. With the wrapper's unset in front of it, the
+tool works the same from any project — or from no project — under any
+caller's activation.
 
 The release side has the same shape. A target with `packager: { archive:
 { vendor: true } }` vendors the bundle into the install before archiving

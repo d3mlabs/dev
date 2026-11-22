@@ -676,7 +676,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     (tree / "vendor/bundle/ruby/4.0.0").directory?
     (tree / "bin/ai-flow").executable?
     (tree / "bin/ai-flow").read.include?(%(tree="$(cd "$(dirname "$0")/.." && pwd -P)"))
-    (tree / "bin/ai-flow").read.lines.last == %(exec #{keg}/bin/ruby -rbundler/setup "$tree/exe/ai-flow" "$@"\n)
+    (tree / "bin/ai-flow").read.lines.last == %(exec #{keg}/bin/ruby "$tree/exe/ai-flow" "$@"\n)
     (tree / ".dev-gh-release").read == "v1.0.0"
     ui.rows.include?([:spin, "Vendoring ai-flow@v1.0.0's gems under 4.0.6", 0])
     ui.rows.include?([:note, "{{v}} ai-flow@v1.0.0 runs under its own closure: ruby 4.0.6, 1 wrapper(s) in bin/", 0])
@@ -701,7 +701,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     brew.installed.size == 1
     !File.exist?(File.join(dir, "bundle-argv.txt"))
     tree = Pathname(dir) / "gh/d3mlabs/ai-flow/v1.0.0"
-    (tree / "bin/ai-flow").read.include?(%(export BUNDLE_PATH="$tree/vendor/bundle"))
+    (tree / "bin/ai-flow").read.lines.last == %(exec #{keg}/bin/ruby "$tree/exe/ai-flow" "$@"\n)
     ui.rows.include?([:note, "{{v}} ai-flow@v1.0.0 ships its gems vendored", 0])
     ui.rows.none? { |row| row[0] == :spin && row[1].start_with?("Vendoring") }
 
@@ -709,7 +709,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a Ruby-only tool tree (no Gemfile) gets the keg and a wrapper with no bundler" do
+  test "a Ruby-only tool tree (no Gemfile) gets the keg and the same wrapper, with no bundle install" do
     Given
     dir = Dir.mktmpdir("dev-gh-tool-test-")
     tarball = build_source_tarball(dir, files: tool_files(gemfile: false))
@@ -723,7 +723,7 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     !File.exist?(File.join(dir, "bundle-argv.txt"))
     wrapper = Pathname(dir).join("gh/d3mlabs/ai-flow/v1.0.0/bin/ai-flow").read
     wrapper.lines.last == %(exec #{keg}/bin/ruby "$tree/exe/ai-flow" "$@"\n)
-    !wrapper.include?("export BUNDLE_")
+    !wrapper.include?("export ")
 
     Cleanup
     FileUtils.rm_rf(dir)
