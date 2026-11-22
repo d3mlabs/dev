@@ -113,7 +113,11 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
   end
 
   test "a run: channel's head is pointed: each deploy replaces what the destination holds, and dev reads nothing back" do
-    Expect
-    Dev::Lifecycle::ScriptPublisher.new(command: "true", project_root: @project).head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+    Given
+    publisher = Dev::Lifecycle::ScriptPublisher.new(command: "true", project_root: @project)
+
+    Expect "the forge's latest designation is not a script's to move: the cut designates as it always has"
+    publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
+    !publisher.owns_release_designation?
   end
 end

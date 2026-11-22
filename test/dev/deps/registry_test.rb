@@ -8,6 +8,7 @@ require "dev/deps/brew_integration"
 require "dev/deps/bundler_repository"
 require "dev/deps/cmake_integration"
 require "dev/deps/ghcr_publisher"
+require "dev/deps/gh_publisher"
 require "dev/deps/rubygems_publisher"
 require "dev/deps/xcode_integration"
 require "dev/deps/brew_publisher"
@@ -124,8 +125,35 @@ class Dev::Deps::RegistryTest < Minitest::Test
     brew.publisher == Dev::Deps::BrewPublisher
     brew.publisher_needs == %i[project_root taps]
     brew.channel_name == "brew"
-    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew ficsit steam egs image]
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:symbol) == %i[bundler brew ficsit gh steam egs image]
     Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name).uniq.size == Dev::Deps::Registry::INTEGRATIONS.count(&:publishes?)
+    Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).reject { |entry| entry.symbol == :gh }.all? { |entry| entry.reached_by == Dev::Deps::Registry::Reach::Pin }
+  end
+
+  test "gh (dev#655) publishes to the project's own releases and is reached by declaring the channel, never by a pin: the destination is every releasing project's" do
+    Given
+    gh = Dev::Deps::Registry::INTEGRATIONS.find { |entry| entry.symbol == :gh }
+
+    Expect
+    gh.publisher == Dev::Deps::GhPublisher
+    gh.publisher_needs == %i[project_root]
+    gh.channel_name == "gh"
+    gh.reached_by == Dev::Deps::Registry::Reach::Declaration
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:gh], ui: Dev::NoUi.new) == {}
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [], declared: ["gh"], ui: Dev::NoUi.new).keys == ["gh"]
+    Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [], declared: ["gh"], ui: Dev::NoUi.new).fetch("gh").is_a?(Dev::Deps::GhPublisher)
+    !Dev::Deps::Registry.publisher_reach.key?("gh")
+  end
+
+  test "an entry reached by declaration must have a publisher to reach; by pin, the default, a silent entry is fine" do
+    When
+    Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil,
+      reached_by: Dev::Deps::Registry::Reach::Declaration)
+
+    Then
+    raises Dev::Deps::Registry::ReachWithoutPublisherError
+    Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil).reached_by ==
+      Dev::Deps::Registry::Reach::Pin
   end
 
   test "publishers over the built-in table: #{pinned.inspect} contributes #{channels.inspect}" do
@@ -164,14 +192,16 @@ class Dev::Deps::RegistryTest < Minitest::Test
     Dev::Deps::Registry.publishers(project_root: Pathname("/tmp"), pinned: [:cmake, :git], ui: Dev::NoUi.new, taps:) == {}
   end
 
-  test "publisher_reach maps each channel a table can ship to onto the types whose pin reaches it, directly or through an alias (dev#509)" do
-    Given "the same table: brew publishes and ruby installs through it; steam publishes; cmake is silent"
+  test "publisher_reach maps each channel a table ships to by a pin onto the types whose pin reaches it, directly or through an alias (dev#509); a declaration-reached channel has no pin to name" do
+    Given "the same table: brew publishes and ruby installs through it; steam publishes; cmake is silent; gh is reached by declaration"
     entries = [
       Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
         publisher: RecordingPublisher, publisher_needs: %i[project_root]),
       Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
       Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
       Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+      Dev::Deps::Registry::Entry.new(symbol: :gh, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, reached_by: Dev::Deps::Registry::Reach::Declaration),
     ]
 
     Expect
@@ -179,8 +209,8 @@ class Dev::Deps::RegistryTest < Minitest::Test
     Dev::Deps::Registry.publisher_reach == { "rubygems" => %i[bundler], "brew" => %i[brew ruby python], "ficsit" => %i[ficsit], "steam" => %i[steam], "egs" => %i[egs], "ghcr" => %i[image] }
   end
 
-  test "publishers builds one instance per publishing entry the lock reaches, directly or through an alias, with the kwargs it asks for" do
-    Given "a table where brew publishes and ruby installs through it; steam publishes but is not pinned; cmake is pinned but silent"
+  test "publishers builds one instance per publishing entry the project reaches — by a pin, directly or through an alias, or by declaring the channel — with the kwargs it asks for" do
+    Given "a table where brew publishes and ruby installs through it; steam publishes but is not pinned; cmake is pinned but silent; gh is reached by declaration"
     taps = [Dev::Deps::Tap.new(name: "d3mlabs/d3mlabs")]
     entries = [
       Dev::Deps::Registry::Entry.new(symbol: :brew, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil,
@@ -188,10 +218,12 @@ class Dev::Deps::RegistryTest < Minitest::Test
       Dev::Deps::Registry::Entry.new(symbol: :ruby, repository: Dev::Deps::BrewRepository, scheme: nil, integration: nil, install_alias: :brew),
       Dev::Deps::Registry::Entry.new(symbol: :steam, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil, publisher: RecordingPublisher),
       Dev::Deps::Registry::Entry.new(symbol: :cmake, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil),
+      Dev::Deps::Registry::Entry.new(symbol: :gh, repository: Dev::Deps::GitRepository, scheme: nil, integration: nil,
+        publisher: RecordingPublisher, reached_by: Dev::Deps::Registry::Reach::Declaration),
     ]
 
     When
-    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, ui: Dev::NoUi.new, taps:, entries:)
+    publishers = Dev::Deps::Registry.publishers(project_root: Pathname("/project"), pinned: pinned, declared: declared, ui: Dev::NoUi.new, taps:, entries:)
 
     Then
     publishers.keys == channels
@@ -200,12 +232,16 @@ class Dev::Deps::RegistryTest < Minitest::Test
     publishers.values.map(&:taps).compact == (channels.include?("brew") ? [taps] : [])
 
     Where
-    pinned           | channels
-    [:brew]          | ["brew"]
-    [:ruby]          | ["brew"]
-    [:ruby, :steam]  | ["brew", "steam"]
-    [:cmake]         | []
-    []               | []
+    pinned           | declared          | channels
+    [:brew]          | []                | ["brew"]
+    [:ruby]          | []                | ["brew"]
+    [:ruby, :steam]  | []                | ["brew", "steam"]
+    [:cmake]         | []                | []
+    []               | []                | []
+    [:gh]            | []                | []
+    []               | ["gh"]            | ["gh"]
+    [:ruby]          | ["gh", "staging"] | ["brew", "gh"]
+    []               | ["steam"]         | []
   end
 
   test "publishers hands the Ui to the write sides that onboard a credential, and only to those (dev#573)" do

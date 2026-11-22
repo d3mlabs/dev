@@ -750,6 +750,27 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
+  test "a declared `deploy: gh` channel binds to dev's gh publisher with no pin at all: the destination is the project's own releases, reached by declaring it (dev#655)" do
+    Given "a project declaring gh without run: over no lock"
+    out = StringIO.new
+    runner = build_runner(out: out, targets: { "rspock" => { "desc" => "The gem" } }, commands: {
+      "deploy" => { "commands" => { "gh" => { "desc" => "Series tags", "targets" => ["rspock"] } } },
+    })
+
+    When
+    runner.run(["help", "deploy"])
+
+    Then "bound, pointed, no fault"
+    out.string.include?(<<~USAGE)
+      Commands:
+        gh           Series tags                               host
+                     Accepts: rspock
+                     Protocol: publisher: gh
+                     Head: pointed
+    USAGE
+    !out.string.include?("pins no")
+  end
+
   test "runner is ungated: every project catalog lists it" do
     Given "a Runner with a plain dev.yml (no runner block — the key is retired)"
     out = StringIO.new

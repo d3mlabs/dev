@@ -6,6 +6,7 @@ require "pathname"
 require "uri"
 require_relative "gh"
 require_relative "release_tag"
+require_relative "../value_equality"
 
 module Dev
   module Lifecycle
@@ -32,8 +33,42 @@ module Dev
       # The release carries no asset of the name asked for.
       class AssetMissingError < Error; end
 
+      # A tag the forge has no release of, asked for its facts.
+      class ReleaseMissingError < Error; end
+
       # What gh says when a tag has no release.
       NOT_FOUND = /release not found/i
+
+      # What `gh api` says of a path the forge has nothing at.
+      HTTP_NOT_FOUND = /HTTP 404/
+
+      # `gh api`'s spelling of the checkout's repo: gh fills the
+      # placeholders from `origin`, so dev resolves nothing itself.
+      REPO_PATH = "repos/{owner}/{repo}"
+
+      # Where the repository setting that freezes every release cut from
+      # then on lives, for a message that names it.
+      IMMUTABLE_RELEASES_SETTING = "Settings → General → Releases → Immutable releases"
+
+      # A release's facts, as the forge holds them: whether it is
+      # **immutable** — its tag, assets and existence frozen by the
+      # repository's immutable-releases setting at creation, permanently
+      # (only the notes and the latest designation stay editable), so a
+      # head pointed at it cannot change under a follower — and whether it
+      # is a pre-release.
+      class Facts < T::Struct
+        extend T::Sig
+        include Dev::ValueEquality::Derived
+
+        const :immutable, T::Boolean
+        const :prerelease, T::Boolean
+
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [immutable, prerelease]
+        end
+      end
 
       # gh matches `--pattern` as a glob (Go's `filepath.Match`), so an
       # asset name is escaped to match itself and nothing else.
@@ -66,14 +101,46 @@ module Dev
       # @param tag [ReleaseTag]
       # @param title [String]
       # @param notes [String] the body, through stdin so it never hits argv
+      # @param latest [Boolean] whether the forge may designate the release
+      #   its latest; false where that designation is a head `deploy gh`
+      #   moves (`--latest=false`: GitHub's own rule is "most recently
+      #   created", and `release` moves no head)
       # @return [URI] the release's page
       # @raise [ApiError]
       # @raise [Gh::GhMissingError]
-      sig { params(tag: ReleaseTag, title: String, notes: String).returns(URI::Generic) }
-      def create(tag, title:, notes:)
-        url(@gh.capture(["release", "create", tag.name, "--title", title, "--notes-file", "-", "--verify-tag"], stdin: notes))
+      sig { params(tag: ReleaseTag, title: String, notes: String, latest: T::Boolean).returns(URI::Generic) }
+      def create(tag, title:, notes:, latest: true)
+        argv = ["release", "create", tag.name, "--title", title, "--notes-file", "-", "--verify-tag"]
+        argv << "--latest=false" unless latest
+        url(@gh.capture(argv, stdin: notes))
       rescue Gh::CommandFailedError => e
         raise ApiError, e.message
+      end
+
+      # A tag's release as the forge holds it: immutable or not, a
+      # pre-release or not. Through the REST object, the one place the
+      # immutability flag is reported.
+      #
+      # @param tag [ReleaseTag]
+      # @return [Facts]
+      # @raise [ReleaseMissingError] the tag has no release
+      # @raise [ApiError]
+      # @raise [MalformedReleaseError] gh answered with something other than a release
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag).returns(Facts) }
+      def facts(tag)
+        release = JSON.parse(@gh.capture(["api", "#{REPO_PATH}/releases/tags/#{tag.name}"]))
+        raise MalformedReleaseError, "gh answered with #{release.class}, not #{tag}'s release" unless release.is_a?(Hash)
+
+        # A forge that reports no flag (one without immutable releases)
+        # has frozen nothing.
+        Facts.new(immutable: release["immutable"] == true, prerelease: release["prerelease"] == true)
+      rescue Gh::CommandFailedError => e
+        raise ReleaseMissingError, "#{tag} has no release on the forge" if HTTP_NOT_FOUND.match?(e.message)
+
+        raise ApiError, e.message
+      rescue JSON::ParserError => e
+        raise MalformedReleaseError, "gh answered with something other than #{tag}'s release: #{e.message}"
       end
 
       # Attach files to a tag's release, each under its file name,
