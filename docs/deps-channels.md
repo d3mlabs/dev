@@ -65,6 +65,16 @@ A *thin lift* — a formula that re-hosts an artifact a supported channel alread
 
 The economics behind the rule: a channel costs dev once and nothing per package; a repackage costs a formula or release per upstream version, per platform, for as long as we consume it.
 
+## The gh channel: immutable releases
+
+A GitHub release is mutable by default: its tag can be moved, its assets replaced or deleted, the release itself deleted. The gh channel meets the admission test's second criterion — an exact version re-installs the same bytes — on two legs, one per side of the channel.
+
+The consumer's leg is the lock. A `gh` pin records the tag's commit as its `source` and the SHA-256 of every asset it selects, as GitHub reports them; `dev up` verifies each download against the lock and refuses a mismatch. An asset replaced under a tag fails every consumer's install by name; nobody runs the new bytes.
+
+The producer's leg is the repository's **immutable releases** setting (Settings → General → Releases → Immutable releases). With it on, every release cut from then on is frozen: its tag, its assets and its existence can no longer change, and only the notes and the latest designation stay editable. The flag is permanent per release, and GitHub reports it back on the release as `immutable: true`. Releases cut before the setting was enabled stay mutable.
+
+The setting is what keeps a **follower** safe. A lock has a digest to check; a follower of a series — a host's stream on `~> 1`, a workflow's `uses: …@v1` — installs whatever the series tag points at and has none ([Lifecycle](lifecycle.md#gh)). So a gh channel's head may only point at a frozen release: `dev deploy gh` refuses a mutable release before anything moves, naming the setting, and `dev release` warns at the cut when the release it created comes out mutable. Enable the setting on every repository whose releases are a gh channel's heads before its first deploy; a release cut mutable can never be deployed as a head, so cut the next one after enabling.
+
 ## Brew, specifically
 
 Brew is the cross-platform binary channel for anything with transitive runtime dependencies: one formula syntax with prebuilt bottles on a Mac and on Linux, tap pinning (ADR-0003), bottle sets (ADR-0004), carry-over (ADR-0005), and the bottle cache in the store. Two things to know as a consumer:
@@ -82,7 +92,9 @@ Groups select by consumer role — `dev deps install --group`, `--except` — li
 
 An integration carries its own `dependencies.rb` in the same DSL a project uses. When a project's manifest uses the integration, dev resolves that manifest into the **project's lock** — ordinary pins in their channel, with provenance (`needed_by: xcode`) — in the scope of the declaration that used it. So a project that pins an Xcode gets `xcodes` in its lock without declaring it; a project that does not, does not. `xcode` and `wwise` ship this way ([dev#290](https://github.com/d3mlabs/dev/issues/290)): their manifests export `brew "xcodes", host: :darwin` and `brew "wwise-cli", tap: "d3mlabs/d3mlabs"`, and the installer orders each needed pin's batch before its user's — see [deps-architecture.md](deps-architecture.md#integration-manifests).
 
-A library's manifest follows the Gemfile/gemspec convention, for every verb: **ungrouped declarations export** to the consumer; **grouped declarations are private**; a library declares **ranges** and the project **locks**; `ruby`, `python` and `env` never propagate. A `gh` dependency's own `dependencies.rb` at the locked tag is read the same way ([dev#291](https://github.com/d3mlabs/dev/issues/291)): the engine exports the toolchain it was built with, and the project declares the engine alone.
+A library's manifest follows the Gemfile/gemspec convention, for every verb: **ungrouped declarations export** to the consumer; **grouped declarations are private**; a library declares **ranges** and the project **locks**; `ruby`, `python` and `env` never propagate. Reading a `gh` library's own manifest at its locked tag — the engine exporting the toolchain it was built with, so the project declares the engine alone — is not yet done ([dev#291](https://github.com/d3mlabs/dev/issues/291)).
+
+A `gh` tree that carries a `dependencies.rb` **and** a `deps.lock` is not a library but a **tool**, and the rule inverts: it exports nothing. Its lock is its own closure — the Ruby and gems its executables run under — materialised into the tree at install, or shipped inside the asset when the producer vendored it at release. Nothing from it enters the consumer's lock, gem home or environment; the consumer records one pin and gets the tree's `bin/` on PATH. See [A tool's closure: at install or at release](dependencies.md#a-tools-closure-at-install-or-at-release).
 
 One lockfile, `deps.lock`, every group in it ([dev#293](https://github.com/d3mlabs/dev/issues/293)). `build-deps.lock` is retired with the image-membership role it existed for.
 

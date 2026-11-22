@@ -104,6 +104,16 @@ What goes where:
 - The Brewfile lists what the org wants beyond that.
 - A tool one project needs goes in that project's `dependencies.rb`.
 
+ai-flow is not part of dev's deployment. The d3mlabs Brewfile lists no
+agent CLI; ai-flow declares `cursor-cli` in its own `dependencies.rb`,
+and its runner roles — the labels, the runner group, the pinned
+workflows, the `ai-agent` job identity — in its own `dev.yml`. A host
+becomes an agent host by `dev runner register --org --role agent` from
+an ai-flow checkout and follows ai-flow's releases through its gh
+channel ([Runners](runners.md#streams)). No setting, Brewfile line or
+builtin role in dev names ai-flow; the build host is dev's one builtin
+role.
+
 One Brewfile serves both platforms. Homebrew installs a cask that declares
 Linux support into the Linuxbrew prefix and skips one that requires macOS
 with a warning. Private taps work through `tap` entries; `gh auth login`
@@ -129,6 +139,13 @@ predecessors wrote. The build container follows the same rule: the image
 contains the toolchain and no dev; the container installs dev at the host's
 version on first use. Design notes:
 [ADR-0001](DECISIONS.md#adr-0001--dev-is-live-infrastructure).
+
+A tool deployed through its own gh channel is live the same way, one
+release at a time: `dev release` cuts an immutable release, `dev deploy
+gh` moves the series head to it, and every host following that stream
+installs the head before its next job ([Lifecycle](lifecycle.md#gh),
+[Runners](runners.md#streams)). dev's formula is the brew channel's head;
+a deployed tool's series tag is the gh channel's.
 
 ## Migrating from the monolithic formula
 
