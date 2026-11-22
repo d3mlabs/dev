@@ -96,6 +96,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  an edit to the copy, and the verb needing it checks presence through
  `Lifecycle::ShippedWorkflow`.
  → .cursor/skills/learnings/shipped-workflow-verbatim/
+- [architecture/destination-fact-is-a-publisher-hook] A lifecycle verb
+ never branches on a channel's name or a publisher's class: what differs
+ per destination (head strategy, preview, who owns the forge's latest
+ designation) is a `Lifecycle::Publisher` hook with a default that the
+ differing publisher overrides, and the verb asks every publisher.
+ → .cursor/skills/learnings/destination-fact-is-a-publisher-hook/
 
 ## toolchain
 
