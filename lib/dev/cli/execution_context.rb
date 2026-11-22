@@ -24,7 +24,7 @@ module Dev
       # The engine floor the project declares (ProjectManifest#engine).
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
       # The runner roles the project declares (ProjectManifest#runner_roles).
-      const :runner_roles, T::Hash[String, Dev::RunnerRole], default: {}
+      const :runner_roles, T::Hash[String, Dev::RunnerRole::Declaration], default: {}
 
       # The project's environment images and where each command runs
       # (ProjectImages). One instance per context: the lock is read once.

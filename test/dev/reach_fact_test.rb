@@ -2,7 +2,6 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/label_contracts"
 require "dev/reach"
 require "dev/reach_fact"
 require "dev/runner_registry"
@@ -10,8 +9,11 @@ require "dev/runner_role"
 
 transform!(RSpock::AST::Transformation)
 class Dev::ReachFactTest < Minitest::Test
-  PINS = Set.new(Dev::LabelContracts::AI_FLOW_WORKFLOWS)
-  AGENT_LABELS = Set.new(Dev::LabelContracts::AI_FLOW_AGENT_LABELS)
+  PINS = Set.new(%w[
+    d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/tags/v2
+    d3mlabs/ai-flow/.github/workflows/origin-firing.yml@refs/tags/v2
+  ])
+  AGENT_LABELS = Set.new(%w[ai-ask ai-edit ai-split ai-build ai-learn])
 
   class << self
     def group(name:, visibility: "selected", pinned: true)

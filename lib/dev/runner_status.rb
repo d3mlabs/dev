@@ -7,11 +7,12 @@ require "set"
 require "socket"
 require "stringio"
 
-require "dev/agent_bootstrap"
 require "dev/data_root"
 require "dev/deps/dependency"
 require "dev/host_reach"
-require "dev/label_contracts"
+require "dev/job_identity"
+require "dev/job_identity/darwin"
+require "dev/job_identity/linux"
 require "dev/platform"
 require "dev/reach"
 require "dev/reach_fact"
@@ -31,12 +32,16 @@ require "dev/wsl_runner_host"
 module Dev
   # `dev runner status` — register's inspect-only counterpart. Nothing
   # here mutates and nothing is recorded: every fact is re-derived from
-  # the host or GitHub each time. No dev.yml involved: status is the
-  # machine's view, not any repo's.
+  # the host or GitHub each time. Status is the machine's view; the
+  # enclosing checkout's dev.yml lends only its role declarations (and
+  # the one-release aliases, RunnerRoleAliases), so a slot of a role
+  # declared there is held against that role. A slot of a role no
+  # declaration at hand names is known by its pool (RunnerRole.pooled):
+  # its reach is read and shown, not verified.
   #
   # The report is framed by **subject**: the host first, then one frame
   # per **family** — this host's slots of one role at one scope
-  # (RunnerFamily) — in builtin role order. Every line is a fact: a
+  # (RunnerFamily) — roles by name, the build host last. Every line is a fact: a
   # subject, a property, what is expected of it and by whom (GitHub, the
   # slot's role, the host rule), what was observed, and the remedy when
   # they differ. `{{v}}` when they agree, `{{x}}` when they do not,
@@ -52,14 +57,15 @@ module Dev
   # evidence under a ✗.
   #
   # **Slot facts fold**: online on GitHub, service installed, who runs
-  # it, and for an agent slot its `_work` tree — identical across a
+  # it, and for a slot whose role has a job identity its `_work` tree — identical across a
   # family's slots → one line naming the slots; a slot that deviates
   # breaks out as its own ✗ line with its dir.
   #
   # The host frame holds host-level subjects only: the Linux host rule's
   # runner user (its existence, toolchain, gh login and token expiry, and
-  # what that login can read of a checkout's lock), the agent host
-  # (AgentBootstrap's inspection, when an agent family is enrolled), the
+  # what that login can read of a checkout's lock), each job identity
+  # (JobIdentity's inspection, when a family of a role with one is
+  # enrolled or the user is on the host), the
   # WSL runner host (WslRunnerHost, inside a WSL2 distro), and the host
   # tooling against the org Brewfile.
   #
@@ -112,10 +118,10 @@ module Dev
     # @param host [String] this machine's name, the host frame's title
     # @param host_os [String] "darwin" / "linux" / "windows"
     # @param host_identity [Dev::RunnerUser, nil] the Linux host rule's user; nil elsewhere
-    # @param bootstrap [Dev::AgentBootstrap] the host's agent bootstrap, whose
-    #   inspection methods answer the agent host facts (the runner user it
-    #   names is the sudoers grantor: the host identity on Linux, the
-    #   operator on a Mac — and the user every slot is expected to run as)
+    # @param roles [Hash{String => Dev::RunnerRole}] the roles declared at hand, by name:
+    #   the enclosing checkout's dev.yml roles bound to it, and the aliases
+    # @param identity_factory [Proc] builds the job identity for a user, whose
+    #   inspection methods answer that identity's host facts; injected for tests
     # @param brewfile_path [String, nil] the org Brewfile (nil when none ships)
     # @param container_required [Boolean] whether the served repo's lock pins an image
     # @param pins [Array<Dev::Deps::Dependency>] the enclosing checkout's lock, when run in one
@@ -134,7 +140,8 @@ module Dev
         host: String,
         host_os: String,
         host_identity: T.nilable(Dev::RunnerUser),
-        bootstrap: AgentBootstrap,
+        roles: T::Hash[String, RunnerRole],
+        identity_factory: T.proc.params(user: String).returns(JobIdentity),
         brewfile_path: T.nilable(String),
         container_required: T::Boolean,
         pins: T::Array[Deps::Dependency],
@@ -144,12 +151,13 @@ module Dev
       ).void
     end
     def initialize(discovery: Dev::RunnerDiscovery.new, registry: Dev::RunnerRegistry.new,
-                   ui: Dev::NoUi.new, executor: AgentBootstrap::Executor.new,
+                   ui: Dev::NoUi.new, executor: JobIdentity::Executor.new,
                    operator: T.must(Etc.getpwuid(Process.uid)).name,
                    host: Socket.gethostname,
                    host_os: Platform.os,
                    host_identity: Dev::RunnerUser.for_host,
-                   bootstrap: LabelContracts.agent_bootstrap(executor: executor, runner_user: host_identity&.name),
+                   roles: {},
+                   identity_factory: ->(user) { JobIdentity.for_host(user: user, runner_user: host_identity&.name, executor: executor) },
                    brewfile_path: self.class.default_brewfile_path,
                    container_required: false,
                    pins: [],
@@ -168,7 +176,9 @@ module Dev
       @ui = ui
       @executor = executor
       @operator = operator
-      @bootstrap = bootstrap
+      @roles = roles
+      @identity_factory = identity_factory
+      @identities = T.let({}, T::Hash[String, JobIdentity])
       @brewfile_path = brewfile_path
       @container_required = container_required
       @facts = T.let(0, Integer)
@@ -196,7 +206,7 @@ module Dev
     # @return [void]
     sig { void }
     def report
-      families = RunnerFamily.of(@discovery.enrollments.map { |enrollment| slot_of(enrollment) })
+      families = RunnerFamily.of(@discovery.enrollments.map { |enrollment| slot_of(enrollment) }, declared: @roles)
       report_host(families)
       families.each { |family| report_family(family) }
       @ui.note("No runners enrolled on this host (run `dev runner register`).") if families.empty?
@@ -209,11 +219,11 @@ module Dev
     # frames are skipped: reach, online, labels and group need the org
     # token and are the human's `dev runner status`. Which roles are
     # enrolled is read from the records' pools (RunnerFamily::Slot#role,
-    # as for a slot GitHub has lost), so an org agent family still brings
-    # the agent host's facts in; a repo-scoped one names no pool, and the
-    # agent user on the host stands in for it (#agent_host_facts). Fast
-    # and token-free, so every job runs it on its own identity, and a red
-    # fact is the exit status.
+    # as for a slot GitHub has lost), so an org family of a declared role
+    # still brings its job identity's facts in; a repo-scoped one names
+    # no pool, and the identity's user on the host stands in for it
+    # (#job_identity_facts). Fast and token-free, so every job runs it on
+    # its own identity, and a red fact is the exit status.
     #
     # @return [void]
     # @raise [PostureDriftError] when any fact is red
@@ -222,7 +232,7 @@ module Dev
       slots = @discovery.enrollments.map do |enrollment|
         RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: NOT_ASKED)
       end
-      families = RunnerFamily.of(slots)
+      families = RunnerFamily.of(slots, declared: @roles)
       report_host(families)
       report_posture(families)
       return if @drifted.zero?
@@ -315,7 +325,8 @@ module Dev
     # --- reach ---------------------------------------------------------------
 
     # The family's reach fact, or why there is none: GitHub unreachable,
-    # every slot lost, an org slot no group lists.
+    # every slot lost, an org slot no group lists. A family known by its
+    # pool alone has its reach read, not held against anything.
     #
     # @param family [Dev::RunnerFamily]
     sig { params(family: RunnerFamily).void }
@@ -343,8 +354,10 @@ module Dev
       unknown("reach: cannot tell — #{e.message}")
     end
 
-    # GitHub's reach for the family held against the role's. nil when an
-    # org slot sits in no group (nothing fixes its reach).
+    # GitHub's reach for the family held against the role's — unverified
+    # for a role known by its pool alone (no declaration at hand obliges
+    # anything). nil when an org slot sits in no group (nothing fixes its
+    # reach).
     #
     # @param family [Dev::RunnerFamily]
     # @param runner [Dev::RunnerRegistry::Runner] the first listed slot's record
@@ -365,8 +378,11 @@ module Dev
       repos = group.selected? ? Set.new(@registry.group_repositories(org: family.scope, group_id: group.id).map(&:full_name)) : Reach::ALL
       workflows = group.restricted_to_workflows ? Set.new(group.selected_workflows) : Reach::ANY
       observed = Reach.new(repos: repos, workflows: workflows, labels: labels)
+      placement = ReachFact::GroupPlacement.new(group: group)
+      return ReachFact.unverified(observed: observed, fixed_by: placement) if family.role.pooled?
+
       target = Reach::Target.new(repo: org_target_repo(family, observed), public: false, org_scoped: true)
-      compare_reach(family.role, target, observed, ReachFact::GroupPlacement.new(group: group))
+      compare_reach(family.role, target, observed, placement)
     end
 
     # The role's expectation for the target against GitHub's reach — or
@@ -405,7 +421,9 @@ module Dev
 
     # The fact's three clauses — the first on the glyph line, the rest
     # under the hanging indent — each naming what the role expects where
-    # it drifts, then the mechanism and remedy as evidence under a ✗.
+    # it drifts, then the mechanism and remedy as evidence under a ✗. An
+    # unverified fact reads `{{?}}`: the clauses as GitHub has them, and
+    # where the declaration that could judge them is.
     #
     # @param fact [Dev::ReachFact]
     # @param family [Dev::RunnerFamily]
@@ -416,7 +434,12 @@ module Dev
       role = family.role.name
       from = "jobs from #{repos_clause(fact.observed, family)}"
       from += " — the #{role} role expects #{expected.open? ? "every repo" : "a selection"}" if expected && drift.include?(:repos)
-      line(fact.ok?, "reach: #{from}")
+      if fact.unverified?
+        unknown("reach: #{from} — unverified: no declaration of a role in group `#{role}` at hand " \
+                "(run `dev runner status` from the checkout whose dev.yml declares it)")
+      else
+        line(fact.ok?, "reach: #{from}")
+      end
 
       via = "via #{workflows_clause(fact.observed.workflows)}"
       via += " — the #{role} role expects #{workflows_clause(expected.workflows)}" if expected && drift.include?(:workflows)
@@ -428,7 +451,7 @@ module Dev
 
       exposure = fact.exposure
       clause("exposed: #{exposure}") if exposure
-      return if fact.ok?
+      return if fact.ok? || fact.unverified?
 
       # The exposure sentence carries its own advice; a drift gets the
       # register run that converges it.
@@ -462,9 +485,9 @@ module Dev
       "#{pins.map { |workflow| short_workflow(workflow) }.join(", ")} only"
     end
 
-    # `owner/repo/.github/workflows/<file>@refs/heads/<branch>` as
-    # `owner/repo/<file>@<branch>`: the parts GitHub's spelling fixes
-    # dropped, the rest kept.
+    # `owner/repo/.github/workflows/<file>@refs/tags/<tag>` (or
+    # `@refs/heads/<branch>`) as `owner/repo/<file>@<tag>`: the parts
+    # GitHub's spelling fixes dropped, the rest kept.
     #
     # @param workflow [String]
     # @return [String]
@@ -472,7 +495,7 @@ module Dev
     def short_workflow(workflow)
       path, ref = workflow.split("@", 2)
       short = path.to_s.sub("/.github/workflows/", "/")
-      ref ? "#{short}@#{ref.delete_prefix("refs/heads/")}" : short
+      ref ? "#{short}@#{ref.delete_prefix("refs/heads/").delete_prefix("refs/tags/")}" : short
     end
 
     # @param labels [Set<String>]
@@ -485,18 +508,26 @@ module Dev
     # The register run that converges the family's reach: `--org` from a
     # checkout at the org for a pinned role's org family, the repo's
     # checkout for everything else — a build host found at the org
-    # included, since the role's reach is the repo registration's.
+    # included, since the role's reach is the repo registration's. A
+    # family known by its pool alone is the declaring checkout's to
+    # converge, whichever that is.
     #
     # @param family [Dev::RunnerFamily]
     # @return [String]
     sig { params(family: RunnerFamily).returns(String) }
     def remedy(family)
       role = family.role
+      if role.pooled?
+        return "re-run `dev runner register --org --role <role>` from the checkout whose dev.yml declares the role in group `#{role.name}`"
+      end
+
       flags = []
       flags << "--org" if family.org_scoped? && role.org_scoped?
       flags << "--role #{role.name}" unless role.build_host?
       argv = (["dev runner register"] + flags).join(" ")
-      where = family.org_scoped? && role.org_scoped? ? "a checkout at #{family.org}" : "the repo's checkout"
+      # A declared role is re-registered from the checkout that declares
+      # it (its pins are that project's); a build host from its repo's.
+      where = role.build_host? ? "the repo's checkout" : "the checkout whose dev.yml declares #{role.name}"
       "re-run `#{argv}` from #{where}"
     end
 
@@ -552,11 +583,12 @@ module Dev
       github_facts(slot, family, held, findings, unknowns)
       enrollment = slot.enrollment
       enrollment.service_installed ? held << "service installed" : findings << "no service installed"
-      runner_user = @host_identity&.name || @bootstrap.runner_user
+      runner_user = runner_user_name
       enrollment.owner == runner_user ? held << "runs as #{runner_user}" : findings << "runs as #{enrollment.owner}, not #{runner_user}"
-      if family.role.name == RunnerRole::AGENT_NAME
+      job_identity = family.role.job_identity
+      if job_identity
         group = DataRoot::GROUP
-        if @bootstrap.work_tree_cooperative?(enrollment.dir)
+        if identity_for(job_identity).work_tree_cooperative?(enrollment.dir)
           held << "_work shared with group #{group}"
         else
           findings << "_work tree not cooperative (group #{group}, setgid)"
@@ -646,7 +678,7 @@ module Dev
     # --- the host ------------------------------------------------------------
 
     # The host's frame: the Linux host rule's identity and what it can
-    # read, the agent host when the host is one, the WSL runner host
+    # read, each job identity the host carries, the WSL runner host
     # inside a distro, the tooling.
     #
     # @param families [Array<Dev::RunnerFamily>]
@@ -655,7 +687,7 @@ module Dev
       manager = SERVICE_MANAGERS.fetch(@host_os, "no service manager")
       @ui.frame("#{@host} · #{@host_os} · #{manager}") do
         report_host_reach if report_host_identity
-        agent_host_facts(enrolled: families.any? { |family| family.role.name == RunnerRole::AGENT_NAME })
+        job_identity_facts(families)
         wsl = @wsl_runner_host
         wsl_runner_host_facts(wsl) if wsl
         host_tooling_fact
@@ -838,89 +870,126 @@ module Dev
       end
     end
 
-    # The agent host's facts, the bootstrap's inspection asked one by one:
-    # the user, the group memberships, the sudoers edge (and that no brew
-    # edge sits beside it), the data root's cooperative shape, brew's lock
-    # dir, and the engine where required.
-    # The `_work` trees are the agent slots' own facts, in their family.
+    # The user every slot is expected to run as, and the sudoers grantor
+    # of every job identity: the host rule's user on Linux, the operator
+    # on a Mac (the runner service is a per-user LaunchAgent).
     #
-    # A host is an agent host when an agent family is enrolled on it, or
-    # when the agent user is on it: register creates that user for agent
-    # labels alone, so its presence says the host was bootstrapped as one
-    # — what tells under `--check`, where GitHub is not asked and a
-    # repo-scoped family's record names no pool. Nothing on any other host.
-    #
-    # @param enrolled [Boolean] whether an agent family is enrolled here
-    sig { params(enrolled: T::Boolean).void }
-    def agent_host_facts(enrolled:)
-      agent = @bootstrap.agent_user
-      exists = @executor.quiet?("id", "-u", agent)
-      return unless enrolled || exists
+    # @return [String]
+    sig { returns(String) }
+    def runner_user_name
+      @host_identity&.name || @operator
+    end
 
-      group = DataRoot::GROUP
-      line(exists, "agent user #{agent} exists")
-      [@bootstrap.runner_user, agent].each do |member|
-        line(@bootstrap.group_member?(member), "#{member} in the #{group} group")
+    # The job identity for a user, built once per run.
+    #
+    # @param user [String]
+    # @return [Dev::JobIdentity]
+    sig { params(user: String).returns(JobIdentity) }
+    def identity_for(user)
+      @identities[user] ||= @identity_factory.call(user)
+    end
+
+    # Each job identity's facts, its inspection asked one by one: the
+    # user, the group memberships, the sudoers edge (and that no brew
+    # edge sits beside it), the data root's cooperative shape, brew's lock
+    # dir, and the engine where required. The `_work` trees are the
+    # slots' own facts, in their family.
+    #
+    # A host carries a job identity when a family of a role with one is
+    # enrolled on it, or when the user of one the declarations at hand
+    # name is on it: register creates that user for the role alone, so
+    # its presence says the host was converged for it — what tells under
+    # `--check`, where GitHub is not asked and a repo-scoped family's
+    # record names no pool. Nothing on any other host.
+    #
+    # @param families [Array<Dev::RunnerFamily>] this host's families
+    sig { params(families: T::Array[RunnerFamily]).void }
+    def job_identity_facts(families)
+      enrolled = families.filter_map { |family| family.role.job_identity }.uniq
+      declared = @roles.values.filter_map(&:job_identity)
+      (enrolled + declared).uniq.each do |user|
+        exists = @executor.quiet?("id", "-u", user)
+        next unless enrolled.include?(user) || exists
+
+        report_job_identity(identity_for(user), exists)
       end
-      report_sudoers_edges
-      root = @bootstrap.data_root
-      line(@bootstrap.cooperative_dir?(root), "data root #{root} shared with group #{group} (setgid)")
-      locks = @bootstrap.brew_locks_dir
+    end
+
+    # One job identity's facts.
+    #
+    # @param identity [Dev::JobIdentity]
+    # @param exists [Boolean] whether its user is on the host
+    sig { params(identity: JobIdentity, exists: T::Boolean).void }
+    def report_job_identity(identity, exists)
+      group = DataRoot::GROUP
+      line(exists, "job identity #{identity.user} exists")
+      [identity.runner_user, identity.user].each do |member|
+        line(identity.group_member?(member), "#{member} in the #{group} group")
+      end
+      report_sudoers_edges(identity)
+      root = identity.data_root
+      line(identity.cooperative_dir?(root), "data root #{root} shared with group #{group} (setgid)")
+      locks = identity.brew_locks_dir
       if locks
-        line(@bootstrap.brew_locks_cooperative?,
+        line(identity.brew_locks_cooperative?,
           "brew lock dir #{locks} shared with group #{group} (setgid, locks group-writable)")
       end
       return unless @container_required
 
-      line(@bootstrap.engine_converged?, @bootstrap.engine_fact)
+      line(identity.engine_converged?, identity.engine_fact)
     end
 
-    # The sudoers edge and the agent's own rules, read the way a job
+    # The sudoers edge and the identity's own rules, read the way a job
     # exercises them rather than stat'd: the drop-in is root-owned 0440,
-    # but the runner → agent edge is itself the privilege that lists the
-    # agent's rules without a prompt (`-n`, list-only — sudo's listpw is
-    # satisfied by any NOPASSWD rule). A refusal of the first probe is the
-    # finding, never a prompt, and without that edge the agent's rules
-    # cannot be read.
-    sig { void }
-    def report_sudoers_edges
-      agent = @bootstrap.agent_user
-      edge = "#{@bootstrap.runner_user} → #{agent}, #{AgentBootstrap::EDGE_TAGS.join(":")}"
-      unless @executor.quiet?("sudo", "-n", "-u", agent, "true")
-        line(false, "runner → agent sudoers edge missing (#{edge}) — the agent's rules cannot be read without it " \
+    # but the runner → identity edge is itself the privilege that lists
+    # the identity's rules without a prompt (`-n`, list-only — sudo's
+    # listpw is satisfied by any NOPASSWD rule). A refusal of the first
+    # probe is the finding, never a prompt, and without that edge the
+    # identity's rules cannot be read.
+    #
+    # @param identity [Dev::JobIdentity]
+    sig { params(identity: JobIdentity).void }
+    def report_sudoers_edges(identity)
+      user = identity.user
+      edge = "#{identity.runner_user} → #{user}, #{JobIdentity::EDGE_TAGS.join(":")}"
+      unless @executor.quiet?("sudo", "-n", "-u", user, "true")
+        line(false, "runner → #{user} sudoers edge missing (#{edge}) — #{user}'s rules cannot be read without it " \
                     "(run `dev runner register`)")
         return
       end
 
-      line(true, "runner → agent sudoers edge (#{edge})")
-      report_brew_edge
+      line(true, "runner → #{user} sudoers edge (#{edge})")
+      report_brew_edge(identity)
     end
 
-    # No brew edge is the converged state (AgentBootstrap::NO_BREW_EDGE);
-    # a rule in the agent's own `sudo -l` that runs brew as anyone is
+    # No brew edge is the converged state (JobIdentity::NO_BREW_EDGE); a
+    # rule in the identity's own `sudo -l` that runs brew as anyone is
     # drift — a drop-in from before the edge was retired — which the next
     # register rewrites away.
-    sig { void }
-    def report_brew_edge
-      reason = @bootstrap.brew_edge.reason
-      granted = brew_rules
+    #
+    # @param identity [Dev::JobIdentity]
+    sig { params(identity: JobIdentity).void }
+    def report_brew_edge(identity)
+      reason = identity.brew_edge.reason
+      granted = brew_rules(identity.user)
       if granted.empty?
         line(true, "no brew edge (#{reason})")
       else
-        line(false, "brew edge present — #{@bootstrap.agent_user} may run brew as another user (#{granted.join("; ")}): " \
+        line(false, "brew edge present — #{identity.user} may run brew as another user (#{granted.join("; ")}): " \
                     "#{reason} (run `dev runner register` to retire it)")
       end
     end
 
-    # The agent's sudo rules that run brew, if any — `sudo -l` prints one
+    # The user's sudo rules that run brew, if any — `sudo -l` prints one
     # as `(<owner>) <tags>: <path>`, so a rule is matched on its command's
     # name alone: the owner and the path are whatever the drop-in that
     # wrote it said, a symlink's realpath included.
     #
+    # @param user [String]
     # @return [Array<String>]
-    sig { returns(T::Array[String]) }
-    def brew_rules
-      rules = @executor.capture("sudo", "-n", "-u", @bootstrap.agent_user, "sudo", "-n", "-l")
+    sig { params(user: String).returns(T::Array[String]) }
+    def brew_rules(user)
+      rules = @executor.capture("sudo", "-n", "-u", user, "sudo", "-n", "-l")
       rules.lines.map(&:strip).select { |rule| File.basename(rule.split.last.to_s) == "brew" }
     end
 

@@ -7,7 +7,7 @@ require "dev/ui"
 
 module Dev
   # The one-off move of a per-user `~/.dev` into a machine data root — the
-  # Mac's shared root (AgentBootstrap) or Linux's `/var/lib/dev`
+  # Mac's shared root (JobIdentity::Darwin) or Linux's `/var/lib/dev`
   # (LinuxDataRootProvisioner). Artifact trees (engines, caches,
   # steam depots) move as a rename, so multi-GB engine trees cost nothing;
   # mutable per-user state (`state`) stays per-home (sharing is for

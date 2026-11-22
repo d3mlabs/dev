@@ -12,10 +12,11 @@ module Dev
   # status` frames: a repo-scoped family and an org-scoped one are the
   # same kind of thing, their scope only deciding who fixes their reach.
   #
-  # A slot's role is read from its GitHub labels (RunnerRole.for_labels),
-  # or, once GitHub has lost it, from the runner group its own `.runner`
-  # record names (RunnerRole.for_pool). Names and dirs are never parsed
-  # for it; they only order the slots within the family.
+  # A slot's role is read from the runner group its own `.runner` record
+  # names and its GitHub labels, among the roles declared at hand
+  # (RunnerRole.for_slot): a declared role when one matches, else a build
+  # host (in Default) or a role known by its pool alone. Names and dirs
+  # are never parsed for it; they only order the slots within the family.
   class RunnerFamily
     extend T::Sig
 
@@ -42,20 +43,15 @@ module Dev
         runner.nil? && query_error.nil?
       end
 
-      # The role the slot plays: by its labels when GitHub lists it, by
-      # its record's pool otherwise. A label set claiming two roles
-      # (RunnerRole.for_labels refuses it) is read as a build host with
-      # those labels — a contradiction to show, not to hide a slot over.
+      # The role the slot plays among the roles declared at hand: by its
+      # record's pool and, when GitHub lists it, its labels
+      # (RunnerRole.for_slot).
       #
+      # @param declared [Hash{String => Dev::RunnerRole}] the roles declared at hand, by name
       # @return [Dev::RunnerRole]
-      sig { returns(RunnerRole) }
-      def role
-        listed = runner
-        return RunnerRole.for_pool(enrollment.pool) if listed.nil?
-
-        RunnerRole.for_labels(listed.custom_labels)
-      rescue ArgumentError
-        RunnerRole.build_host(labels: T.must(listed).custom_labels)
+      sig { params(declared: T::Hash[String, RunnerRole]).returns(RunnerRole) }
+      def role(declared)
+        RunnerRole.for_slot(pool: enrollment.pool, labels: runner&.custom_labels, declared: declared)
       end
 
       # The slot's number among its family's names: 1 for `<base>`, n for
@@ -75,9 +71,6 @@ module Dev
       end
     end
 
-    # The builtin order families print in, so the eye learns positions.
-    ROLE_ORDER = T.let([RunnerRole::AGENT_NAME, RunnerRole::ORCHESTRATOR_NAME, RunnerRole::BUILD_HOST_NAME].freeze, T::Array[String])
-
     # "owner/repo" (repo scope) or "owner" (org scope).
     sig { returns(String) }
     attr_reader :scope
@@ -92,23 +85,24 @@ module Dev
     class << self
       extend T::Sig
 
-      # The families the slots form: one per (scope, role), in builtin role
-      # order then by scope. A family's role is the first listed slot's —
-      # whose labels say which agent subset or which build-host capabilities
-      # the family advertises — or, with none listed, the first slot's by
-      # pool.
+      # The families the slots form: one per (scope, role), declared and
+      # pooled roles by name, the build host last, then by scope, so the
+      # eye learns positions. A family's role is the first listed slot's —
+      # whose labels say which capabilities the family advertises — or,
+      # with none listed, the first slot's by pool.
       #
       # @param slots [Array<Slot>] this host's enrollments, each with GitHub's record
+      # @param declared [Hash{String => Dev::RunnerRole}] the roles declared at hand, by name
       # @return [Array<Dev::RunnerFamily>]
-      sig { params(slots: T::Array[Slot]).returns(T::Array[RunnerFamily]) }
-      def of(slots)
-        grouped = slots.group_by { |slot| [slot.enrollment.scope, slot.role.name] }
+      sig { params(slots: T::Array[Slot], declared: T::Hash[String, RunnerRole]).returns(T::Array[RunnerFamily]) }
+      def of(slots, declared: {})
+        grouped = slots.group_by { |slot| [slot.enrollment.scope, slot.role(declared).name] }
         families = grouped.map do |(scope, _role_name), members|
           ordered = members.sort_by(&:order_key)
-          role = (ordered.find(&:listed?) || T.must(ordered.first)).role
+          role = (ordered.find(&:listed?) || T.must(ordered.first)).role(declared)
           new(scope: scope, role: role, slots: ordered)
         end
-        families.sort_by { |family| [ROLE_ORDER.index(family.role.name) || ROLE_ORDER.length, family.scope] }
+        families.sort_by { |family| [family.role.build_host? ? 1 : 0, family.role.name, family.scope] }
       end
     end
 

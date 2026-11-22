@@ -2,26 +2,39 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/label_contracts"
 require "dev/runner_discovery"
 require "dev/runner_family"
+require "dev/runner_group_contract"
 require "dev/runner_registry"
+require "dev/runner_role"
 
 transform!(RSpock::AST::Transformation)
 class Dev::RunnerFamilyTest < Minitest::Test
-  AGENT_LABELS = Dev::LabelContracts::AI_FLOW_AGENT_LABELS
+  AGENT_LABELS = %w[ai-ask ai-edit ai-split ai-build ai-learn].freeze
+  PINS = ["d3mlabs/ai-flow/.github/workflows/ai-commands.yml@refs/tags/v2"].freeze
+  AGENT = Dev::RunnerRole.declared(
+    name: "agent", labels: AGENT_LABELS, group: Dev::RunnerGroupContract.new(name: "ai-flow", workflows: PINS), job_identity: "ai-agent",
+  )
+  ORCHESTRATOR = Dev::RunnerRole.declared(
+    name: "orchestrator", labels: ["ai-orchestrator"],
+    group: Dev::RunnerGroupContract.new(name: "ai-orchestrator", workflows: PINS, visibility: Dev::RunnerGroupContract::ALL),
+  )
+  DECLARED = { "agent" => AGENT, "orchestrator" => ORCHESTRATOR }.freeze
 
   # --- a slot's role ------------------------------------------------------------
 
-  test "a listed slot's role is read from its GitHub labels — #{labels.inspect} → #{role}" do
+  test "a listed slot's role is read from its pool and labels among the roles declared at hand — #{labels.inspect} in #{pool} → #{role}" do
     Expect
-    slot(name: "box", labels: labels).role.name == role
+    slot(name: "box", labels: labels, pool: pool).role(DECLARED).name == role
 
     Where
-    labels              | role
-    AGENT_LABELS        | "agent"
-    ["ai-orchestrator"] | "orchestrator"
-    ["cellbound-3d"]    | "build-host"
+    labels              | pool              | role
+    AGENT_LABELS        | "ai-flow"         | "agent"
+    ["ai-build"]        | "ai-flow"         | "agent"
+    AGENT_LABELS        | "Default"         | "agent"
+    ["ai-orchestrator"] | "ai-orchestrator" | "orchestrator"
+    ["cellbound-3d"]    | "Default"         | "build-host"
+    ["ue"]              | "ue-hosted"       | "ue-hosted"
   end
 
   test "a slot GitHub has lost is told by its record's pool — #{pool} → #{role}" do
@@ -31,22 +44,24 @@ class Dev::RunnerFamilyTest < Minitest::Test
     Expect
     lost.lost?
     !lost.listed?
-    lost.role.name == role
+    lost.role(DECLARED).name == role
 
     Where
     pool              | role
     "ai-flow"         | "agent"
     "ai-orchestrator" | "orchestrator"
     "Default"         | "build-host"
+    "ue-hosted"       | "ue-hosted"
   end
 
-  test "a slot whose labels claim two roles is a build host with those labels — shown, not hidden" do
+  test "with no declaration at hand, a slot in a declared role's pool is known by the pool alone" do
     Given
-    mixed = slot(name: "box", labels: ["ai-build", "ai-orchestrator"])
+    pooled = slot(name: "box-agent", labels: AGENT_LABELS, pool: "ai-flow").role({})
 
     Expect
-    mixed.role.name == "build-host"
-    mixed.role.labels == ["ai-build", "ai-orchestrator"]
+    pooled.pooled?
+    pooled.name == "ai-flow"
+    pooled.labels == AGENT_LABELS
   end
 
   test "a slot GitHub could not be asked about is neither listed nor lost" do
@@ -73,18 +88,18 @@ class Dev::RunnerFamilyTest < Minitest::Test
 
   # --- grouping ----------------------------------------------------------------
 
-  test "slots group into one family per (scope, role), in builtin role order then by scope, slot 1 first within" do
+  test "slots group into one family per (scope, role), roles by name with the build host last, then by scope, slot 1 first within" do
     Given "three roles across two scopes, listed out of order"
     slots = [
-      slot(name: "box-agent-2", labels: AGENT_LABELS, scope: "d3mlabs"),
+      slot(name: "box-agent-2", labels: AGENT_LABELS, scope: "d3mlabs", pool: "ai-flow"),
       slot(name: "box", labels: ["snappy"], scope: "JPDuchesne/snappy"),
-      slot(name: "box-orchestrator", labels: ["ai-orchestrator"], scope: "d3mlabs"),
-      slot(name: "box-agent", labels: AGENT_LABELS, scope: "d3mlabs"),
+      slot(name: "box-orchestrator", labels: ["ai-orchestrator"], scope: "d3mlabs", pool: "ai-orchestrator"),
+      slot(name: "box-agent", labels: AGENT_LABELS, scope: "d3mlabs", pool: "ai-flow"),
       slot(name: "box", labels: ["cellbound-3d"], scope: "d3mlabs/cellbound-3d"),
     ]
 
     When
-    families = Dev::RunnerFamily.of(slots)
+    families = Dev::RunnerFamily.of(slots, declared: DECLARED)
 
     Then
     families.map { |family| [family.role.name, family.scope, family.slots.map { |slot| slot.enrollment.name }] } == [
@@ -95,30 +110,43 @@ class Dev::RunnerFamilyTest < Minitest::Test
     ]
   end
 
-  test "a family's role is its first listed slot's — the agent subset it advertises — not a lost slot's full set" do
-    Given "slot 1 lost, slot 2 listed with a partition of the agent labels"
+  test "a family's role is its first listed slot's, not a lost slot's" do
+    Given "slot 1 lost, slot 2 listed"
     slots = [
       slot(name: "box-agent", labels: nil, pool: "ai-flow"),
-      slot(name: "box-agent-2", labels: ["ai-build", "ai-learn"]),
+      slot(name: "box-agent-2", labels: AGENT_LABELS, pool: "ai-flow"),
     ]
 
     When
-    family = Dev::RunnerFamily.of(slots).fetch(0)
+    family = Dev::RunnerFamily.of(slots, declared: DECLARED).fetch(0)
 
     Then
-    family.role.name == "agent"
-    family.role.labels == ["ai-build", "ai-learn"]
+    family.role == AGENT
     family.first_listed.enrollment.name == "box-agent-2"
   end
 
   test "a family with no listed slot takes its role from the pool and has no first listed slot" do
     When
-    family = Dev::RunnerFamily.of([slot(name: "box-agent", labels: nil, pool: "ai-flow")]).fetch(0)
+    family = Dev::RunnerFamily.of([slot(name: "box-agent", labels: nil, pool: "ai-flow")], declared: DECLARED).fetch(0)
 
     Then
-    family.role.name == "agent"
+    family.role == AGENT
     family.first_listed.nil?
     family.query_error.nil?
+  end
+
+  test "without declarations, families form by pool: one pooled family per group, the build host last" do
+    Given
+    slots = [
+      slot(name: "box", labels: ["cellbound-3d"], scope: "d3mlabs/cellbound-3d"),
+      slot(name: "box-agent", labels: AGENT_LABELS, scope: "d3mlabs", pool: "ai-flow"),
+    ]
+
+    When
+    families = Dev::RunnerFamily.of(slots)
+
+    Then
+    families.map { |family| [family.role.name, family.role.pooled?] } == [["ai-flow", true], ["build-host", false]]
   end
 
   test "scope: an org family is org-scoped and a repo family's org is the repo's owner" do

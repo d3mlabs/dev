@@ -21,8 +21,8 @@ module Dev
   # systemd service's is `022`, and the runner service is a dev process
   # one `exec` down.
   #
-  # Not on a Mac: its data root has one owner, the agent user's
-  # shared dirs carry their own umask rule (AgentBootstrap's sudoers), and
+  # Not on a Mac: its data root has one owner, a job identity's
+  # shared dirs carry their own umask rule (JobIdentity's sudoers), and
   # the login's umask is the user's business.
   module SharedUmask
     extend T::Sig

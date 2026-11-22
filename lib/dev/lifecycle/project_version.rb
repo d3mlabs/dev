@@ -48,8 +48,27 @@ module Dev
 
       SEMVER = /\A(\d+)\.(\d+)\.(\d+)\z/
 
+      # The prefix of a series tag (`v1` for every 1.x release).
+      SERIES_PREFIX = "v"
+
       class << self
         extend T::Sig
+
+        # The tag naming a version's **series** — its major: `v1` for
+        # `1.4.2`. Everything a consumer takes from a project follows the
+        # series (a host on `~> 1`, a workflow `uses:` at `@v1`), so the
+        # series is what a role's workflow pins and a deploy moves.
+        #
+        # @param version [String] a `major.minor.patch`
+        # @return [String]
+        # @raise [NotSemverError] +version+ is not three numbers
+        sig { params(version: String).returns(String) }
+        def series_tag(version)
+          match = SEMVER.match(version)
+          raise NotSemverError, "#{version.inspect} is not major.minor.patch — a series is a major" unless match
+
+          "#{SERIES_PREFIX}#{match[1]}"
+        end
 
         # The version after +current+ with +part+ bumped: `1.1.9` → `1.1.10`
         # (patch), `1.2.0` (minor), `2.0.0` (major).
