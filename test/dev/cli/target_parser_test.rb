@@ -145,22 +145,25 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     targets["rspock"].packager == Dev::Lifecycle::PackagerSpec::Archive.new
   end
 
-  test "packager: archive takes its form as options: #{options.inspect}" do
+  test "packager: archive takes its form and vendoring as options: #{options.inspect}" do
     Given
     raw = YAML.safe_load(options)
 
     Expect
     Dev::Cli::TargetParser.new.parse("ue-toolchain", { "packager" => raw }).packager ==
-      Dev::Lifecycle::PackagerSpec::Archive.new(form: form)
+      Dev::Lifecycle::PackagerSpec::Archive.new(form: form, vendor: vendor)
 
     Where
-    options                                   | form
-    "archive"                                 | Dev::Lifecycle::Archive::Form::Zip.new
-    "{ archive: {} }"                         | Dev::Lifecycle::Archive::Form::Zip.new
-    "{ archive: { format: zip } }"            | Dev::Lifecycle::Archive::Form::Zip.new
-    "{ archive: { format: tar } }"            | Dev::Lifecycle::Archive::Form::Tar.new
-    "{ archive: { split: 2GiB } }"            | Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB"))
-    "{ archive: { format: tar, split: 2GiB } }" | Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB"))
+    options                                   | form                                                                                  | vendor
+    "archive"                                 | Dev::Lifecycle::Archive::Form::Zip.new                                                | false
+    "{ archive: {} }"                         | Dev::Lifecycle::Archive::Form::Zip.new                                                | false
+    "{ archive: { format: zip } }"            | Dev::Lifecycle::Archive::Form::Zip.new                                                | false
+    "{ archive: { format: tar } }"            | Dev::Lifecycle::Archive::Form::Tar.new                                                | false
+    "{ archive: { split: 2GiB } }"            | Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB")) | false
+    "{ archive: { format: tar, split: 2GiB } }" | Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB")) | false
+    "{ archive: { vendor: true } }"           | Dev::Lifecycle::Archive::Form::Zip.new                                                | true
+    "{ archive: { vendor: false } }"          | Dev::Lifecycle::Archive::Form::Zip.new                                                | false
+    "{ archive: { format: tar, vendor: true } }" | Dev::Lifecycle::Archive::Form::Tar.new                                             | true
   end
 
   test "a build: or package: line must be a command: #{key}: #{raw.inspect}" do
@@ -216,10 +219,12 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "{ archive: tar }"                         | "one built-in's name to its options"
     "{ as-is: { strip: true } }"               | "as-is takes no options, got strip"
     "{ none: { why: not } }"                   | "none takes no options, got why"
-    "{ archive: { level: 9 } }"                | "archive takes format, split, not level"
+    "{ archive: { level: 9 } }"                | "archive takes format, split, vendor, not level"
     "{ archive: { format: 7z } }"              | "archive: unknown archive format \"7z\""
     "{ archive: { split: 2GB } }"              | "archive: \"2GB\" is not a size"
     "{ archive: { format: zip, split: 2GiB } }" | "archive: `split:` needs the tar format"
+    "{ archive: { vendor: yes please } }"      | "archive: `vendor:` is true or false, got \"yes please\""
+    "{ archive: { vendor: 1 } }"               | "archive: `vendor:` is true or false, got 1"
   end
 
   test "the rules a target owns surface from its constructor: #{name} #{entry.inspect}" do

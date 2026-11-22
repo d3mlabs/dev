@@ -155,7 +155,7 @@ asks for the build, because the same `dev.yml` loads on every machine.
 
 | `packager` | Result |
 |---|---|
-| `archive` (default) | `<build>.zip` of the install's contents, symlinks kept. `{ archive: { format: tar } }` writes `<build>.tar.zst`; `{ archive: { split: 2GiB } }` cuts it into `.00`, `.01`, … parts under that size plus a `<build>.MANIFEST` of SHA-256s. The tar form needs `zstd` on PATH. |
+| `archive` (default) | `<build>.zip` of the install's contents, symlinks kept. `{ archive: { format: tar } }` writes `<build>.tar.zst`; `{ archive: { split: 2GiB } }` cuts it into `.00`, `.01`, … parts under that size plus a `<build>.MANIFEST` of SHA-256s. The tar form needs `zstd` on PATH. `{ archive: { vendor: true } }` first runs a frozen `bundle install` into the install's own `vendor/bundle` under the project's Ruby, so the asset ships the tool's gems; the install must carry `dependencies.rb` and `deps.lock` (see [A tool's closure](dependencies.md#a-tools-closure-at-install-or-at-release)). |
 | `as-is` | The install already is the archive (Alpakit's zip, `gem build`'s `.gem`): its one file is adopted as `<build>.<ext>`. |
 | `none` | Built, never shipped. Invisible to `package`, `release` and `deploy`. |
 

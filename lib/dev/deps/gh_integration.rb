@@ -6,7 +6,11 @@ require "fileutils"
 require "pathname"
 require "shellwords"
 require "dev/shadowenv_path"
+require_relative "brew_integration"
+require_relative "bundler_integration"
 require_relative "integration"
+require_relative "keg_exec"
+require_relative "tool_closure"
 
 module Dev
   module Deps
@@ -48,6 +52,16 @@ module Dev
     # A tree that ships a `bin/` is a tool, and after installing, the
     # project shadowenv gets it on PATH, the same activation a brew keg
     # gets. Only when the integration knows its project.
+    #
+    # A tree that carries its own `dependencies.rb` and `deps.lock` is a
+    # tool with a closure (ToolClosure): before the tree publishes, its
+    # locked Ruby is installed as a keg through brew, its gems are vendored
+    # into the tree under that keg's bundler — unless the release shipped
+    # them vendored already — and one `bin/` wrapper per `exe/` runs the
+    # executable under the keg's Ruby, which selects the vendored gems
+    # itself. The closure is the tree's: it touches no project gem home,
+    # exports nothing, and goes when the tree is reclaimed. Only the keg is
+    # shared, as brew shares every keg.
     class GhIntegration < Integration
       extend T::Sig
 
@@ -81,18 +95,23 @@ module Dev
       # @param store [ArtifactStore, nil]
       # @param project_root [String, Pathname, nil] repo root, used to resolve a
       #   project-relative build: script path (e.g. "bin/build-ue.sh")
+      # @param brew [BrewIntegration, nil] what installs a tool tree's locked
+      #   Ruby keg; nil for a brew of no project — the keg activates in no
+      #   shadowenv and is retained for no one, the tree runs it by path
       # @param ui [Ui] what the install says its work through
       sig do
         params(
           repository: T.nilable(Repository),
           store: T.nilable(ArtifactStore),
           project_root: T.nilable(T.any(String, Pathname)),
+          brew: T.nilable(BrewIntegration),
           ui: Ui,
         ).void
       end
-      def initialize(repository:, store:, project_root: nil, ui: NoUi.new)
+      def initialize(repository:, store:, project_root: nil, brew: nil, ui: NoUi.new)
         super(repository: repository, store: store, ui: ui)
         @project_root = T.let(project_root && Pathname(project_root), T.nilable(Pathname))
+        @brew = T.let(brew || BrewIntegration.new(repository: nil, store:, ui:), BrewIntegration)
       end
 
       # Install all gh dependencies, then activate what installed — even
@@ -175,6 +194,7 @@ module Dev
           @ui.step("Downloading #{label} from #{dep.metadata["repo"]}") { download_assets(dep, archives_dir) }
           @ui.spin("Verifying #{label}") { verify_assets(dep, archives_dir) }
           @ui.step("Extracting #{label}") { extract_archives(archives_dir, extracted_dir) }
+          materialize_closure(label, extracted_dir)
           extracted_dir
         end
         @ui.note("{{v}} #{label} installed at #{published}")
@@ -206,9 +226,44 @@ module Dev
             extract_source(archive_path, source_dir)
           end
 
-          build_source(dep, source_dir, install_dir)
+          built = build_source(dep, source_dir, install_dir)
+          materialize_closure(label, built)
+          built
         end
         @ui.note("{{v}} #{label} installed at #{published}")
+      end
+
+      # Materialize a tool tree's closure in the staging tree, before it
+      # publishes: the keg its lock pins, through brew (which speaks for
+      # itself on the Ui); its gems into the tree under that keg's bundler,
+      # a spin — unless the release vendored them, a fact; then the
+      # wrappers. A tree carrying no manifest and lock is not a tool with a
+      # closure and nothing here runs.
+      #
+      # @param label [String] "name@version", for the Ui
+      # @param tree [Pathname] the staging tree about to publish
+      # @return [void]
+      # @raise [ToolClosure::NoRubyPinError] if the tree's lock pins no Ruby
+      # @raise [BrewIntegration::KegNotFoundError] if brew left no keg at the locked version
+      # @raise [ToolClosure::VendorError] if `bundle install` fails
+      # @raise [ToolClosure::WrapperCollisionError] if the tree's own bin/ carries an exe's name
+      sig { params(label: String, tree: Pathname).void }
+      def materialize_closure(label, tree)
+        return unless ToolClosure.carried_by?(tree)
+
+        closure = ToolClosure.new(tree:)
+        ruby = closure.ruby_pin
+        @brew.install_all([ruby])
+        keg = @brew.keg(ruby)
+        if closure.vendored?
+          @ui.note("{{v}} #{label} ships its gems vendored")
+        else
+          @ui.spin("Vendoring #{label}'s gems under #{keg.basename}") do
+            closure.vendor!(exec: KegExec.new(keg:), cache: store!.tool_cache(BundlerIntegration::TOOL))
+          end
+        end
+        closure.wrap!(ruby: keg / "bin" / "ruby")
+        @ui.note("{{v}} #{label} runs under its own closure: ruby #{ruby.version}, #{closure.executables.size} wrapper(s) in bin/")
       end
 
       # Fetch the version's source tarball into archive_path. Uses `gh api
