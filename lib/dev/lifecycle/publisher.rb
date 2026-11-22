@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "head_strategy"
 require_relative "receipt"
 require_relative "shipment"
 require_relative "track"
@@ -21,10 +22,25 @@ module Dev
     # output: what dev records of the upload is the receipt plus what dev
     # knew going in. Whatever a publisher materialises lives in its scratch,
     # the channel's own directory under the project's store (Store#scratch).
+    #
+    # Every channel also has a **head** — what a follower installs when it
+    # asks for nothing in particular — and the port declares how its
+    # destination keeps it (HeadStrategy): a pointer `deploy` moves, or
+    # versions dev computes the head over (Head.derive). The rule that
+    # `release` never moves a head and `deploy` moves exactly one is dev's
+    # on every channel; the declaration is what gives it a mechanism.
     module Publisher
       extend T::Sig
       extend T::Helpers
       interface!
+
+      # How the destination keeps its head. A fact about the destination,
+      # fixed for the channel's kind, so no arguments: a publisher answers
+      # the same whatever is shipped.
+      #
+      # @return [HeadStrategy]
+      sig { abstract.returns(HeadStrategy) }
+      def head_strategy; end
 
       # Ship the selected archives — one per accepted build the channel
       # resolved — to the destination, on the track the source decided.

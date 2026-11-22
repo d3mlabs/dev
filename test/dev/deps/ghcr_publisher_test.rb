@@ -195,9 +195,10 @@ class Dev::Deps::GhcrPublisherTest < Minitest::Test
     Given "no engine and no login handed in"
     publisher = Dev::Deps::GhcrPublisher.new
 
-    Expect "construction completes with neither resolved, and the tool name renders"
+    Expect "construction completes with neither resolved, the tool name renders, and the head is pointed: a registry tag is a pointer"
     publisher.instance_variable_get(:@engine).nil?
     publisher.instance_variable_get(:@login).nil?
     publisher.to_s == "docker push"
+    publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
   end
 end

@@ -555,12 +555,14 @@ class RunnerTest < Minitest::Test
         rubygems     gem push                                  host
                      Accepts: rspock
                      Protocol: run: gem push "$DEV_ARTIFACT"
+                     Head: pointed
         staging      rsync to the box                          host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
+                     Head: pointed
         status       What each channel carries and from where
     USAGE
-    out.string.include?("Runs on the host.\nAccepts: site-dev, site-release\nProtocol: run: ./bin/stage\n")
+    out.string.include?("Runs on the host.\nAccepts: site-dev, site-release\nProtocol: run: ./bin/stage\nHead: pointed\n")
     out.string.include?("--allow-stale")
     out.string.include?("--dry-run")
   end
@@ -700,16 +702,18 @@ class RunnerTest < Minitest::Test
     undeclared.run(["help", "deploy"])
 
     Then "the declared one keeps its targets: and desc over the integration's protocol; the undeclared one appears as the lock's, over every build; " \
-         "dev's own `status` sits among them either way"
+         "dev's own `status` sits among them either way; each names the head strategy its publisher declares"
     out.string.include?(<<~USAGE)
       Commands:
         staging      rsync to the box                          host
                      Accepts: site-dev, site-release
                      Protocol: run: ./bin/stage
+                     Head: pointed
         status       What each channel carries and from where
         steam        Steam depots                              host
                      Accepts: site-release
                      Protocol: publisher: steam
+                     Head: pointed
     USAGE
     undeclared_out.string.include?(<<~USAGE)
       Commands:
@@ -717,6 +721,7 @@ class RunnerTest < Minitest::Test
         steam        Ship through the lock's steam publisher   host
                      Accepts: rspock
                      Protocol: publisher: steam
+                     Head: pointed
     USAGE
   end
 

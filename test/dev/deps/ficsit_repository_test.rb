@@ -385,6 +385,8 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     ui.secrets_asked == []
     Dev::Deps::FicsitRepository.new.to_s == "ficsit"
     Dev::Deps::FicsitRepository.new.is_a?(Dev::Lifecycle::Publisher)
+    # Derived: SMR orders a mod's versions by SemVersion and keeps no pointer.
+    Dev::Deps::FicsitRepository.new.head_strategy == Dev::Lifecycle::HeadStrategy::Derived
 
     Cleanup
     ENV.delete("FICSIT_API_KEY")

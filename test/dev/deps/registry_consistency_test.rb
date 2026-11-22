@@ -84,6 +84,17 @@ class Dev::Deps::RegistryConsistencyTest < Minitest::Test
     assert_empty unwired, "publisher classes missing from Registry::INTEGRATIONS: #{unwired.join(", ")}"
   end
 
+  test "every contributed publisher declares its channel's head strategy: the head rule is dev's, the mechanism each destination's" do
+    Given "the publisher classes the registry wires"
+    publishers = Dev::Deps::Registry::INTEGRATIONS.filter_map(&:publisher).uniq
+
+    When "asking each which class answers head_strategy"
+    undeclared = publishers.reject { |klass| klass.instance_method(:head_strategy).owner == klass }
+
+    Then "each answers for itself — the port's abstract stub is no declaration"
+    assert_empty undeclared, "publishers declaring no head strategy: #{undeclared.map(&:name).join(", ")}"
+  end
+
   test "contributed channel names are unique: two entries on one channel would overwrite each other's publisher" do
     Given
     channels = Dev::Deps::Registry::INTEGRATIONS.select(&:publishes?).map(&:channel_name)

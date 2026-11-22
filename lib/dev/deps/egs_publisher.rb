@@ -5,6 +5,7 @@ require "pathname"
 require "dev/credentials"
 require "dev/ui"
 require "dev/lifecycle/channel"
+require "dev/lifecycle/head_strategy"
 require "dev/lifecycle/platform"
 require "dev/lifecycle/publisher"
 require "dev/lifecycle/receipt"
@@ -46,6 +47,10 @@ module Dev
     # issues for BuildPatchTool. The secret reaches the tool through the
     # environment variable `-ClientSecretEnvVar` names, Epic's own
     # recommendation, so it is on no command line.
+    #
+    # The channel's head is pointed: a label (`Live`) sits on one binary
+    # of an artifact at a time, and `LabelBinary` moves it — to the
+    # shipped build on a deploy, back to a previous one on a rollback.
     class EgsPublisher
       extend T::Sig
       include Lifecycle::Publisher
@@ -122,6 +127,12 @@ module Dev
           run(tool, common + ["-mode=LabelBinary", "-Label=#{label}", "-Platform=#{platform}"], env:, what: "labelling of #{shipment}")
         end
         Lifecycle::Receipt.new(summary: "egs #{uploads.map { |shipment, artifact, _| "#{shipment.build_id} → artifact #{artifact.id}" }.join(", ")} labelled #{label}")
+      end
+
+      # Pointed: the track's label is a pointer at one binary.
+      sig { override.returns(Lifecycle::HeadStrategy) }
+      def head_strategy
+        Lifecycle::HeadStrategy::Pointed
       end
 
       private
