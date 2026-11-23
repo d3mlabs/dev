@@ -47,6 +47,13 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     releases(gh).find(TAG).nil?
   end
 
+  test "a found release is a value: the same page and draft state is the same release" do
+    Expect
+    assert_value_semantics Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: true),
+      equal_to: Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: true),
+      unequal_to: [Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: false)]
+  end
+
   test "find maps #{what} to the archive's own error" do
     Given
     gh = FakeGh.new.answers(["release", "view"], with: printed)
