@@ -357,12 +357,15 @@ release is never cut on an assumed yes.
    `<build>-<version>.<ext>` (`cellbound-3d-win64-release-1.2.0.zip`; a
    split set's parts as `<build>-<version>.tar.zst.00`, … with a
    rewritten `<build>-<version>.MANIFEST`), with `release.json` beside
-   them. The release is created once (`gh release create --verify-tag`,
-   notes from the plan) and assets upload with `--clobber`. A project
-   with a channel whose publisher owns the forge's latest designation
-   (the [gh channel](#gh)) creates it with `--latest=false`, and the
-   plan's step says so: the designation is that channel's head, moved
-   by `deploy`, never by a cut.
+   them. The release is created once, as a draft (`gh release create
+   --verify-tag --draft`, notes from the plan), the assets upload with
+   `--clobber`, and the draft is published last (`gh release edit
+   --draft=false`): a repository with immutable releases freezes the
+   asset list the moment a release is published, so nothing publishes
+   before the assets are on. A project with a channel whose publisher
+   owns the forge's latest designation (the [gh channel](#gh)) publishes
+   with `--latest=false`, and the plan's step says so: the designation is
+   that channel's head, moved by `deploy`, never by a cut.
 
 ```
 ✓ v1.2.0 released! (0123456789ab, from main) → https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0
@@ -379,9 +382,13 @@ releases) — its tag and assets can still change, so no head may point at
 it, and `deploy gh` refuses it. Enabling the setting freezes the releases
 cut from then on; one already cut stays mutable.
 
-A run that fails after the tag is pushed leaves the release uncreated;
-running it again resumes at the push, creates the release if missing,
-and re-uploads what a half-done run attached.
+A run that fails after the tag is pushed leaves the release uncreated or
+a draft; running it again resumes at the push, creates the draft if
+missing, re-uploads what a half-done run attached, and publishes. A
+release found already published takes the assets only where the
+repository still allows it: on one with immutable releases the list froze
+at publish, and the run fails naming the one remedy — release the next
+version.
 
 `release.json` is what `deploy --release` reads:
 
@@ -515,8 +522,8 @@ rubygems` from a project without it is refused and names the `cp`. The
 workflow runs on `ubuntu-latest` when a release is published, or by hand
 with a `version` input for a release that already carries its assets. It
 converges the runner with `d3mlabs/dev/up`, waits for `release.json` on
-the release (`dev release` creates the release before it uploads the
-assets), exchanges the job's OIDC token for a push key that lives for the
+the release (a guard from before `dev release` published last; the
+assets are on when the event fires), exchanges the job's OIDC token for a push key that lives for the
 job under rubygems.org trusted publishing, and runs `dev deploy rubygems
 --release <v>`. No API key is stored anywhere.
 

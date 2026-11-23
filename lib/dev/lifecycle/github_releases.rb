@@ -36,6 +36,38 @@ module Dev
       # A tag the forge has no release of, asked for its facts.
       class ReleaseMissingError < Error; end
 
+      # The release is published on a repository with immutable releases:
+      # its asset list froze at publish, so what it lacks it lacks for
+      # good (dev#679).
+      class FrozenError < Error
+        extend T::Sig
+
+        # @param tag [ReleaseTag]
+        sig { params(tag: ReleaseTag).void }
+        def initialize(tag)
+          super("#{tag} is published and immutable: its assets were frozen at publish and cannot be completed — release the next version")
+        end
+      end
+
+      # What the forge says of an upload onto a frozen release.
+      FROZEN = /immutable release/i
+
+      # A release the forge holds for a tag: its page, and whether it is
+      # still a draft (created, assets attachable, not yet published).
+      class Found < T::Struct
+        extend T::Sig
+        include Dev::ValueEquality::Derived
+
+        const :url, URI::Generic
+        const :draft, T::Boolean
+
+        # @return [Array] the members that constitute identity
+        sig { override.returns(T::Array[T.anything]) }
+        def equality_members
+          [url, draft]
+        end
+      end
+
       # What gh says when a tag has no release.
       NOT_FOUND = /release not found/i
 
@@ -83,36 +115,58 @@ module Dev
       # The release of a tag, if the forge has one.
       #
       # @param tag [ReleaseTag]
-      # @return [URI, nil] the release's page; nil when none exists
+      # @return [Found, nil] the release's page and draft state; nil when none exists
       # @raise [ApiError]
+      # @raise [MalformedReleaseError] gh answered with something other than a release
       # @raise [Gh::GhMissingError]
-      sig { params(tag: ReleaseTag).returns(T.nilable(URI::Generic)) }
+      sig { params(tag: ReleaseTag).returns(T.nilable(Found)) }
       def find(tag)
-        url(@gh.capture(["release", "view", tag.name, "--json", "url", "--jq", ".url"]))
+        release = JSON.parse(@gh.capture(["release", "view", tag.name, "--json", "url,isDraft"]))
+        raise MalformedReleaseError, "gh answered with #{release.class}, not #{tag}'s release" unless release.is_a?(Hash)
+
+        Found.new(url: url(release["url"].to_s), draft: release["isDraft"] == true)
       rescue Gh::CommandFailedError => e
         return nil if NOT_FOUND.match?(e.message)
 
         raise ApiError, e.message
+      rescue JSON::ParserError => e
+        raise MalformedReleaseError, "gh answered with something other than #{tag}'s release: #{e.message}"
       end
 
       # Create the release of a tag the forge already has (the cut pushed
-      # it; `--verify-tag` refuses to mint one for a tag that is not there).
+      # it; `--verify-tag` refuses to mint one for a tag that is not there)
+      # — as a **draft**. On a repository with immutable releases the
+      # asset list freezes the moment a release is published, so the assets
+      # go on first and {#publish} comes last (dev#679).
       #
       # @param tag [ReleaseTag]
       # @param title [String]
       # @param notes [String] the body, through stdin so it never hits argv
+      # @return [URI] the release's page
+      # @raise [ApiError]
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag, title: String, notes: String).returns(URI::Generic) }
+      def create(tag, title:, notes:)
+        url(@gh.capture(["release", "create", tag.name, "--title", title, "--notes-file", "-", "--verify-tag", "--draft"], stdin: notes))
+      rescue Gh::CommandFailedError => e
+        raise ApiError, e.message
+      end
+
+      # Publish a tag's draft: the assets are on, the list freezes complete.
+      #
+      # @param tag [ReleaseTag]
       # @param latest [Boolean] whether the forge may designate the release
       #   its latest; false where that designation is a head `deploy gh`
       #   moves (`--latest=false`: GitHub's own rule is "most recently
       #   created", and `release` moves no head)
-      # @return [URI] the release's page
+      # @return [void]
       # @raise [ApiError]
       # @raise [Gh::GhMissingError]
-      sig { params(tag: ReleaseTag, title: String, notes: String, latest: T::Boolean).returns(URI::Generic) }
-      def create(tag, title:, notes:, latest: true)
-        argv = ["release", "create", tag.name, "--title", title, "--notes-file", "-", "--verify-tag"]
+      sig { params(tag: ReleaseTag, latest: T::Boolean).void }
+      def publish(tag, latest:)
+        argv = ["release", "edit", tag.name, "--draft=false"]
         argv << "--latest=false" unless latest
-        url(@gh.capture(argv, stdin: notes))
+        @gh.capture(argv)
       rescue Gh::CommandFailedError => e
         raise ApiError, e.message
       end
@@ -149,6 +203,7 @@ module Dev
       # @param tag [ReleaseTag]
       # @param files [Array<Pathname>]
       # @return [void]
+      # @raise [FrozenError] the release is published and immutable
       # @raise [ApiError]
       # @raise [Gh::GhMissingError]
       sig { params(tag: ReleaseTag, files: T::Array[Pathname]).void }
@@ -157,6 +212,8 @@ module Dev
 
         @gh.capture(["release", "upload", tag.name, *files.map(&:to_s), "--clobber"])
       rescue Gh::CommandFailedError => e
+        raise FrozenError.new(tag) if FROZEN.match?(e.message)
+
         raise ApiError, e.message
       end
 

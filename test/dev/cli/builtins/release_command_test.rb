@@ -218,6 +218,16 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.answers(["release", "upload"], with: "")
   end
 
+  def forge_publishes
+    @gh.answers(["release", "edit"], with: "#{URL}\n")
+  end
+
+  # The forge holds a release for the tag: a draft a failed run left, or
+  # one already published.
+  def forge_has_release(draft:)
+    @gh.answers(["release", "view"], with: { "url" => URL, "isDraft" => draft })
+  end
+
   # The release as the forge holds it once cut: frozen, on a repo with
   # immutable releases on, unless a test is about the warning.
   def forge_reports(tag, immutable: true)
@@ -229,6 +239,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v1.2.0")
 
     base = head
@@ -247,11 +258,14 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     store.artifact(build("cellbound-3d-linux64-release")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
     store.artifact(build("cellbound-3d-server-linux64")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
 
-    # the forge was asked for the release, given one with the notes, then the renamed archives and release.json, then read back
+    # the forge was asked for the release, given a draft with the notes, then the renamed archives and release.json,
+    # then the draft published — the asset list is complete when it freezes (dev#679) — then read back
     @gh.calls.map { |call| call.argv.first(3) } ==
-      [["release", "view", "v1.2.0"], ["release", "create", "v1.2.0"], ["release", "upload", "v1.2.0"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
+      [["release", "view", "v1.2.0"], ["release", "create", "v1.2.0"], ["release", "upload", "v1.2.0"],
+       ["release", "edit", "v1.2.0"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
     @gh.calls[1].argv.include?("--verify-tag")
-    !@gh.calls[1].argv.include?("--latest=false")
+    @gh.calls[1].argv.include?("--draft")
+    @gh.calls[3].argv == ["release", "edit", "v1.2.0", "--draft=false"]
     @gh.calls[1].stdin == "Release v1.2.0."
     @gh.calls[2].argv.map { |word| File.basename(word) }[3..] ==
       ["cellbound-3d-linux64-release-1.2.0.zip", "cellbound-3d-server-linux64-1.2.0.zip", "release.json", "--clobber"]
@@ -301,14 +315,14 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v1.2.0")
 
     When
     execute(command(designates_latest: false), "1.2.0")
 
-    Then
-    @gh.calls[1].argv.first(3) == ["release", "create", "v1.2.0"]
-    @gh.calls[1].argv.include?("--latest=false")
+    Then "the designation is withheld where the release is published — the draft's publish — not at its creation"
+    @gh.calls[3].argv == ["release", "edit", "v1.2.0", "--draft=false", "--latest=false"]
     @out.string.include?("  5. Create GitHub release v1.2.0 and attach 2 archives + release.json (not latest: `deploy gh` designates it)\n")
     @out.string.lines.last == "Nothing deployed — ship it: dev deploy <channel> --release 1.2.0\n"
   end
@@ -318,6 +332,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v1.2.0", immutable: false)
 
     When
@@ -344,14 +359,14 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @out.truncate(0)
     @out.rewind
     @gh.calls.clear
-    @gh.answers(["release", "view"], with: "#{URL}\n")
+    forge_has_release(draft: false)
     forge_accepts_upload
     forge_reports("v1.2.0")
 
     When
     execute(command, "1.2.0")
 
-    Then "HEAD is the one cut; the builds were not rebuilt (current at the tag); the release found, not created; upload clobbers"
+    Then "HEAD is the one cut; the builds were not rebuilt (current at the tag); the release found, not created; upload clobbers, nothing to publish"
     head == tagged
     git("log", "--oneline").lines.size == 2
     build_runs == ["cellbound-3d", "cellbound-3d-server"]
@@ -365,6 +380,57 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @out.string.include?("✓ v1.2.0 released! (#{tagged[0, 12]}, from main) → #{URL}\n")
   end
 
+  test "a retry that finds the draft a failed run left attaches to it and publishes it (dev#679)" do
+    Given "a first run that created the draft, then lost the forge on the upload"
+    forge_has_no_release
+    forge_creates
+    @gh.refuses(["release", "upload"], with: "HTTP 502")
+    begin
+      execute(command, "1.2.0")
+    rescue Dev::Lifecycle::GithubReleases::ApiError
+      nil
+    end
+    @out.truncate(0)
+    @out.rewind
+    @gh.calls.clear
+    forge_has_release(draft: true)
+    forge_accepts_upload
+    forge_publishes
+    forge_reports("v1.2.0")
+
+    When
+    execute(command, "1.2.0")
+
+    Then "found, attached, published — the same sequence as a fresh cut minus the create"
+    @gh.calls.map { |call| call.argv.first(2) } ==
+      [["release", "view"], ["release", "upload"], ["release", "edit"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
+    @out.string.include?("✓ GitHub release v1.2.0 exists as a draft — attaching to it and publishing\n")
+    @out.string.include?("✓ v1.2.0 released!")
+  end
+
+  test "a retry onto a release already published and frozen fails with the fact and the remedy: the assets cannot be completed (dev#679)" do
+    Given "the release published before its assets were on — the v0.9.0 shape"
+    forge_has_no_release
+    forge_creates
+    @gh.refuses(["release", "upload"], with: "HTTP 502")
+    begin
+      execute(command, "1.2.0")
+    rescue Dev::Lifecycle::GithubReleases::ApiError
+      nil
+    end
+    @gh.calls.clear
+    forge_has_release(draft: false)
+    @gh.refuses(["release", "upload"], with: "HTTP 422: Cannot upload assets to an immutable release.")
+
+    When
+    execute(command, "1.2.0")
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::FrozenError)
+    error.message.include?("v1.2.0 is published and immutable")
+    error.message.include?("release the next version")
+  end
+
   test "a project without a VERSION file is tagged as it is, no bump" do
     Given
     git("rm", "-q", "VERSION")
@@ -373,6 +439,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v0.1.0")
 
     When
@@ -398,6 +465,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v1.2.0")
     base = head
 
@@ -436,6 +504,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v1.2.0")
     ui = AnsweringUi.new(out: @out, answer: true)
 
@@ -474,6 +543,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     forge_has_no_release
     forge_creates
     forge_accepts_upload
+    forge_publishes
     forge_reports("v#{expected}")
 
     When
