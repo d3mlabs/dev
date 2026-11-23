@@ -47,6 +47,22 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     releases(gh).find(TAG).nil?
   end
 
+  test "find maps #{what} to the archive's own error" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: printed)
+
+    When
+    releases(gh).find(TAG)
+
+    Then
+    raises(Dev::Lifecycle::GithubReleases::MalformedReleaseError)
+
+    Where
+    what                     | printed
+    "an answer not JSON"     | "not json\n"
+    "an answer not a release" | "[]"
+  end
+
   test "any other refusal of a read is the archive's own error, carrying gh's words" do
     Given
     gh = FakeGh.new.refuses(["release", "view"], with: "HTTP 401: Bad credentials")
