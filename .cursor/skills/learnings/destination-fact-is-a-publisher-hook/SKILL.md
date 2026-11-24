@@ -35,7 +35,6 @@ Right — the destination declares the fact, the verb asks every publisher:
     # Cli::Runner
     designates_latest: bindings.publishers.values.none?(&:owns_release_designation?)
 
-learned-from: dev#665 review (`designates_latest` keyed on the `gh` name →
-`Publisher#owns_release_designation?`); dev#661 shaped `head_strategy` the same way;
-dev#676 shaped `accept!` the same way (`package` asks every channel accepting the build)
+learned-from: dev#665 review (`designates_latest` keyed on the `gh` name → `Publisher#owns_release_designation?`);
+dev#661 (`head_strategy`) and dev#676 (`accept!`: `package` asks every channel accepting the build) shaped the same way
 date: 2026-11-22
