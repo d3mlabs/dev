@@ -522,6 +522,29 @@ class BuildContainerTest < Minitest::Test
       project_root: root, volumes: [])
   end
 
+  test "ensure_service! remakes the checkout's shadowenv directories on the host before starting a stopped container, so docker's restart does not create a missing bind source as root" do
+    Given "a persisted container whose checkout was since recreated without its shadowenv directories (a checkpointed hosted runner, a cleaned checkout)"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+    root = @checkout
+    name = Dev::BuildContainer.service_container_name(tag, root)
+    present_at_start = []
+    engine = FakeContainerEngine.new(capture_result: ->(args) { args.include?("{{.State.Running}}") ? "false" : "dev-linuxbrew" }) do |args|
+      present_at_start << [(root / ".shadowenv.d").directory?, (root / ".shadowenv.d-container").directory?] if args.first == "start"
+      true
+    end
+    bc = build_container(engine: engine)
+    !(root / ".shadowenv.d").exist?
+    !(root / ".shadowenv.d-container").exist?
+
+    When "ensuring the service"
+    bc.ensure_service!(tag, project_root: root)
+
+    Then "the container is started, not recreated, and both directories were on the host when it was"
+    engine.runs.include?(["start", name])
+    engine.runs.none? { |args| args.first == "run" }
+    present_at_start == [[true, true]]
+  end
+
   test "ensure_service! is a no-op when the container is already running" do
     Given "an image tag whose container is already up"
     tag = "jpduchesne89/snappy-linux:content-abc"

@@ -571,10 +571,21 @@ module Dev
     def checkout_flags(project_root)
       assert_local_mounts!
       checkout = Pathname(self.class.workspace_path(project_root))
-      host_shadowenv = checkout / SHADOWENV_DIR
-      container_shadowenv = checkout / CONTAINER_SHADOWENV_DIR
-      FileUtils.mkdir_p([host_shadowenv, container_shadowenv])
-      ["-v", "#{checkout}:#{checkout}", "-v", "#{container_shadowenv}:#{host_shadowenv}"]
+      make_shadowenv_dirs(project_root)
+      ["-v", "#{checkout}:#{checkout}", "-v", "#{checkout / CONTAINER_SHADOWENV_DIR}:#{checkout / SHADOWENV_DIR}"]
+    end
+
+    # Make the checkout's two shadowenv directories on the host, as the
+    # host's user: the mount's source and its destination. Docker makes a
+    # missing bind path itself, as root, and does so on every start, not
+    # only at creation — so this runs before both.
+    #
+    # @param project_root [Pathname] the checkout
+    # @return [void]
+    sig { params(project_root: Pathname).void }
+    def make_shadowenv_dirs(project_root)
+      checkout = Pathname(self.class.workspace_path(project_root))
+      FileUtils.mkdir_p([checkout / SHADOWENV_DIR, checkout / CONTAINER_SHADOWENV_DIR])
     end
 
     # The working directory a command inside runs from: the mounted
@@ -618,6 +629,13 @@ module Dev
       end
 
       if exists
+        # A restart re-binds the mounts recorded at creation; a bind source
+        # that has gone since (the checkout recreated — a fresh clone over a
+        # checkpointed runner's container, a cleaned tree) would be made by
+        # docker, as root, and the container's user could not write its
+        # shadowenv directory. The same directories are made first, as at
+        # creation.
+        make_shadowenv_dirs(project_root)
         start_container(name) unless container_running?(name)
       else
         create_service_container(name, image_tag, project_root:, volumes:)
