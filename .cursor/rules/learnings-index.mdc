@@ -23,8 +23,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → skill: rspock (ships in the rspock gem; linked by `dev up` /
-  `dev deps install`)
+ → skill: rspock (ships in the rspock gem; linked by `dev up` /
+ `dev deps install`)
+- [testing/unknown-grammar-stand-in] A fixture standing for a key "this
+ dev cannot read" must be one no issue will ever add (`level: 9`), never
+ the next roadmap option — it parses the day that option ships.
+ → .cursor/skills/learnings/unknown-grammar-stand-in/
 
 ## process
 
