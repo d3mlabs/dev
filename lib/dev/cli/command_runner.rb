@@ -262,7 +262,7 @@ module Dev
       end
 
       # The direct run's child env: the inherited one plus dev's lib on
-      # RUBYLIB, so a project's dev-aware scripts (bin/setup.rb, bin/tc.rb)
+      # RUBYLIB, so a project's dev-aware scripts (bin/setup.rb, bin/typecheck.rb)
       # can require it. Nothing is cleared here — env hygiene is bin/dev's
       # entrypoint, once (see Dev::Deps::ShadowenvExec, the other `shadowenv
       # exec` seam, for why a nil'd key here is a regression: this method

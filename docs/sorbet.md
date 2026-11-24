@@ -6,7 +6,7 @@ This project uses [Sorbet](https://sorbet.org) for static and runtime type check
 
 ## Commands
 
-- **`dev tc`** — Run type checking. This:
+- **`dev typecheck`** — Run type checking. This:
   1. Verifies that gem RBIs under `sorbet/rbi/gems/` are in sync with `Gemfile.lock` (so drift is detected locally, not only on CI).
   2. Runs `srb tc`.
   - If RBIs are out of date, the command fails with instructions to run `dev rbi` and commit the updated files.
@@ -23,7 +23,7 @@ This project uses [Sorbet](https://sorbet.org) for static and runtime type check
   ```bash
   dev rbi
   ```
-- **`dev tc`** runs `tapioca gem --verify` before `srb tc`, so if you forget to update RBIs, typecheck will fail locally with a clear message. CI also runs the same step before tests.
+- **`dev typecheck`** runs `tapioca gem --verify` before `srb tc`, so if you forget to update RBIs, typecheck fails locally with a clear message. CI runs the same command.
 
 ## Annotation compatibility
 
