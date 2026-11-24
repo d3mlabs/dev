@@ -141,6 +141,100 @@ class Dev::RunnerRoleTest < Minitest::Test
     "a pre-release"      | "2.0.0rc" | "is not major.minor.patch"
   end
 
+  # --- a reference to another project's declaration (dev#701) ------------------
+
+  AGENT_DECLARATION = Dev::RunnerRole::Declaration.new(
+    name: "agent",
+    labels: AGENT_LABELS,
+    group: "ai-flow",
+    workflows: %w[.github/workflows/ai-commands.yml .github/workflows/origin-firing.yml],
+    job_identity: "ai-agent",
+  )
+  AI_FLOW_PIN = Dev::Deps::Dependency.new(
+    name: "ai-flow", integration: :gh, group: :app, version: "2.4.1", hash: nil, metadata: { "repo" => "d3mlabs/ai-flow" },
+  )
+  AGENT_REFERENCE = Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "d3mlabs/ai-flow")
+
+  test "a reference names the role and the project that declares it, and is a value" do
+    Expect
+    AGENT_REFERENCE.name == "agent"
+    AGENT_REFERENCE.declaring_repo == "d3mlabs/ai-flow"
+    AGENT_REFERENCE == Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "d3mlabs/ai-flow")
+    AGENT_REFERENCE != Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "d3mlabs/dev")
+    AGENT_REFERENCE != Dev::RunnerRole::Reference.new(name: "orchestrator", declaring_repo: "d3mlabs/ai-flow")
+  end
+
+  test "a reference refuses a declaring repo that is not an owner/repo: #{repo.inspect}" do
+    When
+    Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: repo)
+
+    Then
+    raises Dev::EnrolledRunner::MalformedRepoError
+
+    Where
+    repo                                 | _
+    "ai-flow"                            | nil
+    "d3mlabs/ai-flow/extra"              | nil
+    ""                                   | nil
+    "https://github.com/d3mlabs/ai-flow" | nil
+  end
+
+  test "a reference's pin is the lock's gh pin for the declaring repo, however the repo is cased" do
+    Given "a lock with other pins around it"
+    other_gh = Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: :build, version: "5.8", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })
+    brew = Dev::Deps::Dependency.new(name: "ai-flow", integration: :brew, group: :app, version: "9", hash: nil, metadata: {})
+    upper = Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "D3MLabs/AI-Flow")
+
+    Expect
+    AGENT_REFERENCE.pin([other_gh, brew, AI_FLOW_PIN]) == AI_FLOW_PIN
+    upper.pin([AI_FLOW_PIN]) == AI_FLOW_PIN
+  end
+
+  test "a reference whose declaring repo the lock pins nothing from is refused with the reason: no version to read it at" do
+    Given "a lock pinning the repo through brew, not gh, and another gh repo"
+    brew = Dev::Deps::Dependency.new(name: "ai-flow", integration: :brew, group: :app, version: "9", hash: nil, metadata: { "repo" => "d3mlabs/ai-flow" })
+    other_gh = Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: :build, version: "5.8", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })
+
+    When
+    error = assert_raises(Dev::RunnerRole::Reference::NotDependedOnError) { AGENT_REFERENCE.pin([brew, other_gh]) }
+
+    Then
+    error.message.include?("runner role 'agent' is referenced from d3mlabs/ai-flow")
+    error.message.include?("lock pins nothing from it")
+    error.message.include?("gh \"d3mlabs/ai-flow\"")
+  end
+
+  test "a declaration as referenced is the shape a lane borrows at repo scope: labels and job identity, no group" do
+    When
+    role = AGENT_DECLARATION.as_referenced
+
+    Then
+    role.referenced?
+    !role.declared?
+    !role.build_host?
+    !role.pooled?
+    role.name == "agent"
+    role.labels == AGENT_LABELS
+    role.job_identity == "ai-agent"
+    role.group.nil?
+    !role.org_scoped?
+    role.pool_name == "Default"
+    role.slot_base("JPSFF") == "JPSFF-agent"
+    role.dir_suffix == "agent"
+    role == AGENT_DECLARATION.as_referenced
+    role != AGENT_DECLARATION.bind(repo: "d3mlabs/ai-flow", version: "2.4.1").at_repo_scope
+  end
+
+  test "a referenced role at hand claims the repo-scoped slot its labels name, as a declared one does" do
+    Given
+    referenced = AGENT_DECLARATION.as_referenced
+
+    Expect
+    Dev::RunnerRole.for_slot(pool: "Default", labels: SHUFFLED_LABELS, declared: { "agent" => referenced }) == referenced
+    Dev::RunnerRole.for_slot(pool: "Default", labels: ["ai-build"], declared: { "agent" => referenced }) == referenced
+    Dev::RunnerRole.for_slot(pool: "Default", labels: ["gpu"], declared: { "agent" => referenced }) == Dev::RunnerRole.build_host(labels: ["gpu"])
+  end
+
   # --- the role a slot plays ---------------------------------------------------
 
   test "for a slot: #{description}" do

@@ -47,7 +47,7 @@ value is spelled `a | b`; a nested map has its own section and table.
 | `engine` | map, see [engine](#engine) | no | none | The smallest container engine this project's builds were tuned for. dev sizes the engine up to it and refuses to run a containerized command on a smaller one. See [Containers](containers.md#engine-resources). |
 | `commands` | map of name → [command](#commands) | no | none | The project's commands. |
 | `targets` | map of name → [target](#targets) | no | none | What the project builds. Declaring any makes `dev build` and `dev package` exist. |
-| `runner_roles` | map of name → role | no | none | Roles `dev runner register --role <name>` enrolls for this repo: `<name>: { labels: [...] }`, plus `group:` and `workflows:` (this repo's, pinned at `v<major>` of `VERSION`) for an org role and `job_identity: <user>` for jobs that run as another user. See [Runners](runners.md#roles). |
+| `runner_roles` | map of name → [role](#runner-roles) | no | none | Roles `dev runner register --role <name>` enrolls for this repo: a declaration (`<name>: { labels: [...] }`, plus `group:` and `workflows:` for an org role and `job_identity:` for jobs that run as another user) or a reference to another project's declaration (`<name>: { from: owner/repo }`). See [Runners](runners.md#roles). |
 
 ### engine
 
@@ -343,6 +343,42 @@ commands:
 
 What the verbs then do — `build`, `package`, `deploy`, `release`, where
 each runs and what it leaves behind — is in [Lifecycle](lifecycle.md).
+
+## Runner roles
+
+`runner_roles:` names the roles `dev runner register --role <name>`
+enrolls this repo's runners for. An entry is one of two shapes: a
+declaration, which states the role here, or a reference, which borrows
+another project's declaration of the same name.
+
+```yaml
+runner_roles:
+  ue-farm:                      # declared here
+    labels: [ue, gpu]
+    job_identity: ue-builder
+  agent:                        # referenced: ai-flow's agent role, as this repo's lane
+    from: d3mlabs/ai-flow
+```
+
+A declaration:
+
+| key | type | required | default | conflicts / requires | meaning |
+|---|---|---|---|---|---|
+| `labels` | list of strings | yes | — | — | The labels a slot of this role advertises; `runs-on` matches them. |
+| `group` | string, or `{ name: <group>, visibility: selected \| all }` | no | none | requires `workflows` | The org runner group the role's slots join under `--org`; `selected` unless said. |
+| `workflows` | list of paths under `.github/workflows/` | no | none | requires `group` | This project's own workflows the group is pinned to, at `v<major>` of `VERSION` — the ref is derived, never typed. |
+| `job_identity` | user name | no | none | — | The OS user the role's jobs run as; `register` converges it on the host. |
+
+A reference:
+
+| key | type | required | default | conflicts / requires | meaning |
+|---|---|---|---|---|---|
+| `from` | `owner/repo` | yes | — | every other key | The project whose `dev.yml` declares the role. Its `labels` and `job_identity` are read from that repo's `dev.yml` at the version this checkout's lock pins for it (a `gh` dependency); a checkout that does not depend on it is refused. The role is enrolled at this repo — no group, so `--org` is refused: an org pool is declared and registered by its owner. |
+
+`from:` beside `labels`, `group`, `workflows` or `job_identity` is refused
+naming the key: a referenced role borrows its shape as declared, so a key
+beside `from:` would retype part of it. Drop `from:` to declare the role
+here, or the key to reference it.
 
 ## dev.yml is read by older devs
 

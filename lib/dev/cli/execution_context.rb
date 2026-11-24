@@ -25,8 +25,8 @@ module Dev
       const :root, Pathname
       # The engine floor the project declares (ProjectManifest#engine).
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
-      # The runner roles the project declares (ProjectManifest#runner_roles).
-      const :runner_roles, T::Hash[String, Dev::RunnerRole::Declaration], default: {}
+      # The runner roles the project declares or references (ProjectManifest#runner_roles).
+      const :runner_roles, T::Hash[String, Dev::RunnerRole::Entry], default: {}
       # The deploy channels the project declares (ProjectManifest#channels):
       # a declared role anchors to the project's stream when one is gh's.
       const :channels, T::Hash[String, Dev::Lifecycle::Channel], default: {}

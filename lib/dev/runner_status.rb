@@ -528,8 +528,16 @@ module Dev
       flags << "--role #{role.name}" unless role.build_host?
       argv = (["dev runner register"] + flags).join(" ")
       # A declared role is re-registered from the checkout that declares
-      # it (its pins are that project's); a build host from its repo's.
-      where = role.build_host? ? "the repo's checkout" : "the checkout whose dev.yml declares #{role.name}"
+      # it (its pins are that project's); a referenced one from the
+      # checkout that references it (the lane is that repo's); a build
+      # host from its repo's.
+      where = if role.build_host?
+        "the repo's checkout"
+      elsif role.referenced?
+        "the checkout whose dev.yml references #{role.name}"
+      else
+        "the checkout whose dev.yml declares #{role.name}"
+      end
       "re-run `#{argv}` from #{where}"
     end
 

@@ -1086,6 +1086,33 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load reads a role referenced from another project — `from:` alone — as a reference beside the declarations" do
+    Given "cellbound-3d's dev.yml, referencing ai-flow's agent role"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      runner_roles:
+        agent:
+          from: d3mlabs/ai-flow
+        ue-farm:
+          labels: [ue, gpu]
+      commands:
+        build:
+          run: ./bin/build.sh
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    manifest.runner_roles == {
+      "agent" => Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "d3mlabs/ai-flow"),
+      "ue-farm" => Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu]),
+    }
+
+    Cleanup
+    tmp.close!
+  end
+
   test "#load leaves runner_roles empty when the block is absent" do
     Given
     tmp = write_dev_yml(<<~YAML)
@@ -1116,8 +1143,8 @@ class ProjectManifestLoaderTest < Minitest::Test
     When
     build_loader.load(Pathname.new(tmp.path))
 
-    Then
-    error = raises Dev::Cli::ProjectManifestLoader::RunnerRoleError
+    Then "the parser's refusal surfaces unchanged (the grammar's own cases are RunnerRoleParserTest's)"
+    error = raises Dev::Cli::RunnerRoleParser::RunnerRoleError
     error.message.include?(name)
     error.message.include?(fragment)
 
@@ -1125,18 +1152,10 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
 
     Where
-    fault                                   | name         | fragment                        | body
-    "the builtin's name"                    | "build-host" | "is builtin"                    | "  build-host:\n    labels: [x]"
-    "without labels"                        | "farm"       | "needs a `labels:` list"        | "  farm: {}"
-    "with labels not a list"                | "farm"       | "needs a `labels:` list"        | "  farm:\n    labels: ue"
-    "not a mapping"                         | "farm"       | "needs a mapping"               | "  farm: ue"
-    "a group without workflows"             | "farm"       | "pins no `workflows:`"          | "  farm:\n    labels: [ue]\n    group: ue-hosted"
-    "workflows without a group"             | "farm"       | "names no `group:`"             | "  farm:\n    labels: [ue]\n    workflows: [.github/workflows/x.yml]"
-    "a group that is neither name nor map"  | "farm"       | "neither a name nor"            | "  farm:\n    labels: [ue]\n    group: [x]\n    workflows: [.github/workflows/x.yml]"
-    "a group with an unknown visibility"    | "farm"       | "one of selected | all"         | "  farm:\n    labels: [ue]\n    group: { name: g, visibility: public }\n    workflows: [.github/workflows/x.yml]"
-    "workflows not a list"                  | "farm"       | "needs `workflows:` as a list"  | "  farm:\n    labels: [ue]\n    group: g\n    workflows: .github/workflows/x.yml"
-    "a workflow outside .github/workflows"  | "farm"       | "under .github/workflows/"      | "  farm:\n    labels: [ue]\n    group: g\n    workflows: [ci/x.yml]"
-    "a job identity not a user name"        | "farm"       | "not a user name"               | "  farm:\n    labels: [ue]\n    job_identity: [a]"
+    fault                          | name    | fragment                                     | body
+    "without labels"               | "farm"  | "needs a `labels:` list"                     | "  farm: {}"
+    "a reference that also types"  | "agent" | "also declares `labels`"                     | "  agent:\n    from: d3mlabs/ai-flow\n    labels: [a]"
+    "a reference to no owner/repo" | "agent" | "is not an owner/repo"                       | "  agent:\n    from: ai-flow"
   end
 
   def write_dev_yml(content)

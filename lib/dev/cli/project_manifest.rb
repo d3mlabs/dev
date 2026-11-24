@@ -47,12 +47,14 @@ module Dev
       # The engine floor this project's build was tuned for (`engine:`); nil
       # means the provisioner's defaults and no check.
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil
-      # The runner roles this repo declares (`runner_roles:`), which `dev
-      # runner register --role <name>` may enroll: name and labels, and
-      # optionally a group pinned to this project's own workflows and a
-      # job identity. Declarations, not roles: the pins bind to the repo
-      # and the series at register. Empty when the project declares none.
-      const :runner_roles, T::Hash[String, Dev::RunnerRole::Declaration], default: {}
+      # The runner roles this repo states (`runner_roles:`), which `dev
+      # runner register --role <name>` may enroll: a declaration — name and
+      # labels, and optionally a group pinned to this project's own
+      # workflows and a job identity — or a reference to another project's
+      # declaration (`from:`). Entries, not roles: a declaration's pins bind
+      # to the repo and the series at register, a reference is read from
+      # the declaring repo then. Empty when the project states none.
+      const :runner_roles, T::Hash[String, Dev::RunnerRole::Entry], default: {}
     end
   end
 end
