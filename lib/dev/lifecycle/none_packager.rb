@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "acceptance"
 require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
@@ -23,11 +24,12 @@ module Dev
       # @param build [Build]
       # @param install [Pathname]
       # @param archive [Pathname]
+      # @param acceptance [Acceptance]
       # @return [PackedArchive] never
       # @raise [NeverPackagedError] always
-      sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive)
-        _ = [install, archive]
+      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional)
+        _ = [install, archive, acceptance]
         raise NeverPackagedError, "target '#{build.target}' declares `packager: none` — it is built, never packaged"
       end
 

@@ -852,6 +852,47 @@ class RunnerTest < Minitest::Test
     !out.string.include?("pins no")
   end
 
+  test "the gh channel a project declares is asked at `dev package`: a self-contained tree selected without its lock is refused naming the channel, and no artifact lands (dev#676)" do
+    Given "a checkout carrying ai-flow's tree, a files: list leaving deps.lock out, and deploy: gh accepting the target"
+    root = Pathname.new(Dir.mktmpdir("runner-test-"))
+    (@tmp_roots ||= []).push(root)
+    (root / "exe").mkpath
+    (root / "exe/ai-flow").write("#!/usr/bin/env ruby\n")
+    (root / "dependencies.rb").write("Dev::Deps.define { ruby \"4.0.6\" }\n")
+    (root / "deps.lock").write("ruby:\n  ruby:\n    group: app\n    version: 4.0.6\n")
+    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
+    Open3.capture2e("git", "-C", root.to_s, "add", ".")
+    Open3.capture2e("git", "-C", root.to_s, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one")
+    outside = Pathname.new(Dir.mktmpdir("runner-test-"))
+    @tmp_roots.push(outside)
+    Dev::DataRoot.stubs(:path).returns((outside / "data").to_s)
+    # The checkout's lock was never installed on this machine, and `package`
+    # runs under the staleness guard: a workstation warns and goes on, CI
+    # refuses the verb before the channel is asked. The refusal under test
+    # is the channel's, so the guard reads the workstation posture.
+    Dev::Deps.stubs(:detect_env).returns("dev")
+    out = StringIO.new
+    runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, targets: {
+      "ai-flow" => { "desc" => "The dispatcher", "packager" => { "archive" => { "files" => ["/exe", "/dependencies.rb"] } } },
+    }, commands: {
+      "deploy" => { "commands" => { "gh" => { "desc" => "Series tags", "targets" => ["ai-flow"] } } },
+    })
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When
+    Kernel.expects(:exit).with(1).once
+    runner.run(["package", "ai-flow"])
+
+    Then "the refusal names the channel and the lock; the store holds no artifact for the build"
+    $stderr.string.include?("dev: channel 'gh' refuses the tree as it would ship: it ships dependencies.rb without deps.lock")
+    out.string == ""
+    !(outside / "data" / "artifacts" / "testproject" / "ai-flow" / "ai-flow.zip").exist?
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
   test "runner is ungated: every project catalog lists it" do
     Given "a Runner with a plain dev.yml (no runner block — the key is retired)"
     out = StringIO.new

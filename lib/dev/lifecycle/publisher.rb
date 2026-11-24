@@ -41,6 +41,14 @@ module Dev
     # alone, since `deploy` moves it. The verbs are identical over every
     # publisher, so `release` learns this from the hook, never from a
     # channel's name.
+    #
+    # Whether a tree is **complete for the destination** is the
+    # destination's to say (#accept!): `package` presents the tree about
+    # to be archived to every channel that will receive the build, and a
+    # publisher whose destination installs the tree by rules of its own
+    # refuses an incomplete one there, naming the gap — before the archive
+    # exists, not on the host installing it. The default accepts every
+    # tree: most destinations take the archive as the bytes it is.
     module Publisher
       extend T::Sig
       extend T::Helpers
@@ -91,6 +99,21 @@ module Dev
       def preview(shipments, channel:, track:)
         _ = [shipments, channel, track]
         []
+      end
+
+      # Accept or refuse the tree `package` is about to archive for this
+      # channel: the files as they will ship, after the packager's
+      # selection and before anything is written. A refusal is the
+      # publisher's own typed error, naming the channel and the gap.
+      # Accepts everything by default.
+      #
+      # @param tree [Pathname] the tree as it will be archived
+      # @param channel [Channel] the destination, for the refusal's words
+      # @return [void]
+      # @raise [StandardError] the publisher's refusal
+      sig { overridable.params(tree: Pathname, channel: Channel).void }
+      def accept!(tree, channel:)
+        _ = [tree, channel]
       end
     end
   end

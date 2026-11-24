@@ -9,14 +9,18 @@ require "fileutils"
 require "json"
 require "pathname"
 require "support/fake_gh"
+require "support/tool_tree_fixtures"
 require "time"
 require "tmpdir"
 
 # The gh publisher over a scripted forge: FakeGh answers the release's
 # facts, the tag listing and the latest designation, and records the
-# writes. A deploy moves heads only, so nothing on disk is touched.
+# writes. A deploy moves heads only, so nothing on disk is touched; a
+# tree's acceptance at package reads the tree and asks the forge nothing.
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GhPublisherTest < Minitest::Test
+  include ToolTreeFixtures
+
   REFS = "repos/{owner}/{repo}/git/matching-refs/tags/v"
   FACTS = "repos/{owner}/{repo}/releases/tags/"
   SHA_110 = "1" * 40
@@ -257,6 +261,53 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
 
     Then
     raises(Dev::Deps::GhPublisher::WorkingArtifactError)
+  end
+
+  test "a complete self-contained tree and a plain asset are both accepted, without the forge being asked" do
+    Given
+    gh = FakeGh.new(root: @project)
+    plain = @workspace / "plain"
+    plain.mkpath
+    (plain / "dev.zip").write("zip")
+
+    When
+    publisher(gh).accept!(tool_tree(@workspace / "complete"), channel:)
+    publisher(gh).accept!(plain, channel:)
+
+    Then
+    gh.calls.empty?
+  end
+
+  test "a self-contained tree selected without its lock is refused at package, naming the channel and the lock" do
+    Given "the tree as a files: list leaving deps.lock out would select it"
+    tree = tool_tree(@workspace / "incomplete")
+    (tree / "deps.lock").delete
+
+    When
+    publisher(FakeGh.new(root: @project)).accept!(tree, channel:)
+
+    Then
+    error = raises(Dev::Deps::GhPublisher::IncompleteTreeError)
+    error.message == "channel 'gh' refuses the tree as it would ship: " \
+      "it ships dependencies.rb without deps.lock — a self-contained tree carries its lock beside its manifest"
+  end
+
+  test "every gap the closure reads is in the one refusal, the channel named first" do
+    Given "a Gemfile with no Ruby pin, and a bin/ name an exe/ would take"
+    tree = tool_tree(@workspace / "gaps", lock: FORMULA_LOCK)
+    (tree / "bin").mkpath
+    (tree / "bin/ai-flow").write("#!/bin/sh\n")
+    gaps = Dev::Deps::ToolClosure.new(tree:).gaps
+
+    When
+    publisher(FakeGh.new(root: @project)).accept!(tree, channel:)
+
+    Then
+    error = raises(Dev::Deps::GhPublisher::IncompleteTreeError)
+    gaps.size == 2
+    error.message == "channel 'gh' refuses the tree as it would ship: it #{gaps.join("; it ")}"
+    error.message.include?("pins no ruby in deps.lock")
+    error.message.include?("carries bin/ai-flow beside exe/ai-flow")
   end
 
   test "the channel's head is pointed, the forge's latest designation is its to move, and the publisher declares itself by the channel's name" do

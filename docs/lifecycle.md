@@ -124,7 +124,19 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
    `MANIFEST` when asked); `as-is` adopts the one file the install holds;
    a `packager:` script writes whatever it writes at `$DEV_ARTIFACT.<ext>`.
    See [Packagers](dev-yml.md#packagers).
-4. `build-id.json` is stamped last, so a failure anywhere above leaves no
+4. Before `archive` writes, every channel whose `targets:` names the
+   build is shown the tree as it ships — the `files:` selection, not the
+   install — and may refuse it. Most channels take any tree; `gh`
+   refuses a [self-contained tree](dependencies.md#a-tools-closure-at-install-or-at-release)
+   that is incomplete for the install every follower runs: a
+   `dependencies.rb` without its `deps.lock` (or the reverse), a lock
+   pinning no Ruby, no `exe/`, or a `bin/<name>` an `exe/<name>`'s
+   launcher would overwrite. The refusal names the channel and each gap;
+   nothing is written, and a previous artifact stays as it was. A plain
+   asset — neither manifest nor lock — is accepted as it is. `as-is` and
+   a `packager:` script present no tree: the one adopts a file, the
+   other's archive is its own.
+5. `build-id.json` is stamped last, so a failure anywhere above leaves no
    manifest and the directory does not read as an artifact:
 
 ```json
@@ -497,6 +509,16 @@ strategies is closed: a destination that keeps no pointer and whose
 versions are not totally ordered is a third strategy to name in dev
 before it gets a publisher, never a special case inside one.
 
+**Acceptance.** Whether a tree is complete for a destination is the
+destination's to say, and it says so at `package`, not on the host
+installing it: every publisher is shown the tree as it ships before the
+archive is written, and the default accepts any. A destination that
+installs a tree by rules of its own refuses an incomplete one there,
+naming the gap — `gh` and the self-contained tree, whose gaps the
+install would otherwise find on an agent host after the release is
+immutable. The verb asks every publisher the same way and knows no
+channel by name; a channel that does not name the build is not asked.
+
 **Options.** What a publisher cannot know from a build — the
 destination's identifiers — the channel declares under its own name
 (`steam:` on the `steam` channel). The publisher reads them first thing
@@ -745,6 +767,24 @@ Because the designation is this channel's head, a project with a `gh`
 channel cuts every release with `--latest=false`
 ([The cut](#the-cut)).
 
+The channel also has a say at `dev package`. A tree it receives that
+ships `dependencies.rb` and `deps.lock` is installed
+[self-contained](dependencies.md#a-tools-closure-at-install-or-at-release)
+by every follower, and the channel refuses one that is incomplete for
+that install before it becomes an asset: the manifest without the lock
+(or the reverse), a lock pinning no Ruby, no `exe/` to write launchers
+for, or a `bin/<name>` an `exe/<name>`'s launcher would overwrite. The
+refusal names the channel and each gap:
+
+```
+dev: channel 'gh' refuses the tree as it would ship: it ships dependencies.rb without deps.lock — a self-contained tree carries its lock beside its manifest
+```
+
+Add the missing file to the target's `files:`, or take the collision
+out, and package again. A tree shipping neither file is a plain asset
+and is accepted as it is. The install's own refusals on the host stay as
+the last line of defence.
+
 ## The dependency graph
 
 Each verb needs what the one before it leaves, and names the missing step
@@ -757,7 +797,7 @@ read by older devs](dev-yml.md#devyml-is-read-by-older-devs)).
 | Verb | Needs | When missing |
 | --- | --- | --- |
 | `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches; for a target with no `builder:`, a git checkout to take the tracked files from | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`); a project root outside git is refused for a target with no `builder:` |
-| `package` | a current build | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install |
+| `package` | a current build; a tree every channel accepting the build takes | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install; a channel's refusal of the tree as it ships names the channel and the gap, and nothing is written |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store; a channel; the channel's environment; a protocol; to record, a repo `gh` reaches with `deployments: write` | "`dev package <build>` first"; a channel exists or `deploy` does not; a channel with no protocol is refused at load with both fixes; a record the forge refuses fails after the shipped lines |
 | `deploy <channel> --release V` | release `V` cut, carrying an archive of each accepted build; `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused; a download whose digest is not `release.json`'s is removed and refused |
 | `deploy gh --release V` | the above; release `V` immutable; `contents: write` for the series tag and the latest designation | a store artifact is refused naming `dev release`; a mutable release is refused naming the repository setting; a refused ref write is the heads' error |

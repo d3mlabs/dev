@@ -120,4 +120,18 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     publisher.head_strategy == Dev::Lifecycle::HeadStrategy::Pointed
     !publisher.owns_release_designation?
   end
+
+  test "a run: channel accepts any tree at package: what its script makes of the archive is its own" do
+    Given "a tree no self-contained install could take"
+    publisher = Dev::Lifecycle::ScriptPublisher.new(command: "true", project_root: @project)
+    tree = @root / "tree"
+    tree.mkpath
+    (tree / "dependencies.rb").write("manifest, no lock")
+
+    When
+    publisher.accept!(tree, channel: channel("true"))
+
+    Then "nothing raised, nothing run"
+    !(@root / "ran").exist?
+  end
 end

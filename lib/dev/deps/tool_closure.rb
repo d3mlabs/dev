@@ -53,6 +53,13 @@ module Dev
     # install under the project's Ruby (ShadowenvExec), so the asset ships
     # them and install writes wrappers only ({#vendored?}). Both run the
     # same {#vendor!} through a ToolchainExec.
+    #
+    # Whether a tree is *complete* for that install — lock beside the
+    # manifest, a Ruby pin, an `exe/` to wrap, no `bin/` name an `exe/`
+    # would take — is one reading ({#gaps}) the gh channel asks for at
+    # `dev package`, so an incomplete tree never becomes an immutable
+    # asset; the install's own refusals ({NoRubyPinError},
+    # {WrapperCollisionError}) stay as the last line of defence.
     class ToolClosure
       extend T::Sig
 
@@ -78,9 +85,14 @@ module Dev
         # @param wrapper [Pathname] the path the wrapper would take
         sig { params(wrapper: Pathname).void }
         def initialize(wrapper:)
-          super("#{wrapper} exists — a tool tree's own bin/ may not carry the name of one of its exe/")
+          super("#{wrapper} exists — #{COLLISION_RULE}")
         end
       end
+
+      # The two rules a gap names, worded once for the install's refusal
+      # and the package-time reading alike.
+      PAIR_RULE = "a self-contained tree carries its lock beside its manifest"
+      COLLISION_RULE = "a tool tree's own bin/ may not carry the name of one of its exe/"
 
       GEMFILE = "Gemfile"
       # Bundler's install path. Bundler lays the gems under it as
@@ -133,7 +145,15 @@ module Dev
       # @raise [NoRubyPinError] when the lock pins none
       sig { returns(Dependency) }
       def ruby_pin
-        @lockfile.read.find { |dep| dep.integration == :ruby } || raise(NoRubyPinError.new(tree: @tree))
+        find_ruby_pin || raise(NoRubyPinError.new(tree: @tree))
+      end
+
+      # Whether the tree's lock pins a Ruby.
+      #
+      # @return [Boolean]
+      sig { returns(T::Boolean) }
+      def ruby_pinned?
+        !find_ruby_pin.nil?
       end
 
       # Whether the tree has gems to run under: a Gemfile beside the lock.
@@ -142,6 +162,28 @@ module Dev
       sig { returns(T::Boolean) }
       def gems?
         (@tree / GEMFILE).file?
+      end
+
+      # What the tree lacks to be installed self-contained, one clause per
+      # gap (`the tree …`), each naming it and the rule; empty when the
+      # tree is complete — or when it is a plain asset, shipping neither
+      # the manifest nor the lock, which nothing converges. The rules are
+      # the install's (GhIntegration#materialize_closure and {#wrap!}),
+      # read ahead of it: the lock beside the manifest, a Ruby for the
+      # executables and the gems to run under, executables to write
+      # launchers for, and no `bin/` name a launcher would overwrite.
+      #
+      # @return [Array<String>]
+      sig { returns(T::Array[String]) }
+      def gaps
+        return [] unless manifest? || lock?
+        return ["ships #{Integration::MANIFEST_FILE} without #{Lockfile::DEPS_LOCK_FILE} — #{PAIR_RULE}"] unless lock?
+        return ["ships #{Lockfile::DEPS_LOCK_FILE} without #{Integration::MANIFEST_FILE} — #{PAIR_RULE}"] unless manifest?
+
+        gaps = T.let([], T::Array[String])
+        gaps << "pins no ruby in #{Lockfile::DEPS_LOCK_FILE} — its executables and gems run under the Ruby its lock pins" unless ruby_pinned?
+        gaps << "has no #{EXE_DIR}/ — a self-contained tree's executables are its #{EXE_DIR}/, one #{BIN_DIR}/ launcher is written per entry" if executables.empty?
+        gaps.concat(collisions.map { |wrapper| "carries #{BIN_DIR}/#{wrapper.basename} beside #{EXE_DIR}/#{wrapper.basename} — #{COLLISION_RULE}" })
       end
 
       # Whether the tree's gems are already in it — vendored at release.
@@ -208,12 +250,13 @@ module Dev
       #   carries one of the names
       sig { params(ruby: Pathname).void }
       def wrap!(ruby:)
-        bin = @tree / BIN_DIR
-        wrappers = executables.to_h { |exe| [exe, bin / exe.basename] }
-        wrappers.each_value { |wrapper| raise WrapperCollisionError.new(wrapper:) if wrapper.exist? }
+        collision = collisions.first
+        raise WrapperCollisionError.new(wrapper: collision) if collision
+
+        wrappers = executables.to_h { |exe| [exe, wrapper_for(exe)] }
         return if wrappers.empty?
 
-        bin.mkpath
+        (@tree / BIN_DIR).mkpath
         wrappers.each do |exe, wrapper|
           wrapper.write(wrapper_script(exe, ruby))
           wrapper.chmod(0o755)
@@ -221,6 +264,40 @@ module Dev
       end
 
       private
+
+      # @return [Boolean] whether the tree ships its manifest
+      sig { returns(T::Boolean) }
+      def manifest?
+        (@tree / Integration::MANIFEST_FILE).file?
+      end
+
+      # @return [Boolean] whether the tree ships its lock
+      sig { returns(T::Boolean) }
+      def lock?
+        (@tree / Lockfile::DEPS_LOCK_FILE).file?
+      end
+
+      # @return [Dependency, nil] the lock's `ruby` pin, if it has one
+      sig { returns(T.nilable(Dependency)) }
+      def find_ruby_pin
+        @lockfile.read.find { |dep| dep.integration == :ruby }
+      end
+
+      # The `bin/<name>` the tree already carries for an `exe/<name>` — the
+      # paths a wrapper would overwrite, in executable order.
+      #
+      # @return [Array<Pathname>]
+      sig { returns(T::Array[Pathname]) }
+      def collisions
+        executables.map { |exe| wrapper_for(exe) }.select(&:exist?)
+      end
+
+      # @param exe [Pathname] an executable
+      # @return [Pathname] the path its wrapper takes
+      sig { params(exe: Pathname).returns(Pathname) }
+      def wrapper_for(exe)
+        @tree / BIN_DIR / exe.basename
+      end
 
       # The wrapper's source: bin/dev's sh half for this tree. No `export`
       # and no gem-env key, ever — spawn_seams_test reads the output.

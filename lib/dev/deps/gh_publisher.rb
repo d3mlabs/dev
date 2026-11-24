@@ -15,6 +15,7 @@ require "dev/lifecycle/series"
 require "dev/lifecycle/shipment"
 require "dev/lifecycle/track"
 require_relative "../value_equality"
+require_relative "tool_closure"
 
 module Dev
   module Deps
@@ -44,6 +45,14 @@ module Dev
     # an earlier release of the series is deployed again. The latest
     # designation follows the newest deployed series only, so a 1.x patch
     # deployed after 2.0 is live moves `v1` and leaves `latest` alone.
+    #
+    # A tree this channel receives that ships its `dependencies.rb` and
+    # `deps.lock` is installed self-contained by every follower
+    # (ToolClosure): dev converges its dependencies into the tree and
+    # writes a launcher per `exe/`. Whether the tree is complete for that
+    # is this publisher's to say at `dev package` (#accept!), each refusal
+    # naming the gap — once released, the tree is immutable and the
+    # install's refusal would fire on an agent host instead.
     class GhPublisher
       extend T::Sig
       include Lifecycle::Publisher
@@ -54,6 +63,19 @@ module Dev
       # The release is not immutable: its tag and assets could change
       # under every follower of the head.
       class MutableReleaseError < RuntimeError; end
+
+      # The tree about to be archived ships a self-contained tree's markers
+      # but not what installing one needs.
+      class IncompleteTreeError < RuntimeError
+        extend T::Sig
+
+        # @param channel [Lifecycle::Channel] the channel refusing
+        # @param gaps [Array<String>] what the tree lacks, as ToolClosure names it
+        sig { params(channel: Lifecycle::Channel, gaps: T::Array[String]).void }
+        def initialize(channel:, gaps:)
+          super("channel '#{channel}' refuses the tree as it would ship: it #{gaps.join("; it ")}")
+        end
+      end
 
       # The channel's name: the integration's.
       CHANNEL = "gh"
@@ -185,6 +207,20 @@ module Dev
       sig { override.returns(T::Boolean) }
       def owns_release_designation?
         true
+      end
+
+      # A tree shipping a self-contained tree's markers must be complete
+      # for the install every follower runs (ToolClosure#gaps); a plain
+      # asset is accepted as it is.
+      #
+      # @param tree [Pathname] the tree as it will ship
+      # @param channel [Lifecycle::Channel]
+      # @return [void]
+      # @raise [IncompleteTreeError] naming the channel and every gap
+      sig { override.params(tree: Pathname, channel: Lifecycle::Channel).void }
+      def accept!(tree, channel:)
+        gaps = ToolClosure.new(tree:).gaps
+        raise IncompleteTreeError.new(channel:, gaps:) unless gaps.empty?
       end
 
       # The declaration as `dev help` renders it.
