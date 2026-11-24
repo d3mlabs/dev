@@ -145,10 +145,8 @@ is that **built-in**.
 | `platforms` | list of `win64` \| `linux64` \| `macos` | no | none: builds carry no platform segment | no id twice | The platforms the target builds for. First is the default. |
 | `configs` | list of `debug` \| `dev` \| `release` | no | none: builds carry no config segment | no id twice | The configs the target builds in. First is the default. |
 | `environment` | image name \| `host` \| map of platform → the same | no | the project's default, as for a command | the map form requires `platforms` and names exactly them | Where the builds run: one value for every build, or one per platform (`{ linux64: img, macos: host }`). |
-| `builder` | string \| map | no | the checkout's tracked files (`git ls-files`; nothing ignored or untracked ships) | refused beside `build` | How the **install** — the runnable, staged output — is made. A string is a script writing it into `$DEV_INSTALL`. A map names a built-in builder; dev has none yet, so a map is refused. |
-| `packager` | string \| `archive` \| `as-is` \| `none` \| map | no | `archive` | refused beside `package` | How the install becomes the **archive**. A built-in by name, or `{ <name>: { options } }` for one with options; any other string is a script writing the archive at `$DEV_ARTIFACT` plus the extension it chooses. See [Packagers](#packagers). |
-| `build` | as `builder` | no | — | refused beside `builder` | Deprecated spelling of `builder`, read as it for one release; loading notes the key to rename. |
-| `package` | as `packager` | no | — | refused beside `packager` | Deprecated spelling of `packager`, read as it for one release; loading notes the key to rename. |
+| `builder` | string \| map | no | the checkout's tracked files (`git ls-files`; nothing ignored or untracked ships) | — | How the **install** — the runnable, staged output — is made. A string is a script writing it into `$DEV_INSTALL`. A map names a built-in builder; dev has none yet, so a map is refused. |
+| `packager` | string \| `archive` \| `as-is` \| `none` \| map | no | `archive` | — | How the install becomes the **archive**. A built-in by name, or `{ <name>: { options } }` for one with options; any other string is a script writing the archive at `$DEV_ARTIFACT` plus the extension it chooses. See [Packagers](#packagers). |
 
 ### Build names
 
