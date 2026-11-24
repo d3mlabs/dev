@@ -23,9 +23,10 @@ module Dev
       # make-like: the builder runs first unless the store's artifact for the
       # build is current — packaged from a clean tree at the commit the tree
       # is at now (Manifest::Artifact#current?) — or `--no-build` says to
-      # trust the install as it is; a target with no `build:` has nothing to
-      # run and packages alone. A target with `packager: none` is built,
-      # never packaged, and is refused here by name.
+      # trust the install as it is; a target with no `build:` stages the
+      # checkout's tracked files (the identity builder). A target with
+      # `packager: none` is built, never packaged, and is refused here by
+      # name.
       #
       # The stage: `before` consumes the argv into the build, resolves the
       # dispatch (the target's `environment:` under the host rule, the runner
@@ -69,8 +70,7 @@ module Dev
           sig { returns(Pathname) }
           attr_reader :archive_stem
 
-          # @return [Lifecycle::Builder, nil] nil: nothing to compile
-          sig { returns(T.nilable(Lifecycle::Builder)) }
+          sig { returns(Lifecycle::Builder) }
           attr_reader :builder
 
           sig { returns(Lifecycle::Packager) }
@@ -93,7 +93,7 @@ module Dev
               build: Lifecycle::Build,
               install: Pathname,
               archive_stem: Pathname,
-              builder: T.nilable(Lifecycle::Builder),
+              builder: Lifecycle::Builder,
               packager: Lifecycle::Packager,
               state: Lifecycle::GitState,
               build_skipped: T.nilable(String),
@@ -195,15 +195,14 @@ module Dev
           )
           dispatch.dispatch(invocation(build, no_build:, fetch: args.flag?(FETCH_FLAG))) do
             state = Lifecycle::GitState.read(context.project!.root)
-            builder = @ports.builder_for(build.target)
             PackageEnv.new(
               build:,
               install: @store.install_dir(build),
               archive_stem: @store.archive_stem(build),
-              builder:,
+              builder: @ports.builder_for(build.target),
               packager: @ports.packager_for(build.target),
               state:,
-              build_skipped: build_skipped(build, builder, state, no_build:),
+              build_skipped: build_skipped(build, state, no_build:),
             )
           end
         end
@@ -211,7 +210,7 @@ module Dev
         sig { override.params(env: PackageEnv, context: ExecutionContext).void }
         def seam(env, context:)
           _ = context
-          env.builder&.build(env.build, env.install) if env.build_skipped.nil?
+          env.builder.build(env.build, env.install) if env.build_skipped.nil?
           env.packed = env.packager.package(env.build, env.install, env.archive_stem)
         end
 
@@ -229,8 +228,8 @@ module Dev
               build: env.build,
               state: env.state,
               packaged_at: now,
-              builder: env.builder&.name || NO_BUILDER,
-              builder_version: env.builder&.version,
+              builder: env.builder.name,
+              builder_version: env.builder.version,
               build_id: Lifecycle::BuildId.derive(state: env.state, semver:, now:),
               archive: packed.name,
               archive_sha256: Digest::SHA256.file(packed.archive.to_s).hexdigest,
@@ -242,9 +241,6 @@ module Dev
         end
 
         private
-
-        # What the manifest records when the target declares no `build:`.
-        NO_BUILDER = "none"
 
         # The verb as a remote host runs it: the build fully qualified, the
         # one flag the seam reads kept, and the artifact to bring back when
@@ -281,21 +277,16 @@ module Dev
         end
 
         # Why the builder does not run before the packager, or nil when it
-        # does: nothing declared, `--no-build`, or an artifact current with
-        # the tree (the manifest carries this commit
-        # and the tree it was packaged from was clean).
+        # does: `--no-build`, or an artifact current with the tree (the
+        # manifest carries this commit and the tree it was packaged from
+        # was clean).
         #
         # @param build [Lifecycle::Build]
-        # @param builder [Lifecycle::Builder, nil]
         # @param state [Lifecycle::GitState] the tree now
         # @param no_build [Boolean] the flag
         # @return [String, nil]
-        sig do
-          params(build: Lifecycle::Build, builder: T.nilable(Lifecycle::Builder), state: Lifecycle::GitState, no_build: T::Boolean)
-            .returns(T.nilable(String))
-        end
-        def build_skipped(build, builder, state, no_build:)
-          return "target '#{build.target}' declares no `build:`" unless builder
+        sig { params(build: Lifecycle::Build, state: Lifecycle::GitState, no_build: T::Boolean).returns(T.nilable(String)) }
+        def build_skipped(build, state, no_build:)
           return "#{NO_BUILD_FLAG} given" if no_build
 
           artifact = @store.artifact(build)

@@ -9,6 +9,7 @@ require_relative "as_is_packager"
 require_relative "builder"
 require_relative "builder_spec"
 require_relative "channel"
+require_relative "checkout_builder"
 require_relative "none_packager"
 require_relative "packager"
 require_relative "packager_spec"
@@ -24,14 +25,15 @@ require_relative "vendored_packager"
 module Dev
   module Lifecycle
     # Turns a target's and a channel's declarations into their ports for
-    # this checkout: a `build:` line becomes a ScriptBuilder, a `package:`
-    # line a ScriptPackager, a channel's `run:` a ScriptPublisher, a channel
-    # naming an integration the publisher the lock contributed under that
-    # name. The one place the sealed specs are matched.
+    # this checkout: a `build:` line becomes a ScriptBuilder and no `build:`
+    # the CheckoutBuilder, a `package:` line a ScriptPackager, a channel's
+    # `run:` a ScriptPublisher, a channel naming an integration the
+    # publisher the lock contributed under that name. The one place the
+    # sealed specs are matched.
     #
-    # The project root, the shell, the project's toolchain seam and the
-    # lock's publishers are fixed for a checkout and so are
-    # constructor-owned; the target is per call.
+    # The project root, the shell, the project's toolchain seam, the lock's
+    # publishers and the checkout builder are fixed for a checkout and so
+    # are constructor-owned; the target is per call.
     class Ports
       extend T::Sig
 
@@ -61,17 +63,19 @@ module Dev
         @shell = shell
         @publishers = publishers
         @toolchain_exec = toolchain_exec
+        @checkout_builder = T.let(CheckoutBuilder.new(project_root: project_root), CheckoutBuilder)
       end
 
-      # The target's builder, or nil when it declares nothing to compile.
+      # The target's builder: its `build:` line, or the identity builder —
+      # the checkout's tracked files — when it declares none.
       #
       # @param target [Target]
-      # @return [Builder, nil]
-      sig { params(target: Target).returns(T.nilable(Builder)) }
+      # @return [Builder]
+      sig { params(target: Target).returns(Builder) }
       def builder_for(target)
         spec = target.builder
         case spec
-        when nil then nil
+        when nil then @checkout_builder
         when BuilderSpec::Script then ScriptBuilder.new(command: spec.command, project_root: @project_root, shell: @shell)
         else
           # simplecov:disable — the sealed spec has no other variant yet;

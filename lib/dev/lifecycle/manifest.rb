@@ -177,8 +177,8 @@ module Dev
         sig(:final) { returns(Time) }
         attr_reader :packaged_at
 
-        # @return [String] the builder that made the install (`script`, or an
-        #   integration's name)
+        # @return [String] the builder that made the install (`script`,
+        #   `checkout`, or an integration's name)
         sig(:final) { returns(String) }
         attr_reader :builder
 

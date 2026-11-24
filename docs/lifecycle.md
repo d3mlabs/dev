@@ -35,6 +35,18 @@ exactly one. How the destination keeps it is the channel's **head
 strategy**, declared by its publisher ([The channel
 contract](#the-channel-contract)).
 
+### The stages
+
+Each stage turns one thing into the next, through a port with built-in
+forms, a script as the escape hatch, and an **identity**: the form a
+target gets by declaring nothing, which hands the input through unchanged.
+
+| Stage | Input → output | Built-ins | Escape hatch | Identity |
+| --- | --- | --- | --- | --- |
+| build | the checkout → the install | — | `build: <command>` | no `build:` — the checkout's tracked files are the install |
+| package | the install → the archive | `archive`, `as-is`, `none` | `package: <command>` | `as-is` — the one file the install holds is the archive |
+| deploy | the archive → the destination | the lock's publishers, `gh` | `run: <command>` | — |
+
 ## Naming a build
 
 Every verb acts on one build, named three ways that mean the same thing:
@@ -75,9 +87,19 @@ dev build [BUILD] [--target T] [--platform P] [--config C] [--runner L | --conta
 
 Runs the target's `build:` script at the repo root with the build in its
 environment ([the build script's environment](dev-yml.md#the-build-scripts-environment))
-and `DEV_INSTALL` naming `<store>/<build>/install/`, created before the
-script runs. A target with no `build:` has nothing to compile: `dev build
-rspock` says so and does nothing.
+and `DEV_INSTALL` naming `<store>/<build>/install/`. A target with no
+`build:` has the checkout as its install: `dev build rspock` copies the
+checkout's tracked files (`git ls-files`, so nothing ignored or
+untracked — `coverage/`, `vendor/`, a nested checkout — ever reaches the
+install) into the same directory, modes and symlinks kept, and
+`build-id.json` records the builder as `checkout`. Which of those files
+ship is the packager's question.
+
+The install is fresh before any builder runs: dev empties and recreates
+the directory, so a file a previous build left is gone whether the
+builder is a script or the checkout, and no script needs a `find -delete`
+of its own. A toolchain's incremental state belongs in its build
+directory, not the install.
 
 Where the script runs is decided by the target's `environment:`; see
 [Where a verb runs](#where-a-verb-runs).
@@ -92,10 +114,11 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
 
 1. A target declaring `packager: none` is refused by name: it is built,
    never packaged.
-2. The builder runs unless the target has no `build:`, `--no-build` was
-   given, or the store's artifact is **current**: packaged from a clean
-   tree at the commit the tree is at now. A dirty tree is never current,
-   so an uncommitted change rebuilds every time.
+2. The builder runs — the `build:` script, or the checkout copy for a
+   target without one — unless `--no-build` was given or the store's
+   artifact is **current**: packaged from a clean tree at the commit the
+   tree is at now. A dirty tree is never current, so an uncommitted
+   change rebuilds every time.
 3. The packager writes `<build>.<ext>` beside the install: `archive`
    zips the install (or writes `.tar.zst`, split into parts with a
    `MANIFEST` when asked); `as-is` adopts the one file the install holds;
@@ -729,7 +752,7 @@ rather than performing it:
 
 | Verb | Needs | When missing |
 | --- | --- | --- |
-| `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`) |
+| `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches; for a target with no `build:`, a git checkout to take the tracked files from | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`); a project root outside git is refused for a target with no `build:` |
 | `package` | a current build | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store; a channel; the channel's environment; a protocol; to record, a repo `gh` reaches with `deployments: write` | "`dev package <build>` first"; a channel exists or `deploy` does not; a channel with no protocol is refused at load with both fixes; a record the forge refuses fails after the shipped lines |
 | `deploy <channel> --release V` | release `V` cut, carrying an archive of each accepted build; `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused; a download whose digest is not `release.json`'s is removed and refused |

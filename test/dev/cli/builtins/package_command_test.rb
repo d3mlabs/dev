@@ -104,8 +104,8 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     )
   end
 
-  def adopted
-    Dev::Lifecycle::Target.new(name: "site", desc: "Prebuilt site", packager: Dev::Lifecycle::PackagerSpec::AsIs.new)
+  def checkout_target
+    Dev::Lifecycle::Target.new(name: "site", desc: "The tracked files, zipped")
   end
 
   def unshipped
@@ -116,7 +116,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   end
 
   def targets
-    [client, gem_target, adopted, unshipped]
+    [client, gem_target, checkout_target, unshipped]
   end
 
   def store
@@ -276,21 +276,40 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     store.artifact(build("cellbound-3d-linux64-release")).manifest.state.sha == head
   end
 
-  test "a target with no build: packages alone — as-is adopts the one file in its install" do
-    Given
+  test "a target with no build: stages the checkout's tracked files and archives them; untracked files never ship (dev#674)" do
+    Given "an untracked file beside the tracked ones, and a stale file in the stage"
+    (@project / "notes.txt").write("untracked")
     install = store.install_dir(build("site"))
     install.mkpath
-    (install / "site.tar.gz").write("site")
+    (install / "stale.txt").write("from a previous build")
 
     When
     execute(command, "site")
 
-    Then
+    Then "the checkout builder ran (no script did); the zip holds exactly the tracked files; the manifest names the builder"
     build_runs == 0
-    @out.string.lines.first == "build skipped: target 'site' declares no `build:`\n"
+    !@out.string.include?("build skipped")
+    install.children.map { |child| child.basename.to_s }.sort == ["VERSION", "artifact.sh", "build.sh"]
     artifact = store.artifact(build("site"))
-    artifact.archive == store.dir(build("site")) / "site.tar.gz"
-    artifact.manifest.builder == "none"
+    artifact.archive == store.dir(build("site")) / "site.zip"
+    Open3.capture2("unzip", "-Z1", artifact.archive.to_s).first.lines.map(&:chomp).sort == ["VERSION", "artifact.sh", "build.sh"]
+    artifact.manifest.builder == "checkout"
+    artifact.manifest.builder_version.nil?
+  end
+
+  test "a target with no build: is current like any other: a second package from the same clean tree skips the checkout copy" do
+    Given
+    execute(command, "site")
+    (store.install_dir(build("site")) / "marker.txt").write("left by hand")
+    @out.truncate(0)
+    @out.rewind
+
+    When
+    execute(command, "site")
+
+    Then "the stage was not refreshed, so the marker survived into the re-archived zip"
+    @out.string.lines.first == "build skipped: the artifact is current (1.2.3+#{head})\n"
+    (store.install_dir(build("site")) / "marker.txt").file?
   end
 
   test "a script builder writing the gem, adopted as-is, lands as <build>.gem" do
@@ -327,8 +346,9 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "`after` without a packed archive is a wiring bug, named" do
     Given
     env = Dev::Cli::Builtins::PackageCommand::PackageEnv.new(
-      build: build("site"), install: Pathname("/i"), archive_stem: Pathname("/a"), builder: nil,
-      packager: Dev::Lifecycle::AsIsPackager.new, state: Dev::Lifecycle::GitState.new(sha: nil, dirty: true), build_skipped: nil,
+      build: build("site"), install: Pathname("/i"), archive_stem: Pathname("/a"),
+      builder: Dev::Lifecycle::CheckoutBuilder.new(project_root: @project), packager: Dev::Lifecycle::Archive.new,
+      state: Dev::Lifecycle::GitState.new(sha: nil, dirty: true), build_skipped: nil,
     )
 
     When

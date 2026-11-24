@@ -56,7 +56,7 @@ toolchain; the publisher never selects and never rewrites an archive.
 
 | Port | Interface | Implementations | Declared as |
 | --- | --- | --- | --- |
-| Builder | `Lifecycle::Builder#build(build, install)`, `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version) | `build: <command>` |
+| Builder | `Lifecycle::Builder#build(build, install)` (final: empties and recreates the install, then `#fill(build, install)`), `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version); `CheckoutBuilder` (`name` = `checkout`, no version: the checkout's tracked files, the identity) | `build: <command>`; no `build:` |
 | Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
 | Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none), `#owns_release_designation? → Boolean` (default: false; `release` cuts with `--latest=false` when any contributed publisher answers true) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
 
@@ -183,8 +183,10 @@ channel's deploy as a child invocation.
 
 ## Adding a port implementation
 
-A new builder implements `Lifecycle::Builder` (`build`, `name`,
-`version`); a new packager `Lifecycle::Packager` (`package`); a new
+A new builder implements `Lifecycle::Builder` (`fill`, `name`,
+`version` — `build` is the port's own: it empties the install before
+`fill`, so no implementation clears a previous build's files); a new
+packager `Lifecycle::Packager` (`package`); a new
 publisher `Lifecycle::Publisher` (`publish`, and `head_strategy` — say
 whether the destination keeps a pointer `deploy` moves or versions dev
 derives the head over; a destination that does neither is a third

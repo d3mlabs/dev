@@ -6,8 +6,8 @@ require_relative "../value_equality"
 module Dev
   module Lifecycle
     # What a target declares for its Builder port: a `build:` line. A target
-    # declaring none has nothing to compile; `build` is a no-op for it and
-    # `package` runs alone.
+    # declaring none gets the identity builder: the checkout's tracked
+    # files are its install.
     #
     # A declaration, not the port: Ports turns it into a Builder for this
     # checkout. Sealed, so the composition matches exhaustively.

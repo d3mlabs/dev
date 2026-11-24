@@ -13,16 +13,17 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
   BUILDER = Dev::Lifecycle::BuilderSpec
   PACKAGER = Dev::Lifecycle::PackagerSpec
 
-  test "a build: line becomes a ScriptBuilder at the project root; no builder is nil" do
+  test "a build: line becomes a ScriptBuilder at the project root; no build: is the identity builder, the checkout (dev#674)" do
     Given
     ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"))
     scripted = Dev::Lifecycle::Target.new(name: "cellbound-3d", builder: BUILDER::Script.new(command: "./bin/build"))
-    unbuilt = Dev::Lifecycle::Target.new(name: "rspock")
+    unscripted = Dev::Lifecycle::Target.new(name: "rspock")
 
     Expect
     ports.builder_for(scripted).is_a?(Dev::Lifecycle::ScriptBuilder)
     ports.builder_for(scripted).command == "./bin/build"
-    ports.builder_for(unbuilt).nil?
+    ports.builder_for(unscripted).is_a?(Dev::Lifecycle::CheckoutBuilder)
+    ports.builder_for(unscripted).name == "checkout"
   end
 
   test "each packager declaration becomes its port: #{spec}" do
