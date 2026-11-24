@@ -99,7 +99,7 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [architecture/destination-fact-is-a-publisher-hook] A lifecycle verb
  never branches on a channel's name or a publisher's class: what differs
  per destination (head strategy, preview, who owns the forge's latest
- designation) is a `Lifecycle::Publisher` hook with a default that the
+ designation, which trees it accepts) is a `Lifecycle::Publisher` hook with a default that the
  differing publisher overrides, and the verb asks every publisher.
  → .cursor/skills/learnings/destination-fact-is-a-publisher-hook/
 - [architecture/port-identity-form] A lifecycle stage a target may leave

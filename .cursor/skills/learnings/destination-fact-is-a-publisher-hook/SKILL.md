@@ -13,7 +13,8 @@ The lifecycle verbs are identical over every publisher: `release` cuts,
 `deploy` moves one head, on any channel alike. What differs per
 destination — how it keeps its head (`head_strategy`), what a dry run
 reads back (`preview`), whether the forge's latest designation is its
-head (`owns_release_designation?`) — is declared on `Lifecycle::Publisher`
+head (`owns_release_designation?`), whether a tree is complete for the
+install it runs (`accept!`) — is declared on `Lifecycle::Publisher`
 with a default, and the publisher that differs overrides it with the reason
 in its comment. A verb or the runner reads the hook over the contributed
 publishers; it never knows a channel by name, and a destination fitting no
@@ -34,6 +35,6 @@ Right — the destination declares the fact, the verb asks every publisher:
     # Cli::Runner
     designates_latest: bindings.publishers.values.none?(&:owns_release_designation?)
 
-learned-from: dev#665 review (`designates_latest` keyed on the `gh` name →
-`Publisher#owns_release_designation?`); dev#661 shaped `head_strategy` the same way
+learned-from: dev#665 review (`designates_latest` keyed on the `gh` name → `Publisher#owns_release_designation?`);
+dev#661 (`head_strategy`) and dev#676 (`accept!`: `package` asks every channel accepting the build) shaped the same way
 date: 2026-11-22
