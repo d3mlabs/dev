@@ -1,8 +1,11 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "fileutils"
 require "pathname"
+require "tmpdir"
 require_relative "byte_size"
+require_relative "file_selection"
 require_relative "packager"
 require_relative "packed_archive"
 require_relative "part_list"
@@ -22,6 +25,10 @@ module Dev
     #   `.01`, … of at most that size, plus `<build>.MANIFEST` listing each
     #   part's SHA-256 in `sha256sum -c` form. GitHub's 2 GiB per release
     #   asset is the limit the split exists for.
+    #
+    # Which of the install's files ship is its `files:` (FileSelection):
+    # the whole install unless the target lists patterns, the selected
+    # files at their install paths when it does.
     #
     # Writes over its own previous output. The tar form needs `zstd` on
     # PATH, declared with the project's dependencies.
@@ -182,11 +189,16 @@ module Dev
       sig { returns(Form) }
       attr_reader :form
 
+      sig { returns(FileSelection) }
+      attr_reader :files
+
       # @param form [Form]
+      # @param files [FileSelection] which of the install's files ship; the whole install by default
       # @param shell [Shell]
-      sig { params(form: Form, shell: Shell).void }
-      def initialize(form: Form::Zip.new, shell: Shell.new)
+      sig { params(form: Form, files: FileSelection, shell: Shell).void }
+      def initialize(form: Form::Zip.new, files: FileSelection.all, shell: Shell.new)
         @form = form
+        @files = files
         @shell = shell
       end
 
@@ -199,6 +211,7 @@ module Dev
       # @return [PackedArchive]
       # @raise [MissingInstallError]
       # @raise [EmptyInstallError]
+      # @raise [FileSelection::EmptySelectionError]
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError]
       sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
@@ -216,6 +229,7 @@ module Dev
       # @return [PackedArchive]
       # @raise [MissingInstallError]
       # @raise [EmptyInstallError]
+      # @raise [FileSelection::EmptySelectionError] when `files:` selects nothing
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError] when `zip`, `tar`, `zstd` or `split` is missing
       sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
@@ -223,8 +237,63 @@ module Dev
         raise MissingInstallError, "no install at #{install}" unless install.directory?
         raise EmptyInstallError, "nothing to archive: #{install} is empty" if install.children.empty?
 
-        archive.dirname.mkpath
-        remove_previous(archive)
+        with_selected(install) do |selected|
+          archive.dirname.mkpath
+          remove_previous(archive)
+          write(selected, archive)
+        end
+      end
+
+      # The declaration as `dev help` renders it.
+      #
+      # @return [String] `archive`, `archive (tar)`, `archive (tar, split 2GiB)`,
+      #   `archive, files: bin lib`
+      sig { returns(String) }
+      def to_s
+        "archive#{@form}#{@files}"
+      end
+
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [form, files]
+      end
+
+      private
+
+      # The directory the pipelines read: the install itself for the whole
+      # selection; for a `files:` list, a scratch copy of the selected files
+      # at their install paths, gone once the block returns. A copy rather
+      # than a file list fed to `zip -@` and `tar -T`: the three pipelines
+      # then read one directory the same way, and a selected archive lays
+      # out exactly as a whole one does, directory entries included. The
+      # selection is decided before anything is written.
+      #
+      # @param install [Pathname]
+      # @yieldparam selected [Pathname] the directory to archive
+      # @return [PackedArchive] the block's
+      # @raise [FileSelection::EmptySelectionError]
+      sig { params(install: Pathname, block: T.proc.params(selected: Pathname).returns(PackedArchive)).returns(PackedArchive) }
+      def with_selected(install, &block)
+        return yield(install) if @files.whole?
+
+        selected = @files.select(install)
+        Dir.mktmpdir("dev-archive-") do |scratch|
+          selected.each do |relative|
+            destination = Pathname(scratch) / relative
+            destination.dirname.mkpath
+            FileUtils.copy_entry(install / relative, destination, true)
+          end
+          yield Pathname(scratch)
+        end
+      end
+
+      # @param install [Pathname] the directory archived
+      # @param archive [Pathname] the path without extension
+      # @return [PackedArchive]
+      # @raise [PackFailedError]
+      sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
+      def write(install, archive)
         form = @form
         case form
         when Form::Zip then pack_zip(install, archive)
@@ -235,22 +304,6 @@ module Dev
           # simplecov:enable
         end
       end
-
-      # The declaration as `dev help` renders it.
-      #
-      # @return [String] `archive`, `archive (tar)`, `archive (tar, split 2GiB)`
-      sig { returns(String) }
-      def to_s
-        "archive#{@form}"
-      end
-
-      # @return [Array] the members that constitute identity
-      sig { override.returns(T::Array[T.anything]) }
-      def equality_members
-        [form]
-      end
-
-      private
 
       # Every file a previous packaging of this archive could have left:
       # the zip, the tar, the parts and the MANIFEST.

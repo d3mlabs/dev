@@ -17,7 +17,8 @@ module Dev
     # declarations: `build:` a script builder; `package:` a script packager,
     # or `packager:` one of dev's built-ins by name — `archive` (the default,
     # with its options as a mapping: `{ archive: { format: tar, split: 2GiB,
-    # vendor: true } }`), `as-is`, `none`. The rules a single target owns (its name's shape and
+    # files: [bin, lib], vendor: true } }`), `as-is`, `none`. The rules a
+    # single target owns (its name's shape and
     # suffix, duplicate axis values, a per-platform environment's fit with
     # its platforms) are Target's and surface from its constructor; the
     # rules that span targets and commands are ProjectManifestLoader's.
@@ -65,7 +66,11 @@ module Dev
       ARCHIVE_FORMAT_KEY = "format"
       ARCHIVE_SPLIT_KEY = "split"
       ARCHIVE_VENDOR_KEY = "vendor"
-      ARCHIVE_OPTION_KEYS = T.let([ARCHIVE_FORMAT_KEY, ARCHIVE_SPLIT_KEY, ARCHIVE_VENDOR_KEY].freeze, T::Array[String])
+      ARCHIVE_FILES_KEY = "files"
+      ARCHIVE_OPTION_KEYS = T.let(
+        [ARCHIVE_FORMAT_KEY, ARCHIVE_SPLIT_KEY, ARCHIVE_VENDOR_KEY, ARCHIVE_FILES_KEY].freeze,
+        T::Array[String],
+      )
 
       TargetHash = T.type_alias { T::Hash[String, T.untyped] }
 
@@ -195,7 +200,11 @@ module Dev
 
         case packager_name
         when ARCHIVE_NAME
-          Lifecycle::PackagerSpec::Archive.new(form: archive_form(name, options), vendor: archive_vendor(name, options))
+          Lifecycle::PackagerSpec::Archive.new(
+            form: archive_form(name, options),
+            files: archive_files(name, options),
+            vendor: archive_vendor(name, options),
+          )
         when AS_IS_NAME then optionless(name, AS_IS_NAME, options, Lifecycle::PackagerSpec::AsIs.new)
         when NONE_NAME then optionless(name, NONE_NAME, options, Lifecycle::PackagerSpec::None.new)
         else
@@ -230,7 +239,7 @@ module Dev
       end
 
       # @param name [String] the target, for messages
-      # @param options [Hash] the `archive:` options: `format`, `split`, `vendor`
+      # @param options [Hash] the `archive:` options: `format`, `split`, `vendor`, `files`
       # @return [Lifecycle::Archive::Form]
       # @raise [InvalidPackagerError]
       sig { params(name: String, options: T::Hash[T.untyped, T.untyped]).returns(Lifecycle::Archive::Form) }
@@ -268,6 +277,29 @@ module Dev
 
         raise InvalidPackagerError,
           "target '#{name}': #{ARCHIVE_NAME}: `#{ARCHIVE_VENDOR_KEY}:` is true or false, got #{vendor.inspect}"
+      end
+
+      # The `files:` option: a list of gitignore-syntax patterns, absent
+      # meaning the whole install.
+      #
+      # @param name [String] the target, for messages
+      # @param options [Hash] the `archive:` options
+      # @return [Lifecycle::FileSelection]
+      # @raise [InvalidPackagerError]
+      sig { params(name: String, options: T::Hash[T.untyped, T.untyped]).returns(Lifecycle::FileSelection) }
+      def archive_files(name, options)
+        return Lifecycle::FileSelection.all unless options.key?(ARCHIVE_FILES_KEY)
+
+        files = options[ARCHIVE_FILES_KEY]
+        unless files.is_a?(Array) && !files.empty? && files.all?(String)
+          raise InvalidPackagerError,
+            "target '#{name}': #{ARCHIVE_NAME}: `#{ARCHIVE_FILES_KEY}:` is a list of patterns " \
+              "(`[bin, lib, VERSION]`), got #{files.inspect}"
+        end
+
+        Lifecycle::FileSelection.parse(files)
+      rescue Lifecycle::FilePattern::InvalidFilePatternError => e
+        raise InvalidPackagerError, "target '#{name}': #{ARCHIVE_NAME}: `#{ARCHIVE_FILES_KEY}:` #{e.message}"
       end
 
       # @param name [String] the target, for messages

@@ -138,7 +138,7 @@ module Dev
       # @return [Packager] the Archive in the declared form, vendoring first when asked
       sig { params(spec: PackagerSpec::Archive).returns(Packager) }
       def archive_packager(spec)
-        archive = Archive.new(form: spec.form, shell: @shell)
+        archive = Archive.new(form: spec.form, files: spec.files, shell: @shell)
         return archive unless spec.vendor
 
         VendoredPackager.new(packager: archive, exec: @toolchain_exec)

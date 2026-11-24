@@ -1,14 +1,36 @@
 name: dev
 # dev's own two targets (dev#192 K3, dev#429): what the d3mlabs tap ships as two
-# formulas. Neither compiles — the install is a file set — and dev's archive
-# packager zips each into the release asset its formula points at.
+# formulas. Neither compiles — the checkout is the stage, and each target's
+# `files:` selects what its formula installs; dev's archive packager zips the
+# selection into the release asset the formula points at.
 targets:
   dev-core:
     desc: The org-blank tool (bin, lib, share, VERSION)
-    build: ./bin/install-core
+    # The manifest and locks stay out: the formula owns dev-core's runtime,
+    # so the tree is framework-dependent by design. The org payload is the
+    # sibling `dev` target's; nothing of it is here. Anchored (gitignore
+    # syntax): a bare `lib` would also take test/lib.
+    packager:
+      archive:
+        files:
+          - /bin
+          - /lib
+          - /share
+          - /VERSION
+          - /LICENSE
+          - /README.md
   dev:
     desc: The d3mlabs deployment of dev (config.yml + Brewfile)
-    build: ./bin/install-deployment
+    # Paths as in the checkout; Formula/dev.rb installs them by name. README
+    # and LICENSE ride along as the keg's payload: the two etc files land
+    # outside the keg, and brew refuses an empty one (dev#517).
+    packager:
+      archive:
+        files:
+          - /deploy/d3mlabs/config.yml
+          - /deploy/d3mlabs/Brewfile
+          - /LICENSE
+          - /README.md
 commands:
   up:
     desc: Setup dev environment (install bundler from dependencies.rb, bundle install)

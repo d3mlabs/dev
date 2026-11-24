@@ -159,8 +159,17 @@ asks for the build, because the same `dev.yml` loads on every machine.
 | `packager` | Result |
 |---|---|
 | `archive` (default) | `<build>.zip` of the install's contents, symlinks kept. `{ archive: { format: tar } }` writes `<build>.tar.zst`; `{ archive: { split: 2GiB } }` cuts it into `.00`, `.01`, … parts under that size plus a `<build>.MANIFEST` of SHA-256s. The tar form needs `zstd` on PATH. `{ archive: { vendor: true } }` first runs a frozen `bundle install` into the install's own `vendor/bundle` under the project's Ruby, so the asset ships the tool's gems; the install must carry `dependencies.rb` and `deps.lock` (see [A tool's closure](dependencies.md#a-tools-closure-at-install-or-at-release)). |
+| `archive` with `files:` | `{ archive: { files: [/bin, /lib, /VERSION, "!lib/scratch"] } }` archives only the install's files the list selects, at their install paths — nothing is rerooted. Patterns are in gitignore syntax and follow three rules: they apply **in order**, the last matching pattern deciding; a leading `!` **negates**; a **directory means its contents** (`/bin` is every file under `bin/`). As in gitignore, a pattern with no slash matches at any depth (`lib` also takes `test/lib`); a leading or inner slash anchors it at the install root. A list with no positive pattern starts from everything (an exclude-only list, like a `.npmignore`); omitted, the whole install ships. A list that selects nothing is refused with the patterns named. With `vendor: true` the list also sees `vendor/bundle`, so list `vendor` to ship it. |
 | `as-is` | The install already is the archive (Alpakit's zip, `gem build`'s `.gem`): its one file is adopted as `<build>.<ext>`. |
 | `none` | Built, never shipped. Invisible to `package`, `release` and `deploy`. |
+
+A target whose shippable tree is a selection of the checkout needs no
+`build:` script: the checkout's tracked files are the install, and
+`files:` says which ship. dev's own `dev.yml` is the example — `dev-core`
+lists `/bin`, `/lib`, `/share`, `/VERSION`, `/LICENSE`, `/README.md`; the
+`dev` deployment lists `/deploy/d3mlabs/config.yml`,
+`/deploy/d3mlabs/Brewfile`, `/LICENSE`, `/README.md`, and its formula
+installs them by those paths.
 
 For a `package:` script with a twist on the default, the hidden `dev pack
 DIR [--out STEM] [--format zip|tar] [--split SIZE]` archives any directory

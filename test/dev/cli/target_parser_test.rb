@@ -166,6 +166,37 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "{ archive: { format: tar, vendor: true } }" | Dev::Lifecycle::Archive::Form::Tar.new                                             | true
   end
 
+  test "packager: archive takes files: as a list of gitignore-syntax patterns, in order, beside its other options (dev#675)" do
+    Given "dev's own two targets, as dev.yml spells them, and a tar form carrying a selection"
+    raw = YAML.safe_load(<<~YAML)
+      dev-core:
+        packager:
+          archive:
+            files:
+              - bin
+              - lib
+              - "!lib/scratch"
+              - VERSION
+      dev:
+        packager: { archive: { files: [deploy/d3mlabs/config.yml, deploy/d3mlabs/Brewfile] } }
+      ai-flow:
+        packager: { archive: { format: tar, files: [exe, lib], vendor: true } }
+    YAML
+
+    When
+    targets = Dev::Cli::TargetParser.new.parse_all(raw)
+
+    Then
+    targets["dev-core"].packager ==
+      Dev::Lifecycle::PackagerSpec::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["bin", "lib", "!lib/scratch", "VERSION"]))
+    targets["dev"].packager ==
+      Dev::Lifecycle::PackagerSpec::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["deploy/d3mlabs/config.yml", "deploy/d3mlabs/Brewfile"]))
+    targets["ai-flow"].packager == Dev::Lifecycle::PackagerSpec::Archive.new(
+      form: Dev::Lifecycle::Archive::Form::Tar.new, files: Dev::Lifecycle::FileSelection.parse(["exe", "lib"]), vendor: true,
+    )
+    targets["dev-core"].packager.to_s == "archive, files: bin lib !lib/scratch VERSION"
+  end
+
   test "a build: or package: line must be a command: #{key}: #{raw.inspect}" do
     When
     Dev::Cli::TargetParser.new.parse("opencell", { key => raw })
@@ -219,12 +250,16 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "{ archive: tar }"                         | "one built-in's name to its options"
     "{ as-is: { strip: true } }"               | "as-is takes no options, got strip"
     "{ none: { why: not } }"                   | "none takes no options, got why"
-    "{ archive: { level: 9 } }"                | "archive takes format, split, vendor, not level"
+    "{ archive: { level: 9 } }"                | "archive takes format, split, vendor, files, not level"
     "{ archive: { format: 7z } }"              | "archive: unknown archive format \"7z\""
     "{ archive: { split: 2GB } }"              | "archive: \"2GB\" is not a size"
     "{ archive: { format: zip, split: 2GiB } }" | "archive: `split:` needs the tar format"
     "{ archive: { vendor: yes please } }"      | "archive: `vendor:` is true or false, got \"yes please\""
     "{ archive: { vendor: 1 } }"               | "archive: `vendor:` is true or false, got 1"
+    "{ archive: { files: bin } }"              | "archive: `files:` is a list of patterns (`[bin, lib, VERSION]`), got \"bin\""
+    "{ archive: { files: [] } }"               | "archive: `files:` is a list of patterns (`[bin, lib, VERSION]`), got []"
+    "{ archive: { files: [bin, 1] } }"         | "archive: `files:` is a list of patterns (`[bin, lib, VERSION]`), got [\"bin\", 1]"
+    "{ archive: { files: [bin, \"!\"] } }"     | "archive: `files:` \"!\" is not a pattern: nothing to match"
   end
 
   test "the rules a target owns surface from its constructor: #{name} #{entry.inspect}" do

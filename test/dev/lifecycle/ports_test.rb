@@ -41,9 +41,21 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     Dev::Lifecycle::PackagerSpec::Archive.new(form: Dev::Lifecycle::Archive::Form::Tar.new)                        | Dev::Lifecycle::Archive          | "archive (tar)"
     Dev::Lifecycle::PackagerSpec::Archive.new(vendor: true)                                                        | Dev::Lifecycle::VendoredPackager | "archive, vendored"
     Dev::Lifecycle::PackagerSpec::Archive.new(form: Dev::Lifecycle::Archive::Form::Tar.new, vendor: true)          | Dev::Lifecycle::VendoredPackager | "archive (tar), vendored"
+    Dev::Lifecycle::PackagerSpec::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["bin", "lib"]))          | Dev::Lifecycle::Archive          | "archive, files: bin lib"
+    Dev::Lifecycle::PackagerSpec::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["exe"]), vendor: true)   | Dev::Lifecycle::VendoredPackager | "archive, files: exe, vendored"
     Dev::Lifecycle::PackagerSpec::AsIs.new                                                                         | Dev::Lifecycle::AsIsPackager     | "as-is"
     Dev::Lifecycle::PackagerSpec::None.new                                                                         | Dev::Lifecycle::NonePackager     | "none"
     Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/package")                                             | Dev::Lifecycle::ScriptPackager   | "./bin/package"
+  end
+
+  test "an archive declaration's files: reaches the Archive port as its selection" do
+    Given
+    ports = Dev::Lifecycle::Ports.new(project_root: Pathname("/project"))
+    files = Dev::Lifecycle::FileSelection.parse(["bin", "!bin/scratch"])
+    target = Dev::Lifecycle::Target.new(name: "dev-core", packager: PACKAGER::Archive.new(files:))
+
+    Expect
+    ports.packager_for(target).files == files
   end
 
   test "a channel's run: line becomes a ScriptPublisher at the project root" do

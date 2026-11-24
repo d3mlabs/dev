@@ -8,8 +8,8 @@
 # deployment_formula is the formula's own name: it is how `dev up` knows
 # which formula to self-upgrade (the deployment names itself).
 #
-# Shipped by the `dev` target (bin/install-deployment); dev-core carries
-# nothing of it. See docs/configuration.md, "Two formulas".
+# Shipped by the `dev` target (dev.yml `files:`, at this path); dev-core
+# carries nothing of it. See docs/configuration.md, "Two formulas".
 plans_repo: d3mlabs/plans
 knowledge_repo: d3mlabs/knowledge
 deployment_formula: d3mlabs/d3mlabs/dev
