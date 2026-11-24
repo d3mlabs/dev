@@ -8,9 +8,13 @@
 #
 # The jobs run this checkout's `up/` action, so a change to it is
 # exercised by every job; the action installs the tap's released dev,
-# which then runs the checkout's commands (bin/*.rb under the checkout's
-# lock). One job per verb, named as the branch protection's required
-# checks. GH_TOKEN is the credential the action's toolchain check
+# whose `dev up` installs the checkout's lock. From then on, inside dev's
+# own checkout, dev is the checkout: the released dev's launcher hands
+# every verb to this checkout's bin/dev under the checkout's shadowenv
+# (docs/cli.md), so `dev style`, `dev typecheck` and `dev test` run this
+# checkout's code on its own dev.yml — a dev.yml key this checkout is the
+# first to define never has to pass the released dev's reader. One job
+# per verb, named as the branch protection's required checks. GH_TOKEN is the credential the action's toolchain check
 # requires; the job's own token reaches every pin this public tap serves.
 name: CI
 
