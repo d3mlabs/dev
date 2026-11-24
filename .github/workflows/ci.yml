@@ -14,8 +14,9 @@
 # (docs/cli.md), so `dev style`, `dev typecheck` and `dev test` run this
 # checkout's code on its own dev.yml — a dev.yml key this checkout is the
 # first to define never has to pass the released dev's reader. One job
-# per verb, named as the branch protection's required checks. GH_TOKEN is the credential the action's toolchain check
-# requires; the job's own token reaches every pin this public tap serves.
+# per verb, named as the branch protection's required checks. GH_TOKEN
+# is the credential the action's toolchain check requires; the job's own
+# token reaches every pin this public tap serves.
 name: CI
 
 on:
