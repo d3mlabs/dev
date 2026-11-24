@@ -59,8 +59,8 @@ CLI::UI.frame("Type checking...") do
         end
 
         hint = if err.include?("command not found")
-          "\nThis looks like a shell-activation problem — run through `dev tc` or " \
-            "`shadowenv exec -- bin/tc.rb` so the project Ruby activates."
+          "\nThis looks like a shell-activation problem — run through `dev typecheck` or " \
+            "`shadowenv exec -- bin/typecheck.rb` so the project Ruby activates."
         else
           ""
         end

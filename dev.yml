@@ -16,9 +16,9 @@ commands:
   rbi:
     desc: Regenerate gem RBI files (run after changing Gemfile)
     run: ./bin/rbi.rb
-  tc:
+  typecheck:
     desc: Type check (verify gem RBIs are in sync, then srb tc)
-    run: ./bin/tc.rb
+    run: ./bin/typecheck.rb
   test:
     desc: Run this repo's tests
     run: ./bin/test.rb
