@@ -156,7 +156,10 @@ supply them. Three vocabularies:
 
 - **A repo's own label**: its name as GitHub spells it, lowercased
   (`d3mlabs/cellbound-3d` → `cellbound-3d`). Bare `dev runner register`
-  uses it; `--repo a/b` moves it.
+  uses it; `--repo a/b` moves it. With `--role`, `--repo a/b` enrolls the
+  checkout's declared role for `a/b` — the role's labels, identity and
+  stream stay the declaring project's, the scope is `a/b`, and no runner
+  group: a repo has none (ai-flow's `agent` as cellbound-3d's editor lane).
 - **Custom labels** through `--labels`, for special fleets (`ue-engine`).
 - **A role's labels**: what its `dev.yml` declaration lists. ai-flow's
   `agent` role carries `ai-ask ai-edit ai-split ai-build ai-learn`, one

@@ -334,6 +334,20 @@ module Dev
       @kind == Kind::Pooled
     end
 
+    # The role as it enrolls at a repo: the same labels, identity and
+    # stream, no runner group. Runner groups partition an org's runners
+    # and a repo has none — config.sh refuses a group name there — so a
+    # declared role's group is its org-scope reach (`--org`) and nothing
+    # else; a repo-scoped slot's reach is the repo's workflows.
+    #
+    # @return [Dev::RunnerRole] self when the role already has no group
+    sig { returns(RunnerRole) }
+    def at_repo_scope
+      return self if @group.nil?
+
+      self.class.new(name: @name, labels: @labels, group: nil, job_identity: @job_identity, stream: @stream, kind: @kind)
+    end
+
     # Whether the role has a pinned runner group of its own: registered at
     # the org (`--org`), its runners join that group and the group's pin
     # fixes which workflows reach them. Registered at a repo, the role is
