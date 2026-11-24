@@ -247,7 +247,10 @@ module Dev
               page = find_or_create(env, ui:)
               files = gathered.flat_map(&:files) + [dir / manifest.file_name]
               ui.spin("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
-              page
+              # Last, so the asset list a repository with immutable releases
+              # freezes at publish is the complete one (dev#679).
+              ui.spin("Publishing GitHub release #{env.tag}") { @releases.publish(env.tag, latest: @designates_latest) } if page.draft
+              page.url
             end
             report(env, sha, url, manifest, facts: @releases.facts(env.tag), ui:)
           end
@@ -347,20 +350,25 @@ module Dev
         # The GitHub release: the one a failed run already created (a
         # resume attaches to it), else a new one with the plan's notes.
         #
+        # The tag's release: the one the forge holds (a draft a failed run
+        # left, or one already published — a mutable repository still takes
+        # assets onto it), or a fresh draft.
+        #
         # @param env [ReleaseEnv]
         # @param ui [Ui]
-        # @return [URI] the release's page
-        sig { params(env: ReleaseEnv, ui: Ui).returns(URI::Generic) }
+        # @return [GithubReleases::Found] the release's page and whether it is a draft to publish
+        sig { params(env: ReleaseEnv, ui: Ui).returns(Lifecycle::GithubReleases::Found) }
         def find_or_create(env, ui:)
           found = @releases.find(env.tag)
           if found
-            ui.note("{{v}} GitHub release #{env.tag} exists — attaching to it")
+            ui.note("{{v}} GitHub release #{env.tag} exists#{" as a draft" if found.draft} — attaching to it#{" and publishing" if found.draft}")
             return found
           end
 
-          ui.spin("Creating GitHub release #{env.tag}") do
-            @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes, latest: @designates_latest)
+          page = ui.spin("Creating GitHub release #{env.tag}") do
+            @releases.create(env.tag, title: env.tag.name, notes: env.plan.notes)
           end
+          Lifecycle::GithubReleases::Found.new(url: page, draft: true)
         end
 
         # `--yes`, or the terminal's answer. No terminal is a refusal: a

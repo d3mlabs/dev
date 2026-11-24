@@ -18,16 +18,25 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     Dev::Lifecycle::GithubReleases.new(gh:)
   end
 
-  test "find asks gh for the tag's release page and answers it as a URI" do
+  test "find asks gh for the tag's release page and whether it is still a draft (dev#679)" do
     Given
-    gh = FakeGh.new.answers(["release", "view"], with: "#{URL}\n")
+    gh = FakeGh.new.answers(["release", "view"], with: { "url" => URL, "isDraft" => true })
 
     When
     found = releases(gh).find(TAG)
 
     Then
-    found == URI.parse(URL)
-    gh.calls.map(&:argv) == [["release", "view", "v1.2.0", "--json", "url", "--jq", ".url"]]
+    found.url == URI.parse(URL)
+    found.draft
+    gh.calls.map(&:argv) == [["release", "view", "v1.2.0", "--json", "url,isDraft"]]
+  end
+
+  test "a published release is found as not a draft" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: { "url" => URL, "isDraft" => false })
+
+    Expect
+    !releases(gh).find(TAG).draft
   end
 
   test "find is nil when the forge has no release for the tag — the one refusal that is an answer" do
@@ -36,6 +45,29 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
 
     Expect
     releases(gh).find(TAG).nil?
+  end
+
+  test "a found release is a value: the same page and draft state is the same release" do
+    Expect
+    assert_value_semantics Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: true),
+      equal_to: Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: true),
+      unequal_to: [Dev::Lifecycle::GithubReleases::Found.new(url: URI.parse(URL), draft: false)]
+  end
+
+  test "find maps #{what} to the archive's own error" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: printed)
+
+    When
+    releases(gh).find(TAG)
+
+    Then
+    raises(Dev::Lifecycle::GithubReleases::MalformedReleaseError)
+
+    Where
+    what                     | printed
+    "an answer not JSON"     | "not json\n"
+    "an answer not a release" | "[]"
   end
 
   test "any other refusal of a read is the archive's own error, carrying gh's words" do
@@ -50,28 +82,44 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     error.message.include?("Bad credentials")
   end
 
-  test "create mints the release for a tag the forge already has, the notes on stdin, and answers its page" do
+  test "create mints the release as a draft for a tag the forge already has, the notes on stdin, and answers its page (dev#679)" do
     Given
     gh = FakeGh.new.answers(["release", "create"], with: "#{URL}\n")
 
     When
     created = releases(gh).create(TAG, title: "v1.2.0", notes: "abc1234 add b\n")
 
-    Then
+    Then "a draft: on a repo with immutable releases, publishing freezes the asset list, so nothing publishes before the assets are on"
     created == URI.parse(URL)
-    gh.calls.map(&:argv) == [["release", "create", "v1.2.0", "--title", "v1.2.0", "--notes-file", "-", "--verify-tag"]]
+    gh.calls.map(&:argv) == [["release", "create", "v1.2.0", "--title", "v1.2.0", "--notes-file", "-", "--verify-tag", "--draft"]]
     gh.calls.first.stdin == "abc1234 add b\n"
   end
 
-  test "create with latest: false leaves the forge's latest designation where it is — a head's to move, never a cut's (dev#655)" do
+  test "publish turns the draft into the release; latest: false leaves the forge's latest designation where it is — a head's to move, never a cut's (dev#655)" do
     Given
-    gh = FakeGh.new.answers(["release", "create"], with: "#{URL}\n")
+    gh = FakeGh.new.answers(["release", "edit"], with: "#{URL}\n").answers(["release", "edit"], with: "#{URL}\n")
 
     When
-    releases(gh).create(TAG, title: "v1.2.0", notes: "", latest: false)
+    releases(gh).publish(TAG, latest: true)
+    releases(gh).publish(TAG, latest: false)
 
     Then
-    gh.calls.map(&:argv) == [["release", "create", "v1.2.0", "--title", "v1.2.0", "--notes-file", "-", "--verify-tag", "--latest=false"]]
+    gh.calls.map(&:argv) == [
+      ["release", "edit", "v1.2.0", "--draft=false"],
+      ["release", "edit", "v1.2.0", "--draft=false", "--latest=false"],
+    ]
+  end
+
+  test "a refused publish is the archive's error" do
+    Given
+    gh = FakeGh.new.refuses(["release", "edit"], with: "HTTP 403: Resource not accessible by integration")
+
+    When
+    releases(gh).publish(TAG, latest: true)
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::ApiError)
+    error.message.include?("Resource not accessible")
   end
 
   test "facts reads the release as the forge holds it: whether it is frozen and whether it is a pre-release (dev#655)" do
@@ -151,6 +199,18 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     Then
     error = raises(Dev::Lifecycle::GithubReleases::ApiError)
     error.message.include?("Resource not accessible")
+  end
+
+  test "an upload the forge refuses because the release is already frozen is its own error, naming the one remedy (dev#679)" do
+    Given
+    gh = FakeGh.new.refuses(["release", "upload"], with: "HTTP 422: Cannot upload assets to an immutable release.")
+
+    When
+    releases(gh).upload(TAG, [Pathname("/tmp/x/rspock-1.2.0.zip")])
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::FrozenError)
+    error.message == "v1.2.0 is published and immutable: its assets were frozen at publish and cannot be completed — release the next version"
   end
 
   test "upload with nothing to attach does not go to the forge" do

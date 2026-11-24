@@ -62,7 +62,7 @@ module ReleaseFixtures
   # @return [Dev::Lifecycle::Manifest::Release] what `release.json` says
   def release_on(gh, archives, version: "1.2.0", lookups: 1, manifest: release_manifest(archives, version:))
     tag = "v#{version}"
-    lookups.times { gh.answers(["release", "view", tag], with: "https://github.com/d3mlabs/cellbound-3d/releases/tag/#{tag}\n") }
+    lookups.times { gh.answers(["release", "view", tag], with: { "url" => "https://github.com/d3mlabs/cellbound-3d/releases/tag/#{tag}", "isDraft" => false }) }
     assets = archives.to_h { |build_name, bytes| ["#{build_name}-#{version}.zip", bytes] }
     gh.serves(tag, assets.merge(Dev::Lifecycle::Manifest::Release::FILE_NAME => "#{JSON.pretty_generate(manifest.to_json_hash)}\n"))
     manifest

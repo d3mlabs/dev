@@ -625,8 +625,8 @@ class RunnerTest < Minitest::Test
       ],
     })
     gh = FakeGh.new.resolving("d3mlabs/testproject")
-      .answers(["release", "view", "v1.2.0"], with: "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0\n")
-      .answers(["release", "view", "v1.2.0"], with: "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0\n")
+      .answers(["release", "view", "v1.2.0"], with: { "url" => "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0", "isDraft" => false })
+      .answers(["release", "view", "v1.2.0"], with: { "url" => "https://github.com/d3mlabs/testproject/releases/tag/v1.2.0", "isDraft" => false })
       .serves("v1.2.0", "release.json" => release_json, "site-release-1.2.0.zip" => "site", "rspock-1.2.0.gem" => "gem")
     [9, 10].each do |id|
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => id, "created_at" => "2026-11-05T17:02:11Z" })
