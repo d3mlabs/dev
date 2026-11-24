@@ -13,15 +13,20 @@ module Dev
     # enums' parse, so an id outside dev's closed sets fails at load with
     # the set listed, and `environment` becomes references the composition
     # root binds against the lock (the parser stays lock-free, as
-    # CommandParser does). The builder and packager keys become their
-    # declarations: `build:` a script builder; `package:` a script packager,
-    # or `packager:` one of dev's built-ins by name — `archive` (the default,
-    # with its options as a mapping: `{ archive: { format: tar, split: 2GiB,
-    # files: [bin, lib], vendor: true } }`), `as-is`, `none`. The rules a
-    # single target owns (its name's shape and
-    # suffix, duplicate axis values, a per-platform environment's fit with
-    # its platforms) are Target's and surface from its constructor; the
-    # rules that span targets and commands are ProjectManifestLoader's.
+    # CommandParser does). One key per port, named for the port —
+    # `builder:` and `packager:` — and the value says how: a string is a
+    # script (a command line run at the project root), a built-in's name or
+    # a one-key mapping of that name to its options is the built-in. dev has
+    # no built-in builder yet; its packagers are `archive` (the default,
+    # `{ archive: { format: tar, split: 2GiB, files: [bin, lib], vendor:
+    # true } }` with options), `as-is` and `none`. `build:` and `package:`
+    # are the deprecated spellings of the two keys, read as them for one
+    # release (ProjectManifestLoader notes each once per load); a target
+    # spelling one port both ways is refused. The rules a single target
+    # owns (its name's shape and suffix, duplicate axis values, a
+    # per-platform environment's fit with its platforms) are Target's and
+    # surface from its constructor; the rules that span targets and
+    # commands are ProjectManifestLoader's.
     #
     # Stateless: reusable across manifests, inputs arrive as method arguments.
     class TargetParser
@@ -41,25 +46,34 @@ module Dev
       # name.
       class InvalidEnvironmentError < ArgumentError; end
 
-      # `build:` that is not a non-empty command line, or a `builder:` key,
-      # which no builder form takes.
+      # `builder:` that is not a script's non-empty command line — a
+      # mapping included, since dev has no built-in builder to name yet.
       class InvalidBuilderError < ArgumentError; end
 
-      # `package:` that is not a non-empty command line; `packager:` naming
-      # no built-in, or carrying options that are not the built-in's.
+      # `packager:` that is neither a script's non-empty command line nor a
+      # built-in: a mapping naming no built-in, or carrying options that
+      # are not the built-in's.
       class InvalidPackagerError < ArgumentError; end
 
-      # Both `package:` and `packager:` on one target: a target has one
-      # packager.
-      class ConflictingPackagerError < ArgumentError; end
+      # One port declared under both its key and its deprecated spelling
+      # (`builder:` beside `build:`, `packager:` beside `package:`): a
+      # target has one builder and one packager.
+      class ConflictingPortError < ArgumentError; end
 
       PLATFORMS_KEY = "platforms"
       CONFIGS_KEY = "configs"
       ENVIRONMENT_KEY = "environment"
-      BUILD_KEY = "build"
       BUILDER_KEY = "builder"
-      PACKAGE_KEY = "package"
       PACKAGER_KEY = "packager"
+      # The deprecated spellings, read as the port keys for one release
+      # (dev#692) and then removed.
+      BUILD_KEY = "build"
+      PACKAGE_KEY = "package"
+      # Port key → its deprecated spelling; what the loader's note lists.
+      DEPRECATED_PORT_KEYS = T.let(
+        { BUILDER_KEY => BUILD_KEY, PACKAGER_KEY => PACKAGE_KEY }.freeze,
+        T::Hash[String, String],
+      )
       ARCHIVE_NAME = "archive"
       AS_IS_NAME = "as-is"
       NONE_NAME = "none"
@@ -83,7 +97,7 @@ module Dev
       # @raise [InvalidAxisError]
       # @raise [InvalidBuilderError]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPackagerError]
+      # @raise [ConflictingPortError]
       # @raise [InvalidEnvironmentError]
       # @raise [Lifecycle::Target::InvalidTargetNameError]
       # @raise [Lifecycle::Target::ReservedTargetSuffixError]
@@ -97,7 +111,7 @@ module Dev
         raw.to_h do |name, entry|
           name = name.to_s
           unless entry.is_a?(Hash)
-            raise InvalidTargetError, "target '#{name}': expected a mapping (desc, platforms, configs, environment, build, package/packager)"
+            raise InvalidTargetError, "target '#{name}': expected a mapping (desc, platforms, configs, environment, builder, packager)"
           end
 
           [name, parse(name, entry)]
@@ -112,7 +126,7 @@ module Dev
       # @raise [InvalidAxisError]
       # @raise [InvalidBuilderError]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPackagerError]
+      # @raise [ConflictingPortError]
       # @raise [InvalidEnvironmentError]
       # @raise [Lifecycle::Target::InvalidTargetNameError]
       # @raise [Lifecycle::Target::ReservedTargetSuffixError]
@@ -135,69 +149,95 @@ module Dev
 
       private
 
-      # The builder declaration: `build: <command>`, or none.
+      # The builder declaration: `builder: <command>`, or none. A mapping is
+      # the built-in form, and dev has no built-in builder to name yet.
       #
       # @param name [String] the target, for messages
       # @param target_hash [TargetHash]
       # @return [Lifecycle::BuilderSpec, nil]
       # @raise [InvalidBuilderError]
+      # @raise [ConflictingPortError]
       sig { params(name: String, target_hash: TargetHash).returns(T.nilable(Lifecycle::BuilderSpec)) }
       def parse_builder(name, target_hash)
-        if target_hash.key?(BUILDER_KEY)
-          raise InvalidBuilderError,
-            "target '#{name}': `#{BUILDER_KEY}:` is not a builder form — " \
-              "declare a `#{BUILD_KEY}:` script"
-        end
-        return nil unless target_hash.key?(BUILD_KEY)
+        key = declared_port_key(name, target_hash, BUILDER_KEY)
+        return nil if key.nil?
 
-        Lifecycle::BuilderSpec::Script.new(command: command_line(name, BUILD_KEY, target_hash[BUILD_KEY], InvalidBuilderError))
+        raw = target_hash[key]
+        if raw.is_a?(Hash)
+          raise InvalidBuilderError,
+            "target '#{name}': `#{key}:` as a mapping names a built-in builder, and dev has none yet — " \
+              "a builder is a script (`#{key}: ./bin/build`)"
+        end
+
+        Lifecycle::BuilderSpec::Script.new(command: command_line(name, key, raw, InvalidBuilderError))
       end
 
-      # The packager declaration: `package: <command>`, `packager: <name>`
-      # or `packager: { <name>: { options } }`; dev's `archive` when neither.
+      # The packager declaration: `packager: <command>`, `packager: <name>`
+      # or `packager: { <name>: { options } }`; dev's `archive` when absent.
+      # A string naming a built-in is that built-in; any other string is a
+      # script.
       #
       # @param name [String] the target, for messages
       # @param target_hash [TargetHash]
       # @return [Lifecycle::PackagerSpec]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPackagerError]
+      # @raise [ConflictingPortError]
       sig { params(name: String, target_hash: TargetHash).returns(Lifecycle::PackagerSpec) }
       def parse_packager(name, target_hash)
-        if target_hash.key?(PACKAGE_KEY) && target_hash.key?(PACKAGER_KEY)
-          raise ConflictingPackagerError,
-            "target '#{name}': declares both `#{PACKAGE_KEY}:` and `#{PACKAGER_KEY}:` — a target has one packager; keep the script or the built-in"
-        end
-        if target_hash.key?(PACKAGE_KEY)
-          return Lifecycle::PackagerSpec::Script.new(
-            command: command_line(name, PACKAGE_KEY, target_hash[PACKAGE_KEY], InvalidPackagerError),
-          )
-        end
-        return Lifecycle::PackagerSpec::Archive.new unless target_hash.key?(PACKAGER_KEY)
+        key = declared_port_key(name, target_hash, PACKAGER_KEY)
+        return Lifecycle::PackagerSpec::Archive.new if key.nil?
 
-        builtin_packager(name, target_hash[PACKAGER_KEY])
+        raw = target_hash[key]
+        case raw
+        when Hash then builtin_packager(name, key, raw)
+        when String
+          return builtin_packager(name, key, { raw => {} }) if Lifecycle::PackagerSpec::BUILTIN_NAMES.include?(raw)
+
+          Lifecycle::PackagerSpec::Script.new(command: command_line(name, key, raw, InvalidPackagerError))
+        else
+          raise InvalidPackagerError,
+            "target '#{name}': `#{key}:` is a script's command line, a built-in's name " \
+              "(#{Lifecycle::PackagerSpec::BUILTIN_NAMES.join(", ")}) or a mapping of one built-in's name to its options, " \
+              "got #{raw.inspect}"
+        end
+      end
+
+      # The key one port is declared under — its own, or the deprecated
+      # spelling the loader notes — or nil when the target leaves the port
+      # undeclared. Both at once is refused: a target has one of each port.
+      #
+      # @param name [String] the target, for messages
+      # @param target_hash [TargetHash]
+      # @param key [String] BUILDER_KEY or PACKAGER_KEY
+      # @return [String, nil] the key present in the entry
+      # @raise [ConflictingPortError]
+      sig { params(name: String, target_hash: TargetHash, key: String).returns(T.nilable(String)) }
+      def declared_port_key(name, target_hash, key)
+        deprecated_key = DEPRECATED_PORT_KEYS.fetch(key)
+        declared = [key, deprecated_key].select { |candidate| target_hash.key?(candidate) }
+        return declared.first unless declared.size == 2
+
+        raise ConflictingPortError,
+          "target '#{name}': declares both `#{deprecated_key}:` and `#{key}:` — a target has one #{key}; " \
+            "`#{deprecated_key}:` is the deprecated spelling of `#{key}:`, so keep one"
       end
 
       # @param name [String] the target, for messages
-      # @param raw [Object] the `packager:` value: a built-in's name, or a
-      #   one-key mapping of a built-in's name to its options
+      # @param key [String] the key the packager is declared under, for messages
+      # @param raw [Hash] the built-in form: a one-key mapping of a
+      #   built-in's name to its options
       # @return [Lifecycle::PackagerSpec]
       # @raise [InvalidPackagerError]
-      sig { params(name: String, raw: T.untyped).returns(Lifecycle::PackagerSpec) }
-      def builtin_packager(name, raw)
-        packager_name, options = case raw
-        when String then [raw, {}]
-        when Hash
-          unless raw.size == 1 && raw.values.first.is_a?(Hash)
-            raise InvalidPackagerError,
-              "target '#{name}': `#{PACKAGER_KEY}:` as a mapping is one built-in's name to its options " \
-                "(`{ #{ARCHIVE_NAME}: { #{ARCHIVE_FORMAT_KEY}: tar, #{ARCHIVE_SPLIT_KEY}: 2GiB } }`), got #{raw.inspect}"
-          end
-
-          [raw.keys.first.to_s, raw.values.first]
-        else
-          raise InvalidPackagerError, "target '#{name}': `#{PACKAGER_KEY}:` must be a built-in's name or a mapping, got #{raw.inspect}"
+      sig { params(name: String, key: String, raw: T::Hash[T.untyped, T.untyped]).returns(Lifecycle::PackagerSpec) }
+      def builtin_packager(name, key, raw)
+        unless raw.size == 1 && raw.values.first.is_a?(Hash)
+          raise InvalidPackagerError,
+            "target '#{name}': `#{key}:` as a mapping is one built-in's name to its options " \
+              "(`{ #{ARCHIVE_NAME}: { #{ARCHIVE_FORMAT_KEY}: tar, #{ARCHIVE_SPLIT_KEY}: 2GiB } }`), got #{raw.inspect}"
         end
 
+        packager_name = raw.keys.first.to_s
+        options = raw.values.first
         case packager_name
         when ARCHIVE_NAME
           Lifecycle::PackagerSpec::Archive.new(
@@ -318,10 +358,10 @@ module Dev
         raise InvalidPackagerError, "target '#{name}': #{packager_name} takes no options, got #{options.keys.join(", ")}"
       end
 
-      # A `build:`/`package:` value: a non-empty string.
+      # A port's script form: a non-empty string.
       #
       # @param name [String] the target, for messages
-      # @param key [String] BUILD_KEY or PACKAGE_KEY
+      # @param key [String] the key the port is declared under, for messages
       # @param raw [Object]
       # @param error_class [Class] InvalidBuilderError or InvalidPackagerError
       # @return [String]

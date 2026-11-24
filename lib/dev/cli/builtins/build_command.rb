@@ -30,7 +30,7 @@ module Dev
       # for a remote host) and the env for a seam that runs here; the seam
       # is the builder, writing the install into the store's directory for
       # the build (`DEV_INSTALL`); `after` reports it. A target with no
-      # `build:` has the checkout's tracked files as its install (the
+      # `builder:` has the checkout's tracked files as its install (the
       # identity builder), so every target builds.
       class BuildCommand < LifecycleCommand
         extend T::Sig

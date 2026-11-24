@@ -8,7 +8,7 @@ require "dev/terminal_owner"
 module Dev
   module Lifecycle
     # The process boundary of the lifecycle's tool invocations: a target's
-    # `build:`/`package:` script at the project root, and the archive
+    # `builder:`/`packager:` script at the project root, and the archive
     # pipelines (`tar | zstd | split`). Always spawn-and-wait, since a stage
     # has work after its seam. Returns the child's status so the caller's
     # error can carry the exit code.

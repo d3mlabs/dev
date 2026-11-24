@@ -9,7 +9,7 @@ require_relative "git"
 
 module Dev
   module Lifecycle
-    # The identity builder: what a target with no `build:` gets. Its install
+    # The identity builder: what a target with no `builder:` gets. Its install
     # is the checkout itself — the tracked files, as the working tree holds
     # them, copied into the stage with their modes and symlinks kept. Only
     # tracked files: what is ignored or untracked (`coverage/`, `vendor/`,
@@ -81,7 +81,7 @@ module Dev
         nil
       end
 
-      # What `dev help` renders for a target with no `build:` line.
+      # What `dev help` renders for a target with no `builder:`.
       sig { returns(String) }
       def to_s
         NAME
@@ -99,7 +99,7 @@ module Dev
       def tracked_files
         unless @git.succeeds?(["rev-parse", "--is-inside-work-tree"])
           raise NotACheckoutError,
-            "#{@project_root} is not a git checkout, so a target with no `build:` has no tracked files to stage"
+            "#{@project_root} is not a git checkout, so a target with no `builder:` has no tracked files to stage"
         end
 
         @git.capture(["ls-files", "-z"]).split("\0").map { |path| Pathname(path) }

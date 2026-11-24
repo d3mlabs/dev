@@ -19,10 +19,10 @@ module Dev
     # in. Each declared axis contributes one segment to the names of the
     # target's builds; a target declaring neither is its own single build.
     #
-    # Also declares how its builds are made: a builder (`build:`; none for a
-    # target whose install is the checkout's tracked files) and a packager
-    # (`package:` or `packager:`; `archive` unless declared, `none` for a
-    # target that is built and never shipped).
+    # Also declares how its builds are made: a builder (`builder:`; none for
+    # a target whose install is the checkout's tracked files) and a packager
+    # (`packager:`; `archive` unless declared, `none` for a target that is
+    # built and never shipped).
     #
     # Owns the rule that keeps the build grammar unambiguous: a target name
     # may not end in a platform or config id. Owns the fit between its
@@ -56,7 +56,7 @@ module Dev
       # In declaration order: the first is the default `build` picks.
       const :platforms, T::Array[Platform], default: []
       const :configs, T::Array[Config], default: []
-      # nil: no `build:` — the checkout's tracked files are the install.
+      # nil: no `builder:` — the checkout's tracked files are the install.
       const :builder, T.nilable(BuilderSpec), default: nil
       const :packager, PackagerSpec, factory: -> { PackagerSpec::Archive.new }
       # Where the builds run, as declared; nil leaves it to the project's
@@ -120,7 +120,7 @@ module Dev
         end
       end
 
-      # Whether the target declares a `build:` line; one that does not is
+      # Whether the target declares a `builder:`; one that does not is
       # still built, its install being the checkout's tracked files.
       #
       # @return [Boolean]

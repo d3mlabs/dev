@@ -45,7 +45,7 @@ class Dev::OwnTargetsTest < Minitest::Test
     Open3.capture2("unzip", "-Z1", packed.archive.to_s).first.lines.map(&:chomp).sort
   end
 
-  test "neither target declares a build: script — the checkout is the stage and files: selects what ships" do
+  test "neither target declares a builder: — the checkout is the stage and files: selects what ships" do
     Expect
     @targets.keys == ["dev-core", "dev"]
     @targets.values.none?(&:buildable?)

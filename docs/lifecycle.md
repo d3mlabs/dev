@@ -43,8 +43,8 @@ target gets by declaring nothing, which hands the input through unchanged.
 
 | Stage | Input → output | Built-ins | Escape hatch | Identity |
 | --- | --- | --- | --- | --- |
-| build | the checkout → the install | — | `build: <command>` | no `build:` — the checkout's tracked files are the install |
-| package | the install → the archive | `archive`, `as-is`, `none` | `package: <command>` | `as-is` — the one file the install holds is the archive |
+| build | the checkout → the install | — | `builder: <command>` | no `builder:` — the checkout's tracked files are the install |
+| package | the install → the archive | `archive`, `as-is`, `none` | `packager: <command>` | `as-is` — the one file the install holds is the archive |
 | deploy | the archive → the destination | the lock's publishers, `gh` | `run: <command>` | — |
 
 ## Naming a build
@@ -85,10 +85,10 @@ only the shippable ones (every target but `packager: none`).
 dev build [BUILD] [--target T] [--platform P] [--config C] [--runner L | --container]
 ```
 
-Runs the target's `build:` script at the repo root with the build in its
+Runs the target's `builder:` script at the repo root with the build in its
 environment ([the build script's environment](dev-yml.md#the-build-scripts-environment))
 and `DEV_INSTALL` naming `<store>/<build>/install/`. A target with no
-`build:` has the checkout as its install: `dev build rspock` copies the
+`builder:` has the checkout as its install: `dev build rspock` copies the
 checkout's tracked files (`git ls-files`, so nothing ignored or
 untracked — `coverage/`, `vendor/`, a nested checkout — ever reaches the
 install) into the same directory, modes and symlinks kept, and
@@ -114,7 +114,7 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
 
 1. A target declaring `packager: none` is refused by name: it is built,
    never packaged.
-2. The builder runs — the `build:` script, or the checkout copy for a
+2. The builder runs — the `builder:` script, or the checkout copy for a
    target without one — unless `--no-build` was given or the store's
    artifact is **current**: packaged from a clean tree at the commit the
    tree is at now. A dirty tree is never current, so an uncommitted
@@ -122,7 +122,7 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
 3. The packager writes `<build>.<ext>` beside the install: `archive`
    zips the install (or writes `.tar.zst`, split into parts with a
    `MANIFEST` when asked); `as-is` adopts the one file the install holds;
-   a `package:` script writes whatever it writes at `$DEV_ARTIFACT.<ext>`.
+   a `packager:` script writes whatever it writes at `$DEV_ARTIFACT.<ext>`.
    See [Packagers](dev-yml.md#packagers).
 4. `build-id.json` is stamped last, so a failure anywhere above leaves no
    manifest and the directory does not read as an artifact:
@@ -756,7 +756,7 @@ read by older devs](dev-yml.md#devyml-is-read-by-older-devs)).
 
 | Verb | Needs | When missing |
 | --- | --- | --- |
-| `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches; for a target with no `build:`, a git checkout to take the tracked files from | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`); a project root outside git is refused for a target with no `build:` |
+| `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches; for a target with no `builder:`, a git checkout to take the tracked files from | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`); a project root outside git is refused for a target with no `builder:` |
 | `package` | a current build | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store; a channel; the channel's environment; a protocol; to record, a repo `gh` reaches with `deployments: write` | "`dev package <build>` first"; a channel exists or `deploy` does not; a channel with no protocol is refused at load with both fixes; a record the forge refuses fails after the shipped lines |
 | `deploy <channel> --release V` | release `V` cut, carrying an archive of each accepted build; `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused; a download whose digest is not `release.json`'s is removed and refused |

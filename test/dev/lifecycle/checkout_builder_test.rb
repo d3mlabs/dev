@@ -142,7 +142,7 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
 
     Then
     error = raises Dev::Lifecycle::CheckoutBuilder::NotACheckoutError
-    error.message == "#{@project} is not a git checkout, so a target with no `build:` has no tracked files to stage"
+    error.message == "#{@project} is not a git checkout, so a target with no `builder:` has no tracked files to stage"
   end
 
   test "the builder's traits: named checkout for the manifest and for help, no version, no target options" do

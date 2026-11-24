@@ -164,7 +164,7 @@ module Dev
 
         raise NotAGemError,
           "channel '#{channel}' uploads gems, and #{shipment.name}'s archive is #{shipment.archive.basename} — give its " \
-            "target a packager that produces a .gem (`packager: as-is` over a `build:` running `gem build`)"
+            "target a packager that produces a .gem (`packager: as-is` over a `builder:` running `gem build`)"
       end
 
       # @param shipment [Lifecycle::Shipment]

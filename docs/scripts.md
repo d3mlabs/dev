@@ -70,5 +70,5 @@ Ruby's own gem directory, set in-process and never exported, so the
 caller's gem environment cannot misdirect dev and dev's gems never leak
 into a child.
 
-Scripts under `build:`, `package:` and a channel's `run:` read their
+Scripts under a target's `builder:` and `packager:` and a channel's `run:` read their
 parameters from `DEV_*` variables; see [dev.yml](dev-yml.md#the-build-scripts-environment).

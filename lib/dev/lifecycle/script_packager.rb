@@ -10,7 +10,7 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The script form of the Packager port: the target's `package:` line,
+    # The script form of the Packager port: the target's `packager:` script,
     # run at the project root with the build, the install and `DEV_ARTIFACT`
     # (the archive path without its extension) in its env. The script
     # appends the extension of whatever it writes. What it wrote is read
@@ -27,11 +27,11 @@ module Dev
       # The script exited 0 and wrote no `<archive>.*` file.
       class NothingPackagedError < RuntimeError; end
 
-      # @return [String] the `package:` line as declared
+      # @return [String] the `packager:` command line as declared
       sig { returns(String) }
       attr_reader :command
 
-      # @param command [String] the target's `package:` line, a shell command
+      # @param command [String] the target's `packager:` script, a shell command
       # @param project_root [Pathname] where the script runs
       # @param shell [Shell]
       sig { params(command: String, project_root: Pathname, shell: Shell).void }
