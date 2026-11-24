@@ -17,6 +17,7 @@ require "dev/cli/placement"
 require "dev/settings"
 require "dev/cli/target_placement"
 require "fileutils"
+require "open3"
 require "pathname"
 require "stringio"
 require "support/scripted_remote"
@@ -59,6 +60,14 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
   def teardown
     FileUtils.rm_rf(@root)
     super
+  end
+
+  # Turn the project into a checkout tracking what it holds now.
+  def commit_project
+    git = ["git", "-C", @project.to_s, "-c", "user.name=t", "-c", "user.email=t@t"]
+    Open3.capture2e(*git, "init", "-q")
+    Open3.capture2e(*git, "add", ".")
+    Open3.capture2e(*git, "commit", "-q", "-m", "one")
   end
 
   def client
@@ -149,13 +158,27 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     ["cellbound-3d", "--platform", "linux64"]           | "cellbound-3d-linux64-dev"
   end
 
-  test "a target with no build: has nothing to compile: the verb says so and touches nothing" do
+  test "a target with no build: has the checkout as its install: the tracked files fill the stage, untracked ones never do (dev#674)" do
+    Given "a checkout tracking the build script, with an untracked file beside it"
+    commit_project
+    (@project / "untracked.txt").write("never ships")
+
     When
     execute(command, "rspock")
 
     Then
-    @out.string == "rspock: nothing to build (target 'rspock' declares no `build:`)\n"
-    !store.install_dir(Dev::Lifecycle::Build.parse("rspock", targets)).exist?
+    install = store.install_dir(Dev::Lifecycle::Build.parse("rspock", targets))
+    @out.string == "built rspock → #{install}\n"
+    install.children.map { |child| child.basename.to_s } == ["build.sh"]
+  end
+
+  test "a target with no build: outside a git checkout is refused: there are no tracked files to stage" do
+    When
+    execute(command, "rspock")
+
+    Then
+    raises Dev::Lifecycle::CheckoutBuilder::NotACheckoutError
+    @out.string == ""
   end
 
   test "a builder that fails short-circuits the report: the error bubbles" do

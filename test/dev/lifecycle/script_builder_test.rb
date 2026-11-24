@@ -44,6 +44,26 @@ class Dev::Lifecycle::ScriptBuilderTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "the stage is fresh before the script runs: one that writes nothing leaves a previous build's files gone" do
+    Given "a stage holding a previous build's files, and a script that stages nothing"
+    root = Pathname(Dir.mktmpdir("script-builder-"))
+    install = root / "store/rspock/install"
+    (install / "nested").mkpath
+    (install / "nested/old.txt").write("from the previous build")
+    (install / "old.gem").write("stale")
+    builder = Dev::Lifecycle::ScriptBuilder.new(command: "true", project_root: root)
+
+    When
+    builder.build(build("rspock"), install)
+
+    Then
+    install.directory?
+    install.children == []
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "a script that refuses the build (`*) exit 2`) fails loudly, naming the script, the build and the exit code" do
     Given
     root = Pathname(Dir.mktmpdir("script-builder-"))

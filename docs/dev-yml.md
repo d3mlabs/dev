@@ -123,7 +123,7 @@ targets:
 | `platforms` | Subset of `win64`, `linux64`, `macos`. First is the default. |
 | `configs` | Subset of `debug`, `dev`, `release`. First is the default. |
 | `environment` | One value for every build, or one per platform (`{ linux64: img, macos: host }`, naming exactly the target's platforms). Same values as a command's. Omitted: the project's default, as for a command. |
-| `build` | Shell command that produces the **install** — the runnable, staged output — into `$DEV_INSTALL`. Omitted: nothing to compile; `package` runs alone. |
+| `build` | Shell command that produces the **install** — the runnable, staged output — into `$DEV_INSTALL`. Omitted: the checkout's tracked files are the install (`git ls-files`; nothing ignored or untracked ships). |
 | `package` | Shell command that turns the install into the **archive** at `$DEV_ARTIFACT` plus the extension it writes. Exclusive with `packager`. |
 | `packager` | A built-in packager. Default `archive`. See below. |
 
@@ -172,7 +172,7 @@ never from flags:
 |---|---|
 | `DEV_TARGET` | always |
 | `DEV_PLATFORM`, `DEV_CONFIG` | the target declares that axis |
-| `DEV_INSTALL` | always; the install directory, created before the script runs |
+| `DEV_INSTALL` | always; the install directory, emptied and recreated before a `build:` script runs — a previous build's files are never there to clear |
 | `DEV_ARTIFACT` | `package:` only; the archive path **without** its extension |
 
 Map dev's ids to the toolchain's switches in the script (`dev → Development`,

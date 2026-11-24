@@ -41,14 +41,13 @@ module Dev
       end
 
       # @param build [Build]
-      # @param install [Pathname] created if absent, then handed to the
-      #   script as `DEV_INSTALL`
+      # @param install [Pathname] the fresh stage, handed to the script as
+      #   `DEV_INSTALL`
       # @return [void]
       # @raise [BuildScriptFailedError]
       # @raise [Shell::SpawnError]
       sig { override.params(build: Build, install: Pathname).void }
-      def build(build, install)
-        install.mkpath
+      def fill(build, install)
         status = @shell.run(["sh", "-c", @command], chdir: @project_root, env: ScriptEnv.for_build(build, install:))
         return if status.success?
 

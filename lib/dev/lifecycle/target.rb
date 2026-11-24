@@ -20,9 +20,9 @@ module Dev
     # target's builds; a target declaring neither is its own single build.
     #
     # Also declares how its builds are made: a builder (`build:`; none for a
-    # target with nothing to compile) and a packager (`package:` or
-    # `packager:`; `archive` unless declared, `none` for a target that is
-    # built and never shipped).
+    # target whose install is the checkout's tracked files) and a packager
+    # (`package:` or `packager:`; `archive` unless declared, `none` for a
+    # target that is built and never shipped).
     #
     # Owns the rule that keeps the build grammar unambiguous: a target name
     # may not end in a platform or config id. Owns the fit between its
@@ -56,7 +56,7 @@ module Dev
       # In declaration order: the first is the default `build` picks.
       const :platforms, T::Array[Platform], default: []
       const :configs, T::Array[Config], default: []
-      # nil: nothing to compile — `build` is a no-op and `package` runs alone.
+      # nil: no `build:` — the checkout's tracked files are the install.
       const :builder, T.nilable(BuilderSpec), default: nil
       const :packager, PackagerSpec, factory: -> { PackagerSpec::Archive.new }
       # Where the builds run, as declared; nil leaves it to the project's
@@ -67,7 +67,7 @@ module Dev
       # @param desc [String]
       # @param platforms [Array<Platform>] the declared subset, first = default
       # @param configs [Array<Config>] the declared subset, first = default
-      # @param builder [BuilderSpec, nil] how the install is made; nil for nothing to compile
+      # @param builder [BuilderSpec, nil] how the install is made; nil for the checkout's tracked files
       # @param packager [PackagerSpec] how the install becomes the archive; dev's `archive` by default
       # @param environment [TargetEnvironment, nil] where the builds run; nil = the project's default
       # @raise [InvalidTargetNameError]
@@ -120,7 +120,8 @@ module Dev
         end
       end
 
-      # Whether the target has something to compile (`build:` declared).
+      # Whether the target declares a `build:` line; one that does not is
+      # still built, its install being the checkout's tracked files.
       #
       # @return [Boolean]
       sig { returns(T::Boolean) }

@@ -30,8 +30,8 @@ module Dev
       # for a remote host) and the env for a seam that runs here; the seam
       # is the builder, writing the install into the store's directory for
       # the build (`DEV_INSTALL`); `after` reports it. A target with no
-      # `build:` has nothing to compile — the verb says so and does nothing,
-      # so `package` can run alone over it.
+      # `build:` has the checkout's tracked files as its install (the
+      # identity builder), so every target builds.
       class BuildCommand < LifecycleCommand
         extend T::Sig
 
@@ -41,8 +41,7 @@ module Dev
         class BuildEnv < T::Struct
           const :build, Lifecycle::Build
           const :install, Pathname
-          # nil: the target declares nothing to compile
-          const :builder, T.nilable(Lifecycle::Builder)
+          const :builder, Lifecycle::Builder
         end
 
         Env = type_member { { fixed: BuildEnv } }
@@ -114,17 +113,13 @@ module Dev
         sig { override.params(env: BuildEnv, context: ExecutionContext).void }
         def seam(env, context:)
           _ = context
-          env.builder&.build(env.build, env.install)
+          env.builder.build(env.build, env.install)
         end
 
         sig { override.params(env: BuildEnv, context: ExecutionContext).void }
         def after(env, context:)
           _ = context
-          if env.builder
-            @out.puts "built #{env.build} → #{env.install}"
-          else
-            @out.puts "#{env.build}: nothing to build (target '#{env.build.target}' declares no `build:`)"
-          end
+          @out.puts "built #{env.build} → #{env.install}"
         end
       end
     end
