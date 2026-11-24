@@ -274,7 +274,11 @@ module Dev
             follows no stream has no hook; re-running register removes a stale one.
 
             Scope follows the checkout: without --org the slots are this repo's — its
-            jobs through any of its workflows, no runner group — for every role. --org
+            jobs through any of its workflows, no runner group — for every role, a
+            grouped one included (its group is its org-scope reach; a repo has no
+            runner groups). --repo a/b enrolls for that repo instead: a declared role
+            keeps its own project's pins and stream (ai-flow's agent for a repo's
+            editor lane, say); the slots are a/b's. --org
             puts them at the repo's org: a declared role with a group joins it (the group
             carries the workflow pin), --labels makes a custom set an org pool in a
             human's --group. A declared role without a group is always its repo's. A
@@ -444,7 +448,10 @@ module Dev
           # --org is told what it is missing rather than what gh could not
           # resolve.
           resolve_repo = memoized { @repo_resolver.call(args.value(REPO_FLAG)) }
-          role = resolve_role(args, context, resolve_repo)
+          # The declaring checkout's repo: the same answer without --repo,
+          # the checkout's own under it.
+          declaring_repo = args.value(REPO_FLAG) ? memoized { @repo_resolver.call(nil) } : resolve_repo
+          role = resolve_role(args, context, resolve_repo, declaring_repo)
           repo = resolve_repo.call
           repository = @registry.repository(repo)
           org = resolve_org(args, repository)
@@ -1074,13 +1081,18 @@ module Dev
         # @param args [Cli::ParsedArgs]
         # @param context [Dev::Cli::ExecutionContext]
         # @param resolve_repo [Proc] derives the repo this registration is for, asked only when the role derives from it
+        # @param declaring_repo [Proc] derives the enclosing checkout's repo — the one a declared role binds to
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError] on an underivable or contradictory request
         # @raise [Dev::EnrolledRunner::MalformedRepoError] when the repo (`--repo`) is not an owner/repo
         # @raise [Dev::RunnerSetup::Error] when gh cannot resolve the checkout
         # @raise [Dev::RunnerRole::DeclarationError] when a declared role pins workflows and the checkout keeps no semver VERSION
-        sig { params(args: Cli::ParsedArgs, context: ExecutionContext, resolve_repo: T.proc.returns(String)).returns(RunnerRole) }
-        def resolve_role(args, context, resolve_repo)
+        sig do
+          params(
+            args: Cli::ParsedArgs, context: ExecutionContext, resolve_repo: T.proc.returns(String), declaring_repo: T.proc.returns(String),
+          ).returns(RunnerRole)
+        end
+        def resolve_role(args, context, resolve_repo, declaring_repo)
           org = args.flag?(ORG_FLAG)
           named_role = args.value(ROLE_FLAG)
           explicit = args.value(LABELS_FLAG)
@@ -1093,7 +1105,7 @@ module Dev
               raise ArgumentError,
                 "#{ROLE_FLAG} #{named_role} declares the labels — drop #{explicit ? LABELS_FLAG : AI_FLOW_FLAG}"
             end
-            declared_role(named_role, context, org, resolve_repo)
+            declared_role(named_role, context, org, declaring_repo)
           elsif ai_flow
             if explicit
               raise ArgumentError,
@@ -1125,7 +1137,10 @@ module Dev
             raise ArgumentError,
               "the #{role.name} role sits in the '#{T.must(role.group).name}' runner group (pinned to its project's workflows) — drop #{GROUP_FLAG} #{group}"
           end
-          role
+          # Without --org the slots are this repo's, for every role: a
+          # declared role's group is its org-scope reach, and a repo has no
+          # runner groups for config.sh to name (RunnerRole#at_repo_scope).
+          org ? role : role.at_repo_scope
         end
 
         # An alias resolved: the role it stands for, after the warning that
@@ -1142,8 +1157,10 @@ module Dev
         end
 
         # The role `--role` names: the checkout's dev.yml declaration, bound
-        # to the repo this registration is for and the checkout's series —
-        # and, when the checkout deploys through gh, to its stream there.
+        # to the declaring checkout's own repo and series — its workflow
+        # pins and, when it deploys through gh, its stream are the
+        # project's, whichever repo the registration serves (`--repo`
+        # enrolls this project's role for another repo's lane).
         # A declared role without a group is its repo's — org scope needs a
         # group to fix the slots' reach — and `--org` is refused for it.
         # Whether the checkout deploys through gh is read from its channels,
@@ -1153,13 +1170,13 @@ module Dev
         # @param name [String]
         # @param context [Dev::Cli::ExecutionContext]
         # @param org [Boolean] `--org`
-        # @param resolve_repo [Proc] the repo this registration is for
+        # @param declaring_repo [Proc] the enclosing checkout's repo
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError]
         # @raise [RoleStreamUnreadableError]
         # @raise [Dev::RunnerRole::DeclarationError]
-        sig { params(name: String, context: ExecutionContext, org: T::Boolean, resolve_repo: T.proc.returns(String)).returns(RunnerRole) }
-        def declared_role(name, context, org, resolve_repo)
+        sig { params(name: String, context: ExecutionContext, org: T::Boolean, declaring_repo: T.proc.returns(String)).returns(RunnerRole) }
+        def declared_role(name, context, org, declaring_repo)
           project = context.project
           declaration = project&.runner_roles&.fetch(name, nil)
           unless declaration
@@ -1176,7 +1193,7 @@ module Dev
           end
 
           role = declaration.bind(
-            repo: resolve_repo.call,
+            repo: declaring_repo.call,
             version: Lifecycle::ProjectVersion.declared(T.must(project).root),
             channels: T.must(project).channels,
           )

@@ -1189,10 +1189,11 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     When
     harness.command.call(args: parsed_args(harness.command, ["--ai-flow"]), context: harness.projectless_context)
 
-    Then "repo scope, the agent labels, the agent host contract converged, nothing written to any group"
+    Then "repo scope, the agent labels, the agent host contract converged, no group for config.sh, nothing written to any group"
     config, _repo, org, _as, _ui = harness.wirings.last
     org == false
-    config.role == Dev::RunnerRoleAliases::AGENT
+    config.role == Dev::RunnerRoleAliases::AGENT.at_repo_scope
+    config.group.nil?
     registry.group_writes == []
     harness.events == [[:converge], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
   end
@@ -1391,6 +1392,33 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.identities == [["ue-builder", nil, harness.ui]]
     harness.events == [[:converge], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
     harness.ui.rows.none? { |_kind, text, _depth| text.include?("alias") }
+  end
+
+  test "--role <grouped> without --org enrolls at the repo with no runner group — a repo has none for config.sh to find — keeping the role's labels, identity and stream" do
+    Given "ai-flow's grouped agent role, registered for another repo's own lane (--repo), from the ai-flow checkout deployed through gh"
+    agent = Dev::RunnerRole::Declaration.new(
+      name: "agent", labels: %w[ai-ask ai-build], group: "ai-flow", workflows: [".github/workflows/ai-commands.yml"], job_identity: "ai-agent",
+    )
+    registry = FakeRegistry.new(refused: ["d3mlabs"])
+    harness = build_harness(registry: registry, scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/ai-flow", hostname: "mac1")
+    context = harness.build_context(
+      name: "ai-flow", root: declaring_checkout(version: "1.0.0"), runner_roles: { "agent" => agent }, channels: GH_CHANNELS,
+    )
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent", "--repo", "d3mlabs/cellbound-3d"]), context: context)
+
+    Then "repo scope; the config names no group; labels, identity and the ai-flow stream are the role's; nothing written to any group"
+    config, _repo, org = harness.wirings.fetch(0)
+    org == false
+    config.group.nil?
+    config.role.group.nil?
+    !config.role.org_scoped?
+    config.role.labels == %w[ai-ask ai-build]
+    config.role.job_identity == "ai-agent"
+    config.role.stream == Dev::Stream.parse("d3mlabs/ai-flow@gh ~> 1")
+    registry.group_writes == []
+    harness.identities == [["ai-agent", nil, harness.ui]]
   end
 
   # dev#658: a declared role of a project deployed through gh anchors its
