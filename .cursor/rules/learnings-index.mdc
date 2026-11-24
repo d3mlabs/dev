@@ -102,6 +102,11 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  designation) is a `Lifecycle::Publisher` hook with a default that the
  differing publisher overrides, and the verb asks every publisher.
  → .cursor/skills/learnings/destination-fact-is-a-publisher-hook/
+- [architecture/port-identity-form] A lifecycle stage a target may leave
+ undeclared gets an identity implementation (`CheckoutBuilder`, `as-is`),
+ never a nil port the verbs branch on; a precondition of the stage (the
+ install is fresh) is the port's one rule, not each script's.
+ → .cursor/skills/learnings/port-identity-form/
 
 ## toolchain
 
