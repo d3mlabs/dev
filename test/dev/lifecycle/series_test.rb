@@ -41,6 +41,38 @@ class Dev::Lifecycle::SeriesTest < Minitest::Test
     ""
   end
 
+  test "a series tag is v and a bare major, and names that series: #{tag.inspect}" do
+    Expect
+    Dev::Lifecycle::Series.tag?(tag)
+    Dev::Lifecycle::Series.of_tag(tag) == Dev::Lifecycle::Series.new(major)
+    Dev::Lifecycle::Series.of_tag(tag).to_s == tag
+
+    Where
+    tag   | major
+    "v0"  | 0
+    "v1"  | 1
+    "v12" | 12
+  end
+
+  test "a tag that is not a series tag names no series: #{tag.inspect}" do
+    When
+    Dev::Lifecycle::Series.of_tag(tag)
+
+    Then
+    error = raises Dev::Lifecycle::Series::NotASeriesTagError
+    error.message == "#{tag.inspect} is not a series tag (v<major>)"
+    !Dev::Lifecycle::Series.tag?(tag)
+
+    Where
+    tag
+    "v1.2.0"
+    "1"
+    "V1"
+    "latest"
+    "v1-rc"
+    ""
+  end
+
   test "a series is a major, zero or more" do
     When
     Dev::Lifecycle::Series.new(-1)

@@ -101,7 +101,7 @@ takes none or that version.
 | `gem "name" [, "req"]` | A gem. The requirement is written into the generated `Gemfile` as is; dev generates `Gemfile.lock`. A group becomes a bundler group. Other keywords (`require:`, `git:`) are gem options. | `bundle install` |
 | `brew "name" [, "req"] [, version:]` | A formula, chosen among the versions brew publishes for it and its `name@N` siblings. `brew "llvm", "~> 18.0"`, `brew "llvm", version: "18"` and `brew "llvm@18"` are the same declaration. `cask: true` declares a cask by its whole name (`brew "temurin@21", cask: true`), which takes no requirement. | `brew install` at the locked version |
 | `tap "owner/repo" [, url:]` | A tap formulae may come from. | `brew tap` |
-| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is installed self-contained ([below](#self-contained-trees)). | download into the store |
+| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. A requirement that names whole series (`"~> 1"`, `">= 1, < 2"`, `">= 1"`) resolves through the repo's **series head** where it keeps one — the version the series tag `v<major>` points at, what `dev deploy gh` moves and an adopter's `@v1` resolves — and to the greatest satisfying tag where it keeps none; a bound inside a series (`">= 1.4"`) is always the greatest satisfying tag ([Series heads](#series-heads)). `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is installed self-contained ([below](#self-contained-trees)). | download into the store |
 | `cmake "name" [, "req"], github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. `tag:` and `branch:` name a ref; a requirement ranges over the repo's version tags; `commit:` is a full 40-hex SHA. | checkout into the store |
 | `luarocks "name" [, "req"]` | A rock. Transitive deps resolved by luarocks at install. | `luarocks install` |
 | `pip "name" [, "req"]` | A package in the project venv; `~>` reads as pip's `~=`. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
@@ -231,11 +231,47 @@ header names it as re-resolved on every update, as does `dev deps check`.
 
 The output names every pin that moved; under `update <name>` each move
 beyond the names given carries its cause (`declaration changed`, or that
-the lock records no source for the old pin). It also warns per brew
-formula the image build would compile from source because its tap ships
-no `x86_64_linux` bottle. When `brew update` fails (offline, a prefix this
-user cannot write) the update warns and resolves against the index brew
-has.
+the lock records no source for the old pin). A move on a channel that
+keeps series heads says which rule chose the version — `series head v1 →
+1.3.0` (the version as the repo's tags spell it), or `greatest
+satisfying` ([Series heads](#series-heads)). It
+also warns per brew formula the image build would compile from source
+because its tap ships no `x86_64_linux` bottle. When `brew update` fails
+(offline, a prefix this user cannot write) the update warns and resolves
+against the index brew has.
+
+### Series heads
+
+A channel whose store keeps a movable pointer per series — a gh repo's
+`v1`, `v2` tags, moved by `dev deploy gh` ([lifecycle.md](lifecycle.md#gh))
+— has a **head** per series: the release the pointer names. A
+requirement that covers whole series and nothing finer is
+**series-shaped**: `~> 1` and `>= 1, < 2` name series 1; `>= 1` names
+every series from 1 on. On such a channel a series-shaped requirement
+resolves to the head of the newest series it covers that has one — the
+version *and* the commit `v<major>` points at — so the lock follows the
+same pointer an adopter's `uses: …@v1` follows. Rolling a deploy back
+(`dev deploy gh --release 1.3.0` while 1.4.0 is cut) moves `v1`, and the
+next `dev deps update` locks 1.3.0 again; nothing re-locks the version
+the operator just rolled away from.
+
+Where the covered series have no pointer — a repo with no series tags,
+a series released but never deployed — the requirement resolves as every
+requirement does on a derived channel: the greatest satisfying version.
+A requirement with a bound inside a series (`>= 1.4`, `~> 1.2`) names
+versions, not series, and is the greatest satisfying version on every
+channel; `tag:` and `sha:` are exact. `dev deps update` says which rule
+chose each moved pin:
+
+```
+dev: moved ai-flow 1.4.0 → 1.3.0 (series head v1 → 1.3.0)
+dev: added ai-flow-newest 1.4.0 (greatest satisfying)
+```
+
+A series tag stays a version of the universe too — `tag: "v1"` names it
+exactly, as it always did. It is read as a pointer only when a release
+of its major sits at its commit; a `v<major>` tag at any other commit is
+a version like any tag and names no head.
 
 ### `dev deps install [--group G]… [--except G]… [--integration I]… [--pinned-taps]`
 

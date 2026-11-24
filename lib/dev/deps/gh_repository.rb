@@ -3,11 +3,14 @@
 
 require "json"
 require "open3"
+require "dev/lifecycle/release_tag"
+require "dev/lifecycle/series"
 require_relative "declarations"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
+require_relative "series_head"
 
 module Dev
   module Deps
@@ -26,6 +29,15 @@ module Dev
     # downloads against the lockfile. Asset selection against the declared
     # glob happens at install, where the glob arrives via the pin's
     # materialization.
+    #
+    # The tags list also carries the repo's **series tags** — `v1`, `v2`,
+    # the per-series heads `dev deploy gh` moves (Lifecycle::GithubHeads)
+    # — each at the commit of the release its followers install. A series
+    # tag is reported twice over: as a version, like any tag (an exact
+    # `tag: "v1"` names it), and as the package's head for its series,
+    # naming the version tag cut at the same commit. The head and the
+    # versions come from one listing, so the fact a lock resolves through
+    # is the one a follower's `@v1` resolves to.
     #
     # Commit SHAs are unreachable by enumeration (no endpoint lists reachable
     # commits), so a commit pin arrives as the declaration's revision and is
@@ -65,14 +77,16 @@ module Dev
       # Seconds between re-fetches, per attempt.
       RELEASES_RETRY_BACKOFF = [1, 2, 4, 8].freeze
 
-      # Report a GitHub dependency's universe: every tag and release.
+      # Report a GitHub dependency's universe: every tag and release, and
+      # the head of every series the repo keeps a series tag for.
       #
       # Tag-only versions first, then releases oldest to newest; the
       # Resolver takes the greatest satisfying tag under TagScheme's
-      # ordering, so a ranged gh dep pins the newest version tag.
+      # ordering — or the series head, for a requirement that names whole
+      # series on a repo that deploys heads.
       #
       # @param id [PackageId] source is the "owner/repo" slug
-      # @return [Package] one version per tag/release, facts complete
+      # @return [Package] one version per tag/release, facts complete; one head per series tag
       # @raise [GhMissingError] if the gh CLI is not installed
       # @raise [AuthenticationError] if gh is not authenticated
       # @raise [RepoAccessError] if the repo is not visible to the account
@@ -90,7 +104,7 @@ module Dev
 
         releases = confirmed_releases(repo_slug) if releases.empty?
 
-        commit_by_tag = tags.to_h { |tag| [tag["name"], tag.dig("commit", "sha")] }
+        commit_by_tag = T.let(tags.to_h { |tag| [tag["name"].to_s, tag.dig("commit", "sha")] }, T::Hash[String, T.nilable(String)])
         # Drafts have no tag yet; they are not part of the published universe.
         release_by_tag = releases.reject { |release| release["draft"] }
           .to_h { |release| [release["tag_name"], release] }
@@ -101,7 +115,12 @@ module Dev
         versions = ordered.map do |tag|
           version_for(repo_slug, tag, commit_by_tag[tag], release_by_tag[tag])
         end
-        Package.new(id: id, versions: versions)
+        # A series tag stays a version too — `tag: "v1"` is an exact ask it
+        # answers — and is besides the pointer its series' head is read from.
+        heads = commit_by_tag.filter_map do |name, sha|
+          head_for(Lifecycle::Series.of_tag(name), sha, commit_by_tag) if Lifecycle::Series.tag?(name)
+        end
+        Package.new(id: id, versions: versions, heads: heads)
       end
 
       # Lift a commit SHA into a version. Pure — no network: the SHA is the
@@ -124,6 +143,47 @@ module Dev
       end
 
       private
+
+      # The head a series tag names: the version tag of that series cut at
+      # the commit the series tag points at (`v1` at the commit of
+      # `v1.3.0` → `v1 → v1.3.0`), the greatest when several are. A series
+      # tag at a commit no version of its series was cut at — a pointer
+      # moved by hand, a series tag of another naming — names no version
+      # of the universe and is no head.
+      #
+      # @param series [Lifecycle::Series] the series the tag is kept for
+      # @param sha [String, nil] the commit the series tag points at
+      # @param commit_by_tag [Hash{String => String, nil}] every version tag's commit
+      # @return [SeriesHead, nil]
+      sig do
+        params(
+          series: Lifecycle::Series,
+          sha: T.nilable(String),
+          commit_by_tag: T::Hash[String, T.nilable(String)],
+        ).returns(T.nilable(SeriesHead))
+      end
+      def head_for(series, sha, commit_by_tag)
+        return nil if sha.nil?
+
+        at_commit = commit_by_tag.select { |tag, commit| commit == sha && release_of?(series, tag) }.keys
+        version = at_commit.max_by { |tag| Gem::Version.new(tag.delete_prefix(Lifecycle::ReleaseTag::PREFIX)) }
+        SeriesHead.new(series: series, version: version) unless version.nil?
+      end
+
+      # Whether a tag is a release of a series: `v` and a version of that
+      # major, as Lifecycle::GithubHeads reads a release tag — and not a
+      # series tag, whose bare major reads as a version too.
+      #
+      # @param series [Lifecycle::Series]
+      # @param tag [String] a tag name
+      # @return [Boolean]
+      sig { params(series: Lifecycle::Series, tag: String).returns(T::Boolean) }
+      def release_of?(series, tag)
+        return false if Lifecycle::Series.tag?(tag)
+
+        word = tag.delete_prefix(Lifecycle::ReleaseTag::PREFIX)
+        Lifecycle::Series.version?(word) && series.includes?(word)
+      end
 
       # Assemble one tag's facts: the commit SHA it points at and, when it
       # publishes a release, every asset — unselected.

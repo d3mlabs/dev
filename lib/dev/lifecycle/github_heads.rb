@@ -36,8 +36,6 @@ module Dev
       # gh answered with something that is not a ref or a release.
       class MalformedAnswerError < Error; end
 
-      # The name of a series tag: `v<major>`, nothing after the major.
-      SERIES_TAG = /\A#{ReleaseTag::PREFIX}(\d+)\z/
       # The ref namespace every tag lives in.
       TAGS = "refs/tags/"
       # Every tag ref beginning with the release prefix, in one listing.
@@ -120,8 +118,7 @@ module Dev
       def read
         refs = tag_refs
         pointers = refs.filter_map do |name, sha|
-          major = SERIES_TAG.match(name)&.[](1)
-          Pointer.new(series: Series.new(Integer(major)), sha:) unless major.nil?
+          Pointer.new(series: Series.of_tag(name), sha:) if Series.tag?(name)
         end
         # Any other `v`-led tag naming a version is a release's; a tag
         # that is neither (`vendor-x`) is nobody's and not read.
@@ -178,7 +175,7 @@ module Dev
       # @return [Boolean]
       sig { params(name: String).returns(T::Boolean) }
       def release_tag?(name)
-        !SERIES_TAG.match?(name) && Series.version?(name.delete_prefix(ReleaseTag::PREFIX))
+        !Series.tag?(name) && Series.version?(name.delete_prefix(ReleaseTag::PREFIX))
       end
 
       # Every tag ref under the release prefix that names a commit, as

@@ -3,11 +3,14 @@
 
 require_relative "package_id"
 require_relative "package_version"
+require_relative "series_head"
 
 module Dev
   module Deps
     # A package and the versions its backing service currently offers — the
-    # aggregate a Repository returns from #find.
+    # aggregate a Repository returns from #find — and, where the service
+    # keeps per-series pointers (a gh repo's `v1` tag), the head each
+    # pointer names.
     #
     # Deliberately has no #satisfies?, #sort or #best_match. A Package states
     # what exists; evaluating a requirement against a version is the
@@ -32,12 +35,19 @@ module Dev
       sig { returns(T::Array[PackageVersion]) }
       attr_reader :versions
 
+      # @return [Array<SeriesHead>] the head of every series the service
+      #   keeps a pointer for; empty when it keeps none (a derived channel)
+      sig { returns(T::Array[SeriesHead]) }
+      attr_reader :heads
+
       # @param id [PackageId] the package's identity
       # @param versions [Array<PackageVersion>] the available versions
-      sig { params(id: PackageId, versions: T::Array[PackageVersion]).void }
-      def initialize(id:, versions:)
+      # @param heads [Array<SeriesHead>] the per-series heads, each naming one of the versions
+      sig { params(id: PackageId, versions: T::Array[PackageVersion], heads: T::Array[SeriesHead]).void }
+      def initialize(id:, versions:, heads: [])
         @id = id
         @versions = T.let(versions.dup.freeze, T::Array[PackageVersion])
+        @heads = T.let(heads.dup.freeze, T::Array[SeriesHead])
         freeze
       end
 

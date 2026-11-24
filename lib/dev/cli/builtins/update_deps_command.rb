@@ -197,21 +197,25 @@ module Dev
         # update moves whatever is newer; a subset re-lock says why each
         # move it made beyond the names given (a changed declaration, a pin
         # the lock could not keep), so a move the author did not name is
-        # visible with its cause. A pin kept because its registry did not
-        # answer is named with the registry's refusal: the lock is right,
-        # but the next re-lock that needs that registry will want what the
-        # message asks for.
+        # visible with its cause. A move on a channel that keeps series
+        # heads says which rule chose the version — the series head
+        # (`v1 → v1.3.0`) or the greatest satisfying tag — so a pin that
+        # followed a rolled-back head reads as what it is. A pin kept
+        # because its registry did not answer is named with the registry's
+        # refusal: the lock is right, but the next re-lock that needs that
+        # registry will want what the message asks for.
         #
         # @param outcome [Dev::Deps::PinCarryover::Outcome]
         # @return [void]
         sig { params(outcome: Dev::Deps::PinCarryover::Outcome).void }
         def report_moves(outcome)
           outcome.moved.each do |move|
+            explained = [move.from.nil? ? nil : move.reason, move.choice&.to_s].compact
+            detail = explained.empty? ? "" : " (#{explained.join("; ")})"
             if move.from.nil?
-              puts "dev: added #{move.name} #{move.to}"
+              puts "dev: added #{move.name} #{move.to}#{detail}"
             else
-              reason = move.reason
-              puts "dev: moved #{move.name} #{move.from} → #{move.to}#{" (#{reason})" if reason}"
+              puts "dev: moved #{move.name} #{move.from} → #{move.to}#{detail}"
             end
           end
           outcome.unreachable.each do |kept|

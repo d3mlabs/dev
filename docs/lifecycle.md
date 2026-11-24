@@ -501,12 +501,22 @@ a pointed channel holds one pointer per series it serves, a derived
 channel's head within a series is that major's greatest release. A
 follower on a series (`~> 1`) never crosses a major by following.
 
-The head is not the resolver's greatest-satisfying version. A lock wants
-the greatest version that satisfies its requirement; a follower wants
-what is deployed; after a rollback the deployed version is lower than the
-greatest one there, and the two must be allowed to say so. The set of
-strategies is closed: a destination that keeps no pointer and whose
-versions are not totally ordered is a third strategy to name in dev
+A lock and a follower read the same head. A dependency declared with a
+**series-shaped** requirement — one whose bounds are series boundaries
+and nothing finer: `~> 1`, `>= 1, < 2`, `>= 1` — resolves, on a pointed
+channel, to the head of the newest series it covers: `dev deps update`
+locks what `v1` points at, the version and the commit, from the same
+pointer an adopter's `@v1` resolves. A rollback is `dev deploy gh
+--release <previous>`, which moves `v1`, and the next re-lock follows it
+down; nothing re-locks the greatest tag the operator just rolled away
+from. A series the channel keeps no pointer for, and every derived
+channel, resolves to the greatest satisfying version. A requirement with
+a bound inside a series (`>= 1.4`, `~> 1.2`) names versions, not series,
+and takes the greatest satisfying one on every channel; `tag:` and `sha:`
+are exact. The lock report says which rule chose: `series head v1 →
+v1.3.0` or `greatest satisfying` ([dependencies.md](dependencies.md#series-heads)).
+The set of strategies is closed: a destination that keeps no pointer and
+whose versions are not totally ordered is a third strategy to name in dev
 before it gets a publisher, never a special case inside one.
 
 **Acceptance.** Whether a tree is complete for a destination is the
@@ -728,8 +738,11 @@ commands:
 ```
 
 The heads are one **series tag** per deployed series — `v1`, `v2`: the
-major, as `~> 1` on a host's stream or `@v1` in a workflow follows it —
-and GitHub's **latest designation**. `dev deploy gh --release 1.3.0`
+major, as `gh "owner/repo", "~> 1"` in an adopter's `dependencies.rb`
+or `@v1` in a workflow follows it; both read the tag, so a deploy
+reaches the adopter's lock on its next `dev deps update` and its
+workflow on its next job — and GitHub's **latest designation**. `dev
+deploy gh --release 1.3.0`
 moves `v1` to 1.3.0's commit (created on the series' first deploy,
 force-moved after, forward or back: deploying 1.2.0 again is the
 rollback), and makes 1.3.0 the repo's latest release when `v1` is the

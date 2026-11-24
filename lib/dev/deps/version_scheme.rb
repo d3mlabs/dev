@@ -3,6 +3,7 @@
 
 require_relative "package_version"
 require_relative "requirement"
+require_relative "series_span"
 
 module Dev
   module Deps
@@ -86,6 +87,21 @@ module Dev
       sig { overridable.params(versions: T::Array[PackageVersion]).returns(T::Array[PackageVersion]) }
       def sort(versions)
         raise NotImplementedError, "#{self.class}#sort must be implemented"
+      end
+
+      # The whole series a requirement covers, when its bounds are series
+      # boundaries and nothing finer (`~> 1`, `>= 1, < 2`, `>= 1`): the
+      # shape a follower's constraint has, which the Resolver resolves
+      # through a series head where the universe keeps one. A requirement
+      # with a bound inside a series (`>= 1.4`) names versions, not
+      # series, and has no span. A channel whose versions have no major to
+      # read answers nil for every requirement.
+      #
+      # @param requirement [Requirement]
+      # @return [SeriesSpan, nil] nil when the requirement is not series-shaped
+      sig { overridable.params(requirement: Requirement).returns(T.nilable(SeriesSpan)) }
+      def series_span(requirement)
+        nil
       end
 
       # Why a requirement this channel supports in general cannot be

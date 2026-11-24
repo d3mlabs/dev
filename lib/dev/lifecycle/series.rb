@@ -30,12 +30,43 @@ module Dev
       # A major below zero.
       class NegativeMajorError < ArgumentError; end
 
+      # A tag that is not a series tag (`v1.2.0`, `latest`).
+      class NotASeriesTagError < ArgumentError; end
+
+      # The name of a series tag: `v<major>`, nothing after the major — the
+      # one spelling a pointed channel keeps its per-series pointer under
+      # and every reader of a forge's tags tells a pointer from a version by.
+      TAG_PATTERN = /\A#{ReleaseTag::PREFIX}(\d+)\z/
+
       # @return [Integer] the major every version of the series shares
       sig { returns(Integer) }
       attr_reader :major
 
       class << self
         extend T::Sig
+
+        # Whether a tag name is a series tag (`v1`), as opposed to a
+        # release's (`v1.2.0`) or anything else.
+        #
+        # @param tag [String] a tag name without its ref namespace
+        # @return [Boolean]
+        sig { params(tag: String).returns(T::Boolean) }
+        def tag?(tag)
+          TAG_PATTERN.match?(tag)
+        end
+
+        # The series a series tag names.
+        #
+        # @param tag [String] a tag name (`v1`)
+        # @return [Series]
+        # @raise [NotASeriesTagError]
+        sig { params(tag: String).returns(Series) }
+        def of_tag(tag)
+          major = TAG_PATTERN.match(tag)&.[](1)
+          raise NotASeriesTagError, "#{tag.inspect} is not a series tag (v<major>)" if major.nil?
+
+          new(Integer(major))
+        end
 
         # Whether a word is a version with a major: digit-led and readable
         # by Gem::Version's tolerant grammar (Gem::Version reads the empty

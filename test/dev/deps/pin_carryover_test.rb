@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/deps/brew_repository"
 require "dev/deps/brew_scheme"
+require "dev/deps/choice"
 require "dev/deps/declaration"
 require "dev/deps/dependency"
 require "dev/deps/gem_scheme"
@@ -14,9 +15,11 @@ require "dev/deps/requirement"
 require "dev/deps/resolver"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
+require "dev/deps/series_head"
 require "dev/deps/steam_scheme"
 require "dev/deps/tag_scheme"
 require "dev/deps/unlock_set"
+require "dev/lifecycle/series"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::PinCarryoverTest < Minitest::Test
@@ -27,14 +30,14 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   # A brew pin as the Resolver mints it and as the Lockfile reads it back:
   # its source is the tap at the commit.
-  def formula(name, version:, commit:, integration: :brew, group: :build, tap: nil, suffix: nil, platforms: BOTTLED, metadata: {})
+  def formula(name, version:, commit:, integration: :brew, group: :build, tap: nil, suffix: nil, platforms: BOTTLED, metadata: {}, choice: nil)
     md = { "format" => platforms.include?("x86_64_linux") ? "bottle" : "source" }
     md["tap"] = tap if tap
     md["version_suffix"] = suffix if suffix
     md["tap_commit"] = commit if commit
     md["platforms"] = platforms.to_h { |t| [t, { "hash" => "SHA256=#{name}-#{version}-#{t}", "link" => "https://x/#{name}/#{version}/#{t}" }] } if platforms.any?
     source = commit && Dev::Deps::BrewRepository.source_at(tap, commit)
-    Dev::Deps::Dependency.new(name:, integration:, group:, version:, hash: nil, source:, metadata: md.merge(metadata))
+    Dev::Deps::Dependency.new(name:, integration:, group:, version:, hash: nil, source:, metadata: md.merge(metadata), choice:)
   end
 
   # A pip pin: its source is the exact requirement, unless the lock predates sources.
@@ -381,6 +384,32 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     description          | unlock
     "a bare update"      | Dev::Deps::UnlockSet.all
     "update <name>"      | Dev::Deps::UnlockSet.new(names: ["jq"])
+  end
+
+  test "a move carries the rule that chose its version, and a kept pin carries none" do
+    Given "a gh pin the resolution chose as v1's head while the lock has the greater 1.4.0, beside a formula the lock keeps"
+    head = Dev::Deps::Choice::Head.new(head: Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0"))
+    declarations = [declared("ai-flow", integration: :gh, requirement: "~> 1", tap: "d3mlabs/ai-flow", group: :app), declared("cmake")]
+    previous = [gh_pin("1.4.0", "b" * 40), formula("cmake", version: "4.4.4", commit: OLD)]
+    resolved = [gh_pin("1.3.0", "a" * 40, choice: head), formula("cmake", version: "4.4.5", commit: NEW, choice: Dev::Deps::Choice::Greatest.new)]
+
+    When "dev deps update ai-flow, then a bare update of the first lock"
+    subset = carryover.apply(declarations:, previous:, resolved:, unlock: update("ai-flow"))
+    added = carryover.apply(declarations:, previous: [], resolved:, unlock: Dev::Deps::UnlockSet.all)
+
+    Then "the gh move names the head; cmake is the lock's, with no rule of this resolution behind it; a new pin names its rule too"
+    subset.moved.map { |move| [move.name, move.from, move.to, move.reason, move.choice] } == [["ai-flow", "1.4.0", "1.3.0", "named", head]]
+    subset.kept.map(&:name) == ["cmake"]
+    subset.pins.find { |pin| pin.name == "cmake" }.choice.nil?
+    subset.pins.find { |pin| pin.name == "ai-flow" }.choice == head
+    added.moved.map { |move| [move.name, move.from, move.choice] } == [["ai-flow", nil, head], ["cmake", nil, Dev::Deps::Choice::Greatest.new]]
+  end
+
+  def gh_pin(version, sha, choice: nil)
+    Dev::Deps::Dependency.new(
+      name: "ai-flow", integration: :gh, group: :app, version:, hash: nil, source: sha,
+      metadata: { "repo" => "d3mlabs/ai-flow", "commit" => sha }, choice:,
+    )
   end
 
   test "a kept pin takes this resolution's provenance" do
