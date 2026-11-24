@@ -43,6 +43,14 @@ module Dev
       # `--fetch` uploads. The packed archive crosses from the seam to
       # `after` through the env: the template's one channel between the
       # stages.
+      #
+      # Before the archive is written, the packager presents the tree as
+      # it will ship to every channel whose `targets:` names the build
+      # (Lifecycle::Acceptance): a destination that installs the tree by
+      # rules of its own refuses an incomplete one here, where the
+      # producer can fix it, rather than on the host installing it after
+      # the release is immutable. The verb asks every publisher the same
+      # way and knows no channel by name.
       class PackageCommand < LifecycleCommand
         extend T::Sig
 
@@ -76,6 +84,10 @@ module Dev
           sig { returns(Lifecycle::Packager) }
           attr_reader :packager
 
+          # @return [Lifecycle::Acceptance] the channels receiving the build, shown the tree before it is archived
+          sig { returns(Lifecycle::Acceptance) }
+          attr_reader :acceptance
+
           # @return [Lifecycle::GitState] the tree as read in `before`
           sig { returns(Lifecycle::GitState) }
           attr_reader :state
@@ -95,16 +107,18 @@ module Dev
               archive_stem: Pathname,
               builder: Lifecycle::Builder,
               packager: Lifecycle::Packager,
+              acceptance: Lifecycle::Acceptance,
               state: Lifecycle::GitState,
               build_skipped: T.nilable(String),
             ).void
           end
-          def initialize(build:, install:, archive_stem:, builder:, packager:, state:, build_skipped:)
+          def initialize(build:, install:, archive_stem:, builder:, packager:, acceptance:, state:, build_skipped:)
             @build = build
             @install = install
             @archive_stem = archive_stem
             @builder = builder
             @packager = packager
+            @acceptance = acceptance
             @state = state
             @build_skipped = build_skipped
             @packed = T.let(nil, T.nilable(Lifecycle::PackedArchive))
@@ -123,8 +137,10 @@ module Dev
         # @param selector [BuildSelector] argv → the build
         # @param dispatcher [BuildDispatcher] the build → where it runs
         # @param listing [BuildListing] what the usage and completion list
-        # @param ports [Lifecycle::Ports] the targets' builders and packagers
+        # @param ports [Lifecycle::Ports] the targets' builders and packagers, the channels' publishers
         # @param store [Lifecycle::Store] where the artifact goes
+        # @param channels [Array<Lifecycle::Channel>] the project's channels
+        #   with a protocol; the ones accepting a build are shown its tree
         # @param clock [Proc] the packaging instant (injectable for tests)
         # @param step_outputs [Lifecycle::StepOutputs] the enclosing Actions step's, or none
         # @param out [IO, StringIO]
@@ -135,13 +151,14 @@ module Dev
             listing: BuildListing,
             ports: Lifecycle::Ports,
             store: Lifecycle::Store,
+            channels: T::Array[Lifecycle::Channel],
             clock: T.proc.returns(Time),
             step_outputs: Lifecycle::StepOutputs,
             out: T.any(IO, StringIO),
           ).void
         end
         def initialize(
-          selector:, dispatcher:, listing:, ports:, store:,
+          selector:, dispatcher:, listing:, ports:, store:, channels: [],
           clock: -> { Time.now }, step_outputs: Lifecycle::StepOutputs.from_env, out: $stdout
         )
           super()
@@ -150,6 +167,7 @@ module Dev
           @listing = listing
           @ports = ports
           @store = store
+          @channels = channels
           @clock = clock
           @step_outputs = step_outputs
           @out = out
@@ -201,6 +219,7 @@ module Dev
               archive_stem: @store.archive_stem(build),
               builder: @ports.builder_for(build.target),
               packager: @ports.packager_for(build.target),
+              acceptance: acceptance_for(build),
               state:,
               build_skipped: build_skipped(build, state, no_build:),
             )
@@ -211,7 +230,7 @@ module Dev
         def seam(env, context:)
           _ = context
           env.builder.build(env.build, env.install) if env.build_skipped.nil?
-          env.packed = env.packager.package(env.build, env.install, env.archive_stem)
+          env.packed = env.packager.package(env.build, env.install, env.archive_stem, acceptance: env.acceptance)
         end
 
         # The build id's semver is read from the tree now, not at wiring:
@@ -263,6 +282,19 @@ module Dev
         sig { returns(T::Array[Lifecycle::Target]) }
         def packageable_targets
           @selector.targets.select(&:packageable?)
+        end
+
+        # The destinations shown the build's tree before it is archived:
+        # every channel whose accept set holds the build, with its
+        # publisher, in channel order.
+        #
+        # @param build [Lifecycle::Build]
+        # @return [Lifecycle::Acceptance]
+        # @raise [Lifecycle::Ports::UnknownPublisherError]
+        sig { params(build: Lifecycle::Build).returns(Lifecycle::Acceptance) }
+        def acceptance_for(build)
+          receiving = @channels.select { |channel| channel.accepts?(build) }
+          Lifecycle::Acceptance.new(acceptors: receiving.to_h { |channel| [channel, @ports.publisher_for(channel)] })
         end
 
         # @param target [Lifecycle::Target]

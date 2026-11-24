@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "acceptance"
 require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
@@ -45,12 +46,15 @@ module Dev
       # @param install [Pathname]
       # @param archive [Pathname] the path without extension; its directory
       #   is created if absent
+      # @param acceptance [Acceptance] unused: what the script archives is
+      #   the script's, so dev has no tree to present
       # @return [PackedArchive]
       # @raise [PackageScriptFailedError]
       # @raise [NothingPackagedError]
       # @raise [Shell::SpawnError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive)
+      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional)
+        _ = acceptance
         archive.dirname.mkpath
         before = written(archive)
         env = ScriptEnv.for_package(build, install:, archive:)

@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/lifecycle"
 require "support/lifecycle_fixtures"
+require "support/shown_publisher"
 require "digest"
 require "fileutils"
 require "open3"
@@ -179,6 +180,81 @@ class Dev::Lifecycle::ArchiveTest < Minitest::Test
     listing, = Open3.capture2("sh", "-c", "zstd -d -c #{packed.archive} | tar -tf -")
     listing.lines.map(&:chomp).sort == ["./", "./VERSION", "./lib/", "./lib/dev.rb"]
     packager.to_s == "archive (tar), files: lib VERSION"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  def gh_channel
+    Dev::Lifecycle::Channel.new(
+      name: "gh", accepts: [Dev::Lifecycle::BuildPattern.new(target: gem_target)],
+      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "gh"),
+    )
+  end
+
+  def acceptance(publisher)
+    Dev::Lifecycle::Acceptance.new(acceptors: { gh_channel => publisher })
+  end
+
+  test "the destinations are shown the selection — the tree as it ships — not the install, before the archive is written" do
+    Given "an install whose files: leaves the lock out"
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    (install / "exe").mkpath
+    (install / "exe/ai-flow").write("#!/usr/bin/env ruby\n")
+    (install / "dependencies.rb").write("manifest")
+    (install / "deps.lock").write("lock")
+    publisher = ShownPublisher.new
+    packager = Dev::Lifecycle::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["exe", "dependencies.rb"]))
+
+    When
+    packed = packager.package(build("rspock"), install, root / "store/ai-flow", acceptance: acceptance(publisher))
+
+    Then "the publisher saw the two selected entries under the channel, not the install, and the archive followed"
+    publisher.shown.map(&:entries) == [["dependencies.rb", "exe"]]
+    publisher.shown.map(&:channel) == [gh_channel]
+    publisher.shown.first.tree != install
+    packed.archive.file?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "with no files:, the install itself is what the destinations are shown" do
+    Given
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    install.mkpath
+    (install / "a.txt").write("a")
+    publisher = ShownPublisher.new
+
+    When
+    Dev::Lifecycle::Archive.new.package(build("rspock"), install, root / "store/rspock", acceptance: acceptance(publisher))
+
+    Then
+    publisher.shown.map(&:tree) == [install]
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a destination's refusal is the packager's failure, raised as the publisher words it, with the previous archive left in place" do
+    Given "an earlier archive, and a publisher that refuses"
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    install.mkpath
+    (install / "a.txt").write("a")
+    archive = root / "store/rspock"
+    Dev::Lifecycle::Archive.new.package(build("rspock"), install, archive)
+    before = (root / "store/rspock.zip").read
+
+    When
+    Dev::Lifecycle::Archive.new.package(build("rspock"), install, archive, acceptance: acceptance(ShownPublisher.new(refuse: true)))
+
+    Then
+    error = raises(ShownPublisher::RefusedError)
+    error.message == "gh refuses the tree"
+    (root / "store/rspock.zip").read == before
 
     Cleanup
     FileUtils.rm_rf(root)

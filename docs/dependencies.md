@@ -404,6 +404,14 @@ A gh tree is keyed by its version alone, so the materialised closure is
 the first installing machine's: a tree is per data root, and a data root
 is per machine or per side of a build container.
 
+Whether a tree is **complete** for that install — the lock beside the
+manifest, a Ruby pinned for the executables and gems to run under, an
+`exe/` to write launchers for, no `bin/<name>` an `exe/<name>`'s launcher
+would overwrite — is checked where the producer can fix it: the `gh`
+channel refuses an incomplete tree at `dev package`, before the release
+is cut and immutable ([`dev package`](lifecycle.md#dev-package)). The
+install's own refusals on the host stay as the last line of defence.
+
 A steam pin is the branch's build id at lock time, with no `source`:
 SteamCMD's `app_update` installs the branch tip, and its `download_depot`
 writes one depot's files without the app manifest and refuses large

@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require_relative "acceptance"
 require_relative "packed_archive"
 # Build appears in signatures only, which are resolved lazily; requiring
 # build.rb here would close a load cycle (Build → Target → PackagerSpec →
@@ -16,6 +17,12 @@ module Dev
     # Built-ins: Archive (`archive`, the default), AsIsPackager (`as-is`, an
     # install that already is an archive), NonePackager (`none`, built and
     # never shipped). ScriptPackager is the target's `packager:` script.
+    #
+    # A packager that writes a tree presents it to the destinations
+    # (Acceptance) once selected and before the archive is written, so a
+    # tree a channel would refuse never becomes an asset. Archive is that
+    # packager; `as-is` adopts a file and a script's archive is the
+    # script's, so neither has a tree to present.
     module Packager
       extend T::Sig
       extend T::Helpers
@@ -30,9 +37,11 @@ module Dev
       # @param archive [Pathname] the archive's path **without its
       #   extension** — `<artifact dir>/<build>` — to which the packager
       #   appends its format's (`.zip`, `.tar.zst`, the adopted file's)
+      # @param acceptance [Acceptance] the destinations the tree is
+      #   presented to before it is written; unconditional by default
       # @return [PackedArchive] what was written
-      sig { abstract.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive); end
+      sig { abstract.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional); end
     end
   end
 end

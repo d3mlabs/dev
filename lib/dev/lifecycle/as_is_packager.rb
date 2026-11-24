@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require_relative "acceptance"
 require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
@@ -31,12 +32,13 @@ module Dev
       # @param install [Pathname] the directory holding exactly one file
       # @param archive [Pathname] the path without extension; its directory
       #   is created if absent
+      # @param acceptance [Acceptance] unused: a file is adopted, there is no tree to present
       # @return [PackedArchive]
       # @raise [NoInstallFileError]
       # @raise [AmbiguousInstallError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive)
-        _ = build
+      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional)
+        _ = [build, acceptance]
         source = the_one_file(install)
         target = Pathname("#{archive}#{extension_of(source)}")
         target.dirname.mkpath

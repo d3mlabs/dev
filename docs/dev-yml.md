@@ -217,7 +217,11 @@ slash matches at any depth (`lib` also takes `test/lib`); a leading or
 inner slash anchors it at the install root. A list with no positive
 pattern starts from everything (an exclude-only list, like a
 `.npmignore`). With `vendor: true` the list also sees `vendor/bundle`, so
-list `vendor` to ship it.
+list `vendor` to ship it. The selection is what the build's channels
+are shown before the archive is written: a target the `gh` channel
+accepts that ships `dependencies.rb` must list `deps.lock` beside it, or
+`dev package` refuses it naming the channel and the lock
+([`dev package`](lifecycle.md#dev-package)).
 
 A target whose shippable tree is a selection of the checkout needs no
 `builder:`: the checkout's tracked files are the install, and `files:`

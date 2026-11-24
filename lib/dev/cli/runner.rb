@@ -558,7 +558,10 @@ module Dev
         listing = BuildListing.new(targets:, dispatcher:)
         ports = Lifecycle::Ports.new(project_root: project.root, publishers: bindings.publishers)
         store = Lifecycle::Store.new(project_name: project.name, targets:)
-        package = Builtins::PackageCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out)
+        # A channel bound with a fault has no publisher to show a tree to;
+        # `deploy <channel>` is what refuses it.
+        with_protocol = bindings.channels.values.select { |bound| bound.fault.nil? }.map(&:channel)
+        package = Builtins::PackageCommand.new(selector:, dispatcher:, listing:, ports:, store:, channels: with_protocol, out: @out)
         verbs = T.let({
           "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
           "package" => package,

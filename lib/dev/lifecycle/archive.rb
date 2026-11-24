@@ -4,6 +4,7 @@
 require "fileutils"
 require "pathname"
 require "tmpdir"
+require_relative "acceptance"
 require_relative "byte_size"
 require_relative "file_selection"
 require_relative "packager"
@@ -28,7 +29,9 @@ module Dev
     #
     # Which of the install's files ship is its `files:` (FileSelection):
     # the whole install unless the target lists patterns, the selected
-    # files at their install paths when it does.
+    # files at their install paths when it does. The selection — the tree
+    # as it ships — is what the destinations are shown (Acceptance) before
+    # anything is written; a refusal leaves the previous archive in place.
     #
     # Writes over its own previous output. The tar form needs `zstd` on
     # PATH, declared with the project's dependencies.
@@ -208,16 +211,17 @@ module Dev
       # @param build [Build] unused
       # @param install [Pathname]
       # @param archive [Pathname]
+      # @param acceptance [Acceptance] shown the selected tree before it is written
       # @return [PackedArchive]
       # @raise [MissingInstallError]
       # @raise [EmptyInstallError]
       # @raise [FileSelection::EmptySelectionError]
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive)
+      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional)
         _ = build
-        pack(install, archive)
+        pack(install, archive, acceptance:)
       end
 
       # Archive a directory's contents in this form — what `dev pack` runs
@@ -226,18 +230,22 @@ module Dev
       # @param install [Pathname] the directory whose contents are archived
       # @param archive [Pathname] the path without extension; its directory
       #   is created if absent, and its previous output removed
+      # @param acceptance [Acceptance] the destinations shown the selected
+      #   tree before anything is written; a refusal is theirs and leaves
+      #   the previous output in place
       # @return [PackedArchive]
       # @raise [MissingInstallError]
       # @raise [EmptyInstallError]
       # @raise [FileSelection::EmptySelectionError] when `files:` selects nothing
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError] when `zip`, `tar`, `zstd` or `split` is missing
-      sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def pack(install, archive)
+      sig { params(install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def pack(install, archive, acceptance: Acceptance.unconditional)
         raise MissingInstallError, "no install at #{install}" unless install.directory?
         raise EmptyInstallError, "nothing to archive: #{install} is empty" if install.children.empty?
 
         with_selected(install) do |selected|
+          acceptance.accept!(selected)
           archive.dirname.mkpath
           remove_previous(archive)
           write(selected, archive)

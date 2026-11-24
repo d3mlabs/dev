@@ -4,6 +4,7 @@
 require "pathname"
 require "dev/deps/tool_closure"
 require "dev/deps/toolchain_exec"
+require_relative "acceptance"
 require_relative "packager"
 require_relative "packager_spec"
 require_relative "packed_archive"
@@ -49,15 +50,16 @@ module Dev
       # @param build [Build]
       # @param install [Pathname] the tool tree the builder wrote
       # @param archive [Pathname] the path without extension
+      # @param acceptance [Acceptance] handed to the wrapped packager, which presents the vendored tree
       # @return [PackedArchive]
       # @raise [NoClosureError]
       # @raise [Deps::ToolClosure::VendorError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def package(build, install, archive)
+      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, install, archive, acceptance: Acceptance.unconditional)
         raise NoClosureError.new(install:) unless Deps::ToolClosure.carried_by?(install)
 
         Deps::ToolClosure.new(tree: install).vendor!(exec: @exec)
-        @packager.package(build, install, archive)
+        @packager.package(build, install, archive, acceptance:)
       end
 
       # The declaration as `dev help` renders it: the wrapped packager's,
