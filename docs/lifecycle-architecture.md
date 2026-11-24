@@ -57,7 +57,7 @@ toolchain; the publisher never selects and never rewrites an archive.
 | Port | Interface | Implementations | Declared as |
 | --- | --- | --- | --- |
 | Builder | `Lifecycle::Builder#build(build, install)` (final: empties and recreates the install, then `#fill(build, install)`), `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version); `CheckoutBuilder` (`name` = `checkout`, no version: the checkout's tracked files, the identity) | `build: <command>`; no `build:` |
-| Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split), `AsIsPackager`, `ScriptPackager`, `NonePackager` | `packager:` / `package:` |
+| Packager | `Lifecycle::Packager#package(build, install, archive_stem) → PackedArchive` | `Archive` (zip or tar.zst, optionally split; over the whole install or the files its `Lifecycle::FileSelection` — `files:`, gitignore-syntax `Lifecycle::FilePattern`s — selects), `AsIsPackager`, `ScriptPackager`, `NonePackager`; `VendoredPackager` wraps an `Archive` for `vendor: true` | `packager:` / `package:` |
 | Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none), `#owns_release_designation? → Boolean` (default: false; `release` cuts with `--latest=false` when any contributed publisher answers true) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
 
 `Lifecycle::Ports` maps a target's specs and a channel's to port

@@ -123,6 +123,87 @@ class Dev::Lifecycle::ArchiveTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "a files: selection archives the selected files at their install paths, directory entries and symlinks as a whole archive has them, and leaves the install alone" do
+    Given "an install with a tool tree, its lock and a doc; a selection of the tree without its scratch"
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    (install / "bin").mkpath
+    (install / "lib/scratch").mkpath
+    (install / "deploy/d3mlabs").mkpath
+    (install / "bin/dev").write("#!/bin/sh\n")
+    (install / "bin/dev").chmod(0o755)
+    (install / "lib/dev.rb").write("# dev")
+    (install / "lib/scratch/tmp.rb").write("# tmp")
+    (install / "deploy/d3mlabs/config.yml").write("org: d3mlabs")
+    (install / "deps.lock").write("lock")
+    (install / "VERSION").write("1.0.0")
+    File.symlink("dev.rb", install / "lib/alias.rb")
+    files = Dev::Lifecycle::FileSelection.parse(["bin", "lib", "!lib/scratch", "deploy/d3mlabs/config.yml", "VERSION"])
+    packager = Dev::Lifecycle::Archive.new(files:)
+
+    When
+    packed = packager.package(build("rspock"), install, root / "store/dev-core")
+
+    Then "the zip holds the selection at stage paths, with the directory entries a whole archive has"
+    packed.archive == root / "store/dev-core.zip"
+    listing = Open3.capture2("unzip", "-Z1", packed.archive.to_s).first.lines.map(&:chomp).sort
+    listing == [
+      "VERSION", "bin/", "bin/dev", "deploy/", "deploy/d3mlabs/", "deploy/d3mlabs/config.yml",
+      "lib/", "lib/alias.rb", "lib/dev.rb",
+    ]
+    Open3.capture2("unzip", "-Z", packed.archive.to_s).first.lines.grep(/lib\/alias\.rb/).first.start_with?("l")
+    Open3.capture2("unzip", "-Z", packed.archive.to_s).first.lines.grep(/bin\/dev/).first.start_with?("-rwxr-xr-x")
+    packager.to_s == "archive, files: bin lib !lib/scratch deploy/d3mlabs/config.yml VERSION"
+    # The install is as it was: the selection is read, not carved.
+    (install / "deps.lock").exist?
+    (install / "lib/scratch/tmp.rb").exist?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a files: selection in the tar form lists the selected files only" do
+    Given
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    (install / "lib").mkpath
+    (install / "lib/dev.rb").write("# dev")
+    (install / "VERSION").write("0.8.0")
+    (install / "Gemfile").write("")
+    packager = Dev::Lifecycle::Archive.new(form: FORM::Tar.new, files: Dev::Lifecycle::FileSelection.parse(["lib", "VERSION"]))
+
+    When
+    packed = packager.package(build("rspock"), install, root / "store/dev-core")
+
+    Then
+    listing, = Open3.capture2("sh", "-c", "zstd -d -c #{packed.archive} | tar -tf -")
+    listing.lines.map(&:chomp).sort == ["./", "./VERSION", "./lib/", "./lib/dev.rb"]
+    packager.to_s == "archive (tar), files: lib VERSION"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a files: selection that selects nothing is refused with the patterns named, before anything is written" do
+    Given
+    root = Pathname(Dir.mktmpdir("archive-"))
+    install = root / "install"
+    install.mkpath
+    (install / "game.exe").write("exe")
+    packager = Dev::Lifecycle::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["bin", "lib"]))
+
+    When
+    packager.package(build("rspock"), install, root / "store/rspock")
+
+    Then
+    error = raises(Dev::Lifecycle::FileSelection::EmptySelectionError)
+    error.message.include?("files: bin lib selects nothing")
+    !(root / "store").exist?
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
   test "packaging again overwrites in place: a previous form's output does not survive" do
     Given "a split set and a zip from earlier packagings"
     root = Pathname(Dir.mktmpdir("archive-"))
@@ -238,10 +319,12 @@ class Dev::Lifecycle::ArchiveTest < Minitest::Test
     error.message.include?("zip, tar")
   end
 
-  test "archives are values over their form" do
+  test "archives are values over their form and their selection" do
     Expect
     Dev::Lifecycle::Archive.new == Dev::Lifecycle::Archive.new(form: FORM::Zip.new)
+    Dev::Lifecycle::Archive.new == Dev::Lifecycle::Archive.new(files: Dev::Lifecycle::FileSelection.all)
     Dev::Lifecycle::Archive.new != Dev::Lifecycle::Archive.new(form: FORM::Tar.new)
+    Dev::Lifecycle::Archive.new != Dev::Lifecycle::Archive.new(files: Dev::Lifecycle::FileSelection.parse(["bin"]))
     Dev::Lifecycle::Archive.new.to_s == "archive"
     Dev::Lifecycle::Archive.new.hash == Dev::Lifecycle::Archive.new.hash
   end

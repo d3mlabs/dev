@@ -50,9 +50,11 @@ module Dev
 
       # `packager: archive` (or omitted) in one of dev's own forms
       # (Lifecycle::Archive::Form): the zip, or the tar — whole or split.
-      # With `vendor: true`, the install is a tool tree whose closure
-      # (Deps::ToolClosure) is vendored into it before it is archived, so
-      # the asset ships its gems and install writes wrappers only.
+      # `files:` (Lifecycle::FileSelection) names which of the install's
+      # files ship; omitted, all of them. With `vendor: true`, the install
+      # is a tool tree whose closure (Deps::ToolClosure) is vendored into
+      # it before it is archived, so the asset ships its gems and install
+      # writes wrappers only.
       class Archive < T::Struct
         extend T::Sig
         include PackagerSpec
@@ -62,17 +64,18 @@ module Dev
         VENDORED = ", vendored"
 
         const :form, Lifecycle::Archive::Form, factory: -> { Lifecycle::Archive::Form::Zip.new }
+        const :files, Lifecycle::FileSelection, factory: -> { Lifecycle::FileSelection.all }
         const :vendor, T::Boolean, default: false
 
         sig { override.returns(String) }
         def to_s
-          "archive#{form}#{VENDORED if vendor}"
+          "archive#{form}#{files}#{VENDORED if vendor}"
         end
 
         # @return [Array] the members that constitute identity
         sig { override.returns(T::Array[T.anything]) }
         def equality_members
-          [form, vendor]
+          [form, files, vendor]
         end
       end
 
