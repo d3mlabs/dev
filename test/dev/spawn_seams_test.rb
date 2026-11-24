@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
-require "dev/deps/tool_closure"
+require "dev/deps/self_contained_tree"
 require "fileutils"
 require "pathname"
 require "tmpdir"
@@ -65,29 +65,30 @@ class Dev::SpawnSeamsTest < Minitest::Test
     sources.values.none? { |code| code.match?(/["'](?:GEM_HOME|__shadowenv_data)["']/) }
   end
 
-  # A tool tree's `bin/<name>` wrapper is a spawn seam dev writes to disk
-  # rather than runs — the one kind the source scan above cannot see. It
-  # is bin/dev's sh half: the harness activation unset, the keg's Ruby
-  # exec'd, nothing else. An `export` would hand the tool's process (and
-  # its children — a `dev` in a checkout, an agent's `bundle exec`) a
-  # foreign bundler activation; a `GEM_` key cleared or set would take the
-  # caller's gem env from them. Both are the wrapper-exports-into-process
-  # shape of dev#180, compensated by the scrubs #274/#306/#333 then undid.
-  test "a tool tree's generated wrapper exports nothing and names no gem-env key" do
-    Given "a tool tree with gems and an executable, wrapped"
+  # A self-contained tree's `bin/<name>` launcher is a spawn seam dev
+  # writes to disk rather than runs — the one kind the source scan above
+  # cannot see. It is bin/dev's sh half: the harness activation unset, the
+  # keg's Ruby exec'd, nothing else. An `export` would hand the tool's
+  # process (and its children — a `dev` in a checkout, an agent's `bundle
+  # exec`) a foreign bundler activation; a `GEM_` key cleared or set would
+  # take the caller's gem env from them. Both are the
+  # launcher-exports-into-process shape of dev#180, compensated by the
+  # scrubs #274/#306/#333 then undid.
+  test "a self-contained tree's generated launcher exports nothing and names no gem-env key" do
+    Given "a self-contained tree with gems and an executable, binstubbed"
     root = Pathname(Dir.mktmpdir("dev-spawn-seams-"))
     (root / "exe").mkpath
     (root / "dependencies.rb").write("Dev::Deps.define { ruby \"4.0.6\" }\n")
     (root / "deps.lock").write("ruby:\n  ruby:\n    group: app\n    version: 4.0.6\n")
     (root / "Gemfile").write(%(source "https://rubygems.org"\n))
     (root / "exe/tool").write("#!/usr/bin/env ruby\n")
-    Dev::Deps::ToolClosure.new(tree: root).wrap!(ruby: Pathname("/opt/homebrew/opt/ruby/bin/ruby"))
-    wrapper = (root / "bin/tool").read
+    Dev::Deps::SelfContainedTree.new(root:).gem_bundle.binstub!(ruby: Pathname("/opt/homebrew/opt/ruby/bin/ruby"))
+    launcher = (root / "bin/tool").read
 
     Expect "the script unsets bin/dev's harness list, exports nothing, and never spells a GEM_ key"
-    wrapper.lines.one? { |line| line.start_with?("unset ") }
-    wrapper.lines.none? { |line| line.lstrip.start_with?("export ") }
-    !wrapper.match?(/\bGEM_[A-Z_]*\b/)
+    launcher.lines.one? { |line| line.start_with?("unset ") }
+    launcher.lines.none? { |line| line.lstrip.start_with?("export ") }
+    !launcher.match?(/\bGEM_[A-Z_]*\b/)
 
     Cleanup
     FileUtils.rm_rf(root)

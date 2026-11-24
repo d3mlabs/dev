@@ -342,8 +342,8 @@ module Dev
       end
 
       # The Cellar keg of an installed pin, for a caller that runs the keg's
-      # binaries by path rather than through a project's activation — a tool
-      # tree's closure runs under the Ruby its own lock pins.
+      # binaries by path rather than through a project's activation — a
+      # self-contained tree runs under the Ruby its own lock pins.
       #
       # @param dep [Dependency] a formula pin this integration installed
       # @return [Pathname] the keg whose version is the locked one

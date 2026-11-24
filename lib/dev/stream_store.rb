@@ -13,8 +13,8 @@ require "dev/stream"
 module Dev
   # What of a stream this host has installed. A stream's head is installed
   # as the gh tree every gh pin becomes — `~/.dev/gh/<owner>/<repo>/<tag>`
-  # in the artifact store, version-keyed and immutable, its closure
-  # materialised inside (Deps::GhIntegration) — so "installed" is read from
+  # in the artifact store, version-keyed and immutable, installed
+  # self-contained (Deps::GhIntegration) — so "installed" is read from
   # the store and recorded nowhere: the release tags of the series with a
   # published tree there, the greatest of them being where the hook last
   # brought the host. Also the one derivation of the pin a head installs
@@ -26,8 +26,8 @@ module Dev
     # The group the pin is recorded under: a tool, run by jobs.
     GROUP = :app
 
-    # A source tree published as-is: the release's tree is the tool, and
-    # its closure is materialised at install (Deps::ToolClosure).
+    # A source tree published as-is: the release's tree is the tool,
+    # installed self-contained (Deps::SelfContainedTree).
     BUILD = "none"
 
     # @param store [Deps::ArtifactStore] where published trees live

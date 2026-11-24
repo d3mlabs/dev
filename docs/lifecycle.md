@@ -127,7 +127,7 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
 4. Before `archive` writes, every channel whose `targets:` names the
    build is shown the tree as it ships — the `files:` selection, not the
    install — and may refuse it. Most channels take any tree; `gh`
-   refuses a [self-contained tree](dependencies.md#a-tools-closure-at-install-or-at-release)
+   refuses a [self-contained tree](dependencies.md#self-contained-trees)
    that is incomplete for the install every follower runs: a
    `dependencies.rb` without its `deps.lock` (or the reverse), a lock
    pinning no Ruby, no `exe/`, or a `bin/<name>` an `exe/<name>`'s
@@ -769,7 +769,7 @@ channel cuts every release with `--latest=false`
 
 The channel also has a say at `dev package`. A tree it receives that
 ships `dependencies.rb` and `deps.lock` is installed
-[self-contained](dependencies.md#a-tools-closure-at-install-or-at-release)
+[self-contained](dependencies.md#self-contained-trees)
 by every follower, and the channel refuses one that is incomplete for
 that install before it becomes an asset: the manifest without the lock
 (or the reverse), a lock pinning no Ruby, no `exe/` to write launchers

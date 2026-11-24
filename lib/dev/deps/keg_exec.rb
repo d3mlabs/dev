@@ -8,8 +8,8 @@ require_relative "toolchain_exec"
 module Dev
   module Deps
     # The spawn seam for one keg's own binaries: `<keg>/bin/<program>`, by
-    # path, with no project and no shadowenv in between. A tool tree's
-    # closure materializes under the Ruby its own lock pins, which is a keg
+    # path, with no project and no shadowenv in between. A self-contained
+    # tree's gems vendor under the Ruby its own lock pins, which is a keg
     # dev installed and nothing the current project activates.
     #
     # Like ShadowenvExec, this seam clears nothing: the env it inherits is

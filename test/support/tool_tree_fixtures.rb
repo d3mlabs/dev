@@ -5,7 +5,7 @@ require "pathname"
 
 # A self-contained tool tree as a release of a Ruby project lays it —
 # manifest, lock, Gemfile, executables under exe/ — for the tests that
-# read, vendor, wrap or package one. Pure builders over a directory the
+# read, vendor, launch or package one. Pure builders over a directory the
 # test owns; no state is shared.
 module ToolTreeFixtures
   # A lock pinning the Ruby the tree runs under.
