@@ -140,6 +140,16 @@ contains the toolchain and no dev; the container installs dev at the host's
 version on first use. Design notes:
 [ADR-0001](DECISIONS.md#adr-0001--dev-is-live-infrastructure).
 
+The contract runs forward as well as back: a `dev.yml` written for the
+latest release still `dev up`s under the dev a host has not upgraded yet,
+because the one half that grows a grammar, `targets:`, is refused by the
+verbs that need it rather than at load ([dev.yml is read by older
+devs](dev-yml.md#devyml-is-read-by-older-devs)). The same rule is what
+lets dev develop itself: inside dev's own checkout the installed dev `dev
+up`s the checkout's lock, then hands every verb to the checkout's `bin/dev`
+([Inside dev's own checkout, dev is the
+checkout](cli.md#inside-devs-own-checkout-dev-is-the-checkout)).
+
 A tool deployed through its own gh channel is live the same way, one
 release at a time: `dev release` cuts an immutable release, `dev deploy
 gh` moves the series head to it, and every host following that stream

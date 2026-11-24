@@ -434,7 +434,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load surfaces a channel's faults from the parser and the pattern grammar: #{fault}" do
+  test "#load carries a channel's faults from the parser and the pattern grammar as the lifecycle fault, for `deploy` to refuse with: #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: cellbound-3d
@@ -446,10 +446,14 @@ class ProjectManifestLoaderTest < Minitest::Test
     YAML
 
     When
-    build_loader.load(Pathname.new(tmp.path))
+    manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then
-    raises error_class
+    Then "the refusal is the parser's own, kept for the verbs; nothing of the lifecycle half parsed"
+    manifest.lifecycle_fault.refusal.is_a?(error_class)
+    manifest.lifecycle_fault.verbs == ["build", "package", "deploy"]
+    manifest.targets == {}
+    manifest.channels == {}
+    manifest.commands == {}
 
     Cleanup
     tmp.close!
@@ -582,7 +586,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load surfaces the release's faults from the parser, the list and the grammar: #{fault}" do
+  test "#load carries the release's faults from the parser, the list and the grammar as the lifecycle fault, for `release` to refuse with: #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: cellbound-3d
@@ -594,10 +598,13 @@ class ProjectManifestLoaderTest < Minitest::Test
     YAML
 
     When
-    build_loader.load(Pathname.new(tmp.path))
+    manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then
-    raises error_class
+    manifest.lifecycle_fault.refusal.is_a?(error_class)
+    manifest.lifecycle_fault.verbs == ["build", "package", "release"]
+    manifest.release.nil?
+    manifest.commands == {}
 
     Cleanup
     tmp.close!
@@ -655,7 +662,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load surfaces a target's environment: faults from the parser and the target: #{fault}" do
+  test "#load carries a target's environment: faults from the parser and the target as the lifecycle fault: #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: cellbound-3d
@@ -666,10 +673,11 @@ class ProjectManifestLoaderTest < Minitest::Test
     YAML
 
     When
-    build_loader.load(Pathname.new(tmp.path))
+    manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then
-    raises error_class
+    manifest.lifecycle_fault.refusal.is_a?(error_class)
+    manifest.targets == {}
 
     Cleanup
     tmp.close!
@@ -819,7 +827,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
-  test "#load surfaces the target parser's and the target's own errors unchanged: #{fault}" do
+  test "#load carries the target parser's and the target's own errors unchanged as the lifecycle fault: #{fault}" do
     Given
     tmp = write_dev_yml(<<~YAML)
       name: cellbound-3d
@@ -828,10 +836,12 @@ class ProjectManifestLoaderTest < Minitest::Test
     YAML
 
     When
-    build_loader.load(Pathname.new(tmp.path))
+    manifest = build_loader.load(Pathname.new(tmp.path))
 
-    Then
-    raises error_class
+    Then "the refusal is the parser's own; `build` and `package` are the verbs it implies"
+    manifest.lifecycle_fault.refusal.is_a?(error_class)
+    manifest.lifecycle_fault.verbs == ["build", "package"]
+    manifest.targets == {}
 
     Cleanup
     tmp.close!
@@ -841,6 +851,102 @@ class ProjectManifestLoaderTest < Minitest::Test
     "a reserved suffix"     | "cellbound-3d-win64: { platforms: [win64] }"       | Dev::Lifecycle::Target::ReservedTargetSuffixError
     "an unknown id"         | "cellbound-3d: { platforms: [windows-x64] }"       | Dev::Cli::TargetParser::InvalidAxisError
     "a non-mapping entry"   | "cellbound-3d: ./bin/build"                        | Dev::Cli::TargetParser::InvalidTargetError
+    "a non-mapping block"   | "- cellbound-3d"                                   | Dev::Cli::TargetParser::InvalidTargetsError
+  end
+
+  # dev#689: a dev.yml is written for the dev of its day and read by the dev
+  # of every day before it — dev's own checkout most of all, where the
+  # installed dev runs `dev up` on a dev.yml the checkout just extended.
+  # The lifecycle half is the half that grows a grammar: a key this dev
+  # predates must stop the lifecycle verbs, naming the key, and nothing
+  # else — not `up`, not a project command.
+  test "#load keeps a `targets:` this dev cannot read as the lifecycle fault and parses every other key: `dev up` still runs (dev#689)" do
+    Given "dev's own dev.yml, one archive option ahead of this dev"
+    tmp = write_dev_yml(<<~YAML)
+      name: dev
+      targets:
+        dev-core:
+          desc: The org-blank tool
+          packager: { archive: { files: [bin, lib] } }
+        dev:
+          desc: The deployment
+      commands:
+        up:
+          desc: Setup dev environment
+          run: ./bin/setup.rb
+        test:
+          run: ./bin/test.rb
+        deploy:
+          commands:
+            brew:
+              desc: Point the tap at a release
+              targets: [dev-core, dev]
+        release:
+          desc: Cut a release
+    YAML
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the fault names the key and the verbs the declaration implies; `deploy` and `release` left the command tree as they would have"
+    manifest.lifecycle_fault.message == "target 'dev-core': archive takes format, split, vendor, not files"
+    manifest.lifecycle_fault.verbs == ["build", "package", "deploy", "release"]
+    manifest.targets == {}
+    manifest.channels == {}
+    manifest.release.nil?
+    manifest.commands.keys == ["up", "test"]
+    manifest.commands["up"] == Dev::Cli::ProjectCommand.new(run: "./bin/setup.rb", desc: "Setup dev environment")
+
+    Cleanup
+    tmp.close!
+  end
+
+  test "#load has no lifecycle fault when `targets:` reads, or is absent" do
+    Given "a project with readable targets, and one with none"
+    with_targets = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64] }
+    YAML
+    without = write_dev_yml(<<~YAML)
+      name: snappy
+      commands:
+        test: { run: ./bin/test }
+    YAML
+
+    When
+    read = build_loader.load(Pathname.new(with_targets.path))
+    none = build_loader.load(Pathname.new(without.path))
+
+    Then
+    read.lifecycle_fault.nil?
+    read.targets.keys == ["snappy-steam"]
+    none.lifecycle_fault.nil?
+    none.targets == {}
+
+    Cleanup
+    with_targets.close!
+    without.close!
+  end
+
+  test "#load still refuses commands: build: beside a `targets:` it cannot read — the rule needs only the key" do
+    Given
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64], packager: { archive: { files: [bin] } } }
+      commands:
+        build: { run: ./bin/build.sh }
+    YAML
+
+    When
+    build_loader.load(Pathname.new(tmp.path))
+
+    Then
+    raises Dev::Cli::ProjectManifestLoader::DerivedCommandDeclaredError
+
+    Cleanup
+    tmp.close!
   end
 
   private

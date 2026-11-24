@@ -9,6 +9,7 @@ require "dev/environment_ref"
 require "dev/lifecycle"
 require_relative "channel_parser"
 require_relative "command_parser"
+require_relative "lifecycle_fault"
 require_relative "project_manifest"
 require_relative "release_parser"
 require_relative "target_parser"
@@ -38,9 +39,46 @@ module Dev
     # to name is refused with the fix named, rather than silently kept as a
     # command.
     #
+    # The lifecycle half — `targets:` with the channels and release derived
+    # from it — is the half of dev.yml that grows a grammar, and a dev.yml
+    # is read by devs older than the key it just gained: in dev's own
+    # checkout the installed dev runs `dev up` on it before the checkout's
+    # dev can (bin/dev), and in any project an older dev `dev up`s a
+    # newer dev.yml until its own upgrade lands. So a lifecycle
+    # declaration this dev cannot read does not fail the load: the
+    # vocabulary's refusal is kept as the manifest's LifecycleFault, the
+    # three derived fields stay empty, and the verbs the declaration
+    # implies refuse with it when asked (Runner, Builtins::FaultedVerbCommand).
+    # The rules that need only the key's presence — `deploy` and `release`
+    # leaving the command tree, `commands: build:` refused — hold either
+    # way; the one that needs the parsed targets (a command named like a
+    # build) is the readable path's alone.
+    #
     # Stateless: reusable across manifests, inputs arrive as method arguments.
     class ProjectManifestLoader
       extend T::Sig
+
+      # The lifecycle half of dev.yml as this dev read it: the targets with
+      # what derives from them, or — when the vocabulary refused — nothing
+      # of them and the fault.
+      class LifecycleSection < T::Struct
+        extend T::Sig
+
+        const :targets, T::Hash[String, Lifecycle::Target]
+        const :channels, T::Hash[String, Lifecycle::Channel]
+        const :release, T.nilable(Lifecycle::ReleaseBuilds)
+        const :fault, T.nilable(LifecycleFault)
+
+        # Whether `targets:` is declared at all, readable or not — what
+        # lifts `deploy` and `release` out of the command tree and forbids
+        # `commands: build:`. A declared-but-empty `targets: {}` is none.
+        #
+        # @return [Boolean]
+        sig { returns(T::Boolean) }
+        def declared?
+          targets.any? || !fault.nil?
+        end
+      end
 
       # Raised when dev.yml still carries the removed `ruby:` key. The
       # toolchain is a project dependency and is declared only in
@@ -138,10 +176,6 @@ module Dev
       #   `targets:` and the project declares none
       # @raise [ReleaseWithoutTargetsError] when `release` declares
       #   `targets:` and the project declares none
-      # @raise [ChannelParser::DeployBodyError] and the channel rules, when
-      #   `targets:` is declared and `commands: deploy:` is not a tree of channels
-      # @raise [ReleaseParser::ReleaseBodyError] and the release rules, when
-      #   `targets:` is declared and `commands: release:` is not a declaration
       sig { params(dev_yml_path: Pathname).returns(ProjectManifest) }
       def load(dev_yml_path)
         yaml = YAML.load_file(dev_yml_path)
@@ -149,27 +183,75 @@ module Dev
         reject_retired_keys(yaml)
         warn_retired_runner_key(yaml)
         raw_commands = yaml["commands"] || {}
-        targets = @target_parser.parse_all(yaml["targets"])
-        channels = parse_channels(raw_commands, targets)
-        release = parse_release(raw_commands, targets)
-        # Once targets exist, `deploy` is the channels' and `release` the
-        # declaration's — neither a command.
-        raw_commands = raw_commands.except(ChannelParser::DEPLOY, ReleaseParser::RELEASE) if targets.any?
+        lifecycle = parse_lifecycle(yaml["targets"], raw_commands)
+        # Once targets are declared, `deploy` is the channels' and `release`
+        # the declaration's — neither a command, whether or not this dev
+        # could read them.
+        raw_commands = raw_commands.except(ChannelParser::DEPLOY, ReleaseParser::RELEASE) if lifecycle.declared?
         commands = T.let(
           raw_commands.to_h { |name, h| [name.to_s, @command_parser.parse([name.to_s], h)] },
           T::Hash[String, ProjectNode],
         )
-        reject_derived_commands(commands, targets)
-        reject_build_named_commands(commands, targets)
+        reject_derived_commands(commands, targets_declared: lifecycle.declared?)
+        reject_build_named_commands(commands, lifecycle.targets)
         ProjectManifest.new(
           name: T.cast(yaml["name"], String),
           commands:,
-          targets:,
-          channels:,
-          release:,
+          targets: lifecycle.targets,
+          channels: lifecycle.channels,
+          release: lifecycle.release,
+          lifecycle_fault: lifecycle.fault,
           engine: parse_resources(yaml["engine"]),
           runner_roles: parse_runner_roles(yaml["runner_roles"]),
         )
+      end
+
+      # The lifecycle half: `targets:`, then the channels and the release
+      # parsed against them. A refusal anywhere in it is kept, not raised —
+      # the verbs it implies carry it (LifecycleFault) — so a dev.yml one
+      # grammar ahead of this dev still loads for every other command.
+      #
+      # Every lifecycle parser (TargetParser, ChannelParser, ReleaseParser)
+      # and the vocabulary they build (Target, BuildPattern, ReleaseBuilds,
+      # Channel) refuses a declaration as an ArgumentError, as CommandParser
+      # refuses a command; that one class is what makes the deferral one
+      # rescue. The loader's own cross-rules are RuntimeErrors and pass
+      # through: a channel or release shaped for targets the project does
+      # not declare is a fact about this dev.yml, not about this dev.
+      #
+      # @param raw_targets [Object, nil] the `targets` value as YAML delivered it
+      # @param raw_commands [Hash] the `commands` mapping as YAML delivered it
+      # @return [LifecycleSection]
+      # @raise [ChannelWithoutTargetsError]
+      # @raise [ReleaseWithoutTargetsError]
+      sig { params(raw_targets: T.untyped, raw_commands: T::Hash[T.untyped, T.untyped]).returns(LifecycleSection) }
+      def parse_lifecycle(raw_targets, raw_commands)
+        targets = @target_parser.parse_all(raw_targets)
+        LifecycleSection.new(
+          targets:,
+          channels: parse_channels(raw_commands, targets),
+          release: parse_release(raw_commands, targets),
+          fault: nil,
+        )
+      rescue ArgumentError => e
+        LifecycleSection.new(
+          targets: {},
+          channels: {},
+          release: nil,
+          fault: LifecycleFault.new(refusal: e, verbs: derived_verbs(raw_commands)),
+        )
+      end
+
+      # The verbs a declared `targets:` implies, readable or not: `build`
+      # and `package` from the key itself, `deploy` and `release` from the
+      # `commands:` entries that would have been lifted out as channels and
+      # the release declaration.
+      #
+      # @param raw_commands [Hash] the `commands` mapping as YAML delivered it
+      # @return [Array<String>]
+      sig { params(raw_commands: T::Hash[T.untyped, T.untyped]).returns(T::Array[String]) }
+      def derived_verbs(raw_commands)
+        DERIVED_COMMANDS + [ChannelParser::DEPLOY, ReleaseParser::RELEASE].select { |verb| raw_commands.key?(verb) }
       end
 
       # With targets declared, `commands: deploy:` is the project's channels
@@ -218,15 +300,16 @@ module Dev
 
       # With targets declared, `build` and `package` exist as derived verbs,
       # so a project command of either name is refused with what to declare
-      # instead.
+      # instead. The rule needs only the key: it holds for a `targets:` this
+      # dev could not read.
       #
       # @param commands [Hash{String => ProjectNode}] the top-level commands
-      # @param targets [Hash{String => Lifecycle::Target}]
+      # @param targets_declared [Boolean] whether dev.yml declares `targets:`
       # @return [void]
       # @raise [DerivedCommandDeclaredError]
-      sig { params(commands: T::Hash[String, ProjectNode], targets: T::Hash[String, Lifecycle::Target]).void }
-      def reject_derived_commands(commands, targets)
-        return if targets.empty?
+      sig { params(commands: T::Hash[String, ProjectNode], targets_declared: T::Boolean).void }
+      def reject_derived_commands(commands, targets_declared:)
+        return unless targets_declared
 
         declared = DERIVED_COMMANDS & commands.keys
         return if declared.empty?

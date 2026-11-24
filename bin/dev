@@ -26,6 +26,33 @@
 unset RUBYOPT RUBYLIB BUNDLE_GEMFILE BUNDLE_LOCKFILE BUNDLE_PATH \
   BUNDLE_APP_CONFIG BUNDLE_BIN BUNDLE_BIN_PATH BUNDLER_VERSION BUNDLER_SETUP
 
+# Inside dev's own checkout, dev is the checkout. The installed dev
+# predates every change the checkout makes to its own dev.yml, so were it
+# to read that file it would refuse grammar the checkout's code is about
+# to define (test/dev/bin_dev_test.rb guards this rule). The project root
+# is the first directory at or above the cwd with a dev.yml, as the Ruby
+# half finds it; it is dev itself when that dev.yml says `name: dev` and
+# `bin/dev` and `lib/dev.rb` sit beside it. Then, unless this shim *is*
+# that bin/dev, the checkout's shim runs in this one's place with the same
+# arguments and the same cwd, under the checkout's shadowenv — its Ruby
+# and its gems — exactly as `dev test` would run the checkout's tests.
+#
+# Only once the checkout's lock is installed: the shadowenv exists and the
+# lock is satisfied. Before that there is no toolchain for the checkout's
+# code to run on, and the installed dev runs the verb itself — `dev up`,
+# which installs the lock, is that verb. `bundle check --dry-run` is the
+# probe: it reads the lock and writes nothing.
+dir=$(pwd)
+while [ -n "$dir" ] && ! [ -f "$dir/dev.yml" ]; do
+  dir=${dir%/*}
+done
+if [ -n "$dir" ] && grep -Eq '^name:[[:space:]]*dev[[:space:]]*$' "$dir/dev.yml" \
+  && [ -x "$dir/bin/dev" ] && [ -f "$dir/lib/dev.rb" ] && ! [ "$0" -ef "$dir/bin/dev" ] \
+  && [ -d "$dir/.shadowenv.d" ] && command -v shadowenv >/dev/null 2>&1 \
+  && (cd "$dir" && shadowenv exec -- bundle check --dry-run >/dev/null 2>&1); then
+  exec shadowenv exec --dir "$dir" -- "$dir/bin/dev" "$@"
+fi
+
 # Use PATH ruby (rbenv) if >= 3.1, fall back to Homebrew Ruby for bootstrapping.
 # dev uses Ruby 3.1+ syntax (e.g. hash literal value omission).
 if command -v ruby >/dev/null 2>&1; then

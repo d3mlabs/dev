@@ -8,6 +8,26 @@ it reports errors.
 dev walks up from the current directory to the enclosing git repo root and
 reads the `dev.yml` there. Builtins marked *anywhere* below run without one.
 
+### Inside dev's own checkout, dev is the checkout
+
+When the project found is dev itself — its `dev.yml` says `name: dev` and
+`bin/dev` and `lib/dev.rb` sit beside it — the installed dev runs the
+checkout's `bin/dev` in its place, with the same arguments and working
+directory, under the checkout's shadowenv. `dev test` runs the checkout's
+tests with the checkout's code, `dev --version` prints the checkout's
+`VERSION`, `dev release` cuts a release with the verb as the checkout
+defines it. The decision is the launcher's, in the sh half of `bin/dev`,
+before any Ruby of the installed dev reads the `dev.yml` — so a `dev.yml`
+key the checkout's code is the first to define never has to pass the
+installed dev's reader.
+
+The handoff waits for the checkout's lock: the project shadowenv exists
+and `bundle check` passes under it. Until then the installed dev runs the
+verb itself, which is how `dev up` installs that lock in a fresh clone or
+a CI job; the next `dev` runs the checkout. A `dev.yml` the installed dev
+cannot fully read does not stop that `dev up`: see [dev.yml is read by
+older devs](dev-yml.md#devyml-is-read-by-older-devs).
+
 ## The command tree
 
 `dev` is the root of a tree. Any command may have subcommands: `dev deps

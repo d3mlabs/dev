@@ -135,10 +135,13 @@ exactly when the target declares that axis: `cellbound-3d-win64-release`,
 pattern: an omitted segment means the axis's default when running a verb,
 or "any" where a set is accepted.
 
-Validation at load: a target name is lower-case alphanumeric segments
-joined by single dashes and may not end in a platform or config id. With
-targets declared, `commands: build:` and `commands: package:` are refused
-(the verbs are derived), and no command may be named like a build.
+Validation: a target name is lower-case alphanumeric segments joined by
+single dashes and may not end in a platform or config id. With targets
+declared, `commands: build:` and `commands: package:` are refused at load
+(the verbs are derived), and no command may be named like a build. A
+`targets:` block this dev cannot read is refused by the verbs it implies,
+not at load: see [dev.yml is read by older
+devs](#devyml-is-read-by-older-devs).
 
 ### Capability
 
@@ -277,3 +280,31 @@ config.
 
 What the verbs then do — `build`, `package`, `deploy`, `release`, where
 each runs and what it leaves behind — is in [Lifecycle](lifecycle.md).
+
+## dev.yml is read by older devs
+
+Projects pin no dev version ([Configuration](configuration.md#dev-is-live-infrastructure)),
+so a `dev.yml` is read by every dev a machine still runs: one written for
+the latest release lands on a host whose dev has not upgraded yet, and
+dev's own checkout is read by the installed dev before the checkout's code
+runs ([CLI](cli.md#inside-devs-own-checkout-dev-is-the-checkout)). `dev up`
+is the command that upgrades dev and installs the lock, so a `dev.yml` an
+older dev cannot fully read must still `dev up`.
+
+The half of `dev.yml` that grows a grammar is `targets:`, with the
+channels and release contents derived from it. A `targets:` block this
+dev cannot read — a key it does not know, a packager option it predates —
+does not fail the load. The verbs the block implies exist and refuse:
+`build` and `package` always, `deploy` and `release` when `commands:`
+declares them, each with the key named and the two fixes (upgrade dev, or
+fix the declaration). `dev help` lists them as refused; every other
+command runs. The rules that need only the block's presence hold as
+before: `deploy` and `release` leave the command tree, `commands: build:`
+is refused at load. `dev runner register` for a role anchored to the
+project's channels refuses too, since the channels derive from what could
+not be read.
+
+Everything outside `targets:` — `name`, `engine`, `commands`,
+`runner_roles` — is read at load as before; a key an older dev does not
+know on a command is ignored, as it always was, and a retired key is
+refused with its replacement.

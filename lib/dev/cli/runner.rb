@@ -184,6 +184,7 @@ module Dev
             engine: manifest.engine,
             runner_roles: manifest.runner_roles,
             channels: manifest.channels,
+            lifecycle_fault: manifest.lifecycle_fault,
           ),
         )
       end
@@ -485,8 +486,17 @@ module Dev
         # The lifecycle verbs are derived from `targets:`: a project that
         # declares none has nothing to build, so they are absent rather than
         # present and refusing. `deploy` likewise from the channels, which
-        # need targets to accept builds from.
-        builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:, hosts:)) if manifest.targets.any?
+        # need targets to accept builds from. A `targets:` this dev could
+        # not read is the one case of present-and-refusing: the verbs the
+        # declaration implies stand in, each refusing with the fault when
+        # asked, so the rest of the tree — `up` first — serves a dev.yml
+        # written for a newer dev (dev#689).
+        fault = manifest.lifecycle_fault
+        if manifest.targets.any?
+          builtins.merge!(lifecycle_builtins(manifest, project, bindings, ui:, hosts:))
+        elsif fault
+          builtins.merge!(fault.verbs.to_h { |verb| [verb, Builtins::FaultedVerbCommand.new(verb:, fault:)] })
+        end
         builtins.merge!(runner_builtins)
         # The global builtins are dispatched before the Runner (bin/dev); they
         # join the project tree so help lists one complete tree.

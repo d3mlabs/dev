@@ -104,7 +104,10 @@ runs:
 
     # The host half (the data root under the runner's sudo, the org tooling)
     # and the project half (the lock, the project's own `up:`); a probe on a
-    # warm host.
+    # warm host. This is the one verb that must run under the installed dev
+    # on any dev.yml, the checkout's `targets:` grammar newer than this dev
+    # included: in dev's own checkout, it is what installs the lock the
+    # launcher then hands every later verb to (bin/dev).
     - name: dev up
       shell: bash
       run: dev up

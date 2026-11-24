@@ -6,6 +6,7 @@ require "dev/ui"
 require "dev/engine_resources"
 require "dev/lifecycle/channel"
 require "dev/runner_role"
+require_relative "lifecycle_fault"
 require_relative "project_images"
 
 module Dev
@@ -29,6 +30,10 @@ module Dev
       # The deploy channels the project declares (ProjectManifest#channels):
       # a declared role anchors to the project's stream when one is gh's.
       const :channels, T::Hash[String, Dev::Lifecycle::Channel], default: {}
+      # Why the channels above are not known rather than none, when they
+      # are not (ProjectManifest#lifecycle_fault): a reader that would act
+      # on "no channel" — a role anchoring to no stream — refuses with it.
+      const :lifecycle_fault, T.nilable(LifecycleFault), default: nil
 
       # The project's environment images and where each command runs
       # (ProjectImages). One instance per context: the lock is read once.
