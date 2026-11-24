@@ -226,6 +226,63 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp.close!
   end
 
+  test "#load reads a target's build: and package: as builder: and packager:, with one note per load naming each key to rename (dev#692)" do
+    Given "a dev.yml still spelling both ports the deprecated way on one target, and one the new way on another"
+    tmp = write_dev_yml(<<~YAML)
+      name: cellbound-3d
+      targets:
+        cellbound-3d:
+          build: ./bin/build
+          package: ./bin/zip
+        cellbound-3d-editor:
+          builder: ./bin/build-editor
+          packager: none
+    YAML
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "the manifest is loaded"
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the ports are the same declarations under either spelling; one note lists the deprecated keys with the key to write"
+    manifest.targets["cellbound-3d"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build")
+    manifest.targets["cellbound-3d"].packager == Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/zip")
+    manifest.targets["cellbound-3d-editor"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build-editor")
+    $stderr.string.scan("dev: dev.yml").size == 1
+    $stderr.string.include?("`build:` and `package:` on a target are the deprecated spellings of `builder:` and `packager:`")
+    $stderr.string.include?("targets.cellbound-3d.build → builder")
+    $stderr.string.include?("targets.cellbound-3d.package → packager")
+    !$stderr.string.include?("cellbound-3d-editor")
+
+    Cleanup
+    $stderr = old_stderr
+    tmp.close!
+  end
+
+  test "#load notes the deprecated port spellings even on a targets: block this dev cannot read, and nothing when none is used" do
+    Given "a block with a packager option this dev predates, under the deprecated key"
+    tmp = write_dev_yml(<<~YAML)
+      name: snappy
+      targets:
+        snappy-steam: { platforms: [win64], package: { archive: { level: 9 } } }
+        snappy-mod: { builder: ./bin/build, packager: as-is }
+    YAML
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When
+    manifest = build_loader.load(Pathname.new(tmp.path))
+
+    Then "the fault is kept and the note still names the key"
+    manifest.lifecycle_fault.refusal.is_a?(Dev::Cli::TargetParser::InvalidPackagerError)
+    $stderr.string.include?("targets.snappy-steam.package → packager")
+    !$stderr.string.include?("snappy-mod")
+
+    Cleanup
+    $stderr = old_stderr
+    tmp.close!
+  end
+
   test "#load refuses a dev.yml on the retired shape at load, every key with where it went (dev#307, dev#311)" do
     Given "a dev.yml still on the Dockerfile path: the block with its keys, and container: flags, one nested"
     tmp = write_dev_yml(<<~YAML)
@@ -867,7 +924,7 @@ class ProjectManifestLoaderTest < Minitest::Test
       targets:
         dev-core:
           desc: The org-blank tool
-          packager: { archive: { files: [bin, lib] } }
+          packager: { archive: { files: [bin, lib], level: 9 } }
         dev:
           desc: The deployment
       commands:
@@ -889,7 +946,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     manifest = build_loader.load(Pathname.new(tmp.path))
 
     Then "the fault names the key and the verbs the declaration implies; `deploy` and `release` left the command tree as they would have"
-    manifest.lifecycle_fault.message == "target 'dev-core': archive takes format, split, vendor, not files"
+    manifest.lifecycle_fault.message == "target 'dev-core': archive takes format, split, vendor, files, not level"
     manifest.lifecycle_fault.verbs == ["build", "package", "deploy", "release"]
     manifest.targets == {}
     manifest.channels == {}
@@ -934,7 +991,7 @@ class ProjectManifestLoaderTest < Minitest::Test
     tmp = write_dev_yml(<<~YAML)
       name: snappy
       targets:
-        snappy-steam: { platforms: [win64], packager: { archive: { files: [bin] } } }
+        snappy-steam: { platforms: [win64], packager: { archive: { level: 9 } } }
       commands:
         build: { run: ./bin/build.sh }
     YAML

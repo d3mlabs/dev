@@ -15,7 +15,7 @@ module Dev
     #
     # Built-ins: Archive (`archive`, the default), AsIsPackager (`as-is`, an
     # install that already is an archive), NonePackager (`none`, built and
-    # never shipped). ScriptPackager is the target's `package:` line.
+    # never shipped). ScriptPackager is the target's `packager:` script.
     module Packager
       extend T::Sig
       extend T::Helpers

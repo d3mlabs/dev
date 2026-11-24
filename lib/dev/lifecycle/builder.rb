@@ -18,9 +18,9 @@ module Dev
     # build's files itself; a toolchain's incremental state lives in its
     # own build directory, never in the stage, so nothing is lost.
     #
-    # ScriptBuilder is the target's `build:` line, reading the build from
+    # ScriptBuilder is the target's `builder:` script, reading the build from
     # `DEV_*`; CheckoutBuilder is the identity element a target with no
-    # `build:` gets — the checkout's tracked files. An integration builder
+    # `builder:` gets — the checkout's tracked files. An integration builder
     # owns the toolchain mapping and declares the target options it accepts
     # through `target_options_schema`.
     module Builder

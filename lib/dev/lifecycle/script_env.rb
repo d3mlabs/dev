@@ -10,12 +10,12 @@ require_relative "track"
 
 module Dev
   module Lifecycle
-    # The env the script forms read instead of flags. A `build:` or
-    # `package:` script gets the build's axes as `DEV_TARGET`,
+    # The env the script forms read instead of flags. A `builder:` or
+    # `packager:` script gets the build's axes as `DEV_TARGET`,
     # `DEV_PLATFORM` and `DEV_CONFIG` (each set exactly when the target
     # declares it, so a `case` over an undeclared axis fails under `set
-    # -u`), `DEV_INSTALL`, and for `package:` `DEV_ARTIFACT` (the archive
-    # path without its extension).
+    # -u`), `DEV_INSTALL`, and for a `packager:` script `DEV_ARTIFACT` (the
+    # archive path without its extension).
     #
     # A channel's `run:` gets the same axes for the archive it ships,
     # `DEV_ARTIFACT` as the archive file itself, `DEV_CHANNEL`, `DEV_TRACK`,
@@ -48,7 +48,7 @@ module Dev
       class << self
         extend T::Sig
 
-        # The env a `build:` script runs with.
+        # The env a `builder:` script runs with.
         #
         # @param build [Build]
         # @param install [Pathname] the directory to write the install into
@@ -58,7 +58,7 @@ module Dev
           axes(build).merge(INSTALL => install.to_s)
         end
 
-        # The env a `package:` script runs with.
+        # The env a `packager:` script runs with.
         #
         # @param build [Build]
         # @param install [Pathname] the install the builder wrote

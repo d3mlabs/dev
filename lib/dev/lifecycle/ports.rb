@@ -25,8 +25,8 @@ require_relative "vendored_packager"
 module Dev
   module Lifecycle
     # Turns a target's and a channel's declarations into their ports for
-    # this checkout: a `build:` line becomes a ScriptBuilder and no `build:`
-    # the CheckoutBuilder, a `package:` line a ScriptPackager, a channel's
+    # this checkout: a `builder:` script becomes a ScriptBuilder and no
+    # `builder:` the CheckoutBuilder, a `packager:` script a ScriptPackager, a channel's
     # `run:` a ScriptPublisher, a channel naming an integration the
     # publisher the lock contributed under that name. The one place the
     # sealed specs are matched.
@@ -66,7 +66,7 @@ module Dev
         @checkout_builder = T.let(CheckoutBuilder.new(project_root: project_root), CheckoutBuilder)
       end
 
-      # The target's builder: its `build:` line, or the identity builder —
+      # The target's builder: its `builder:` script, or the identity builder —
       # the checkout's tracked files — when it declares none.
       #
       # @param target [Target]

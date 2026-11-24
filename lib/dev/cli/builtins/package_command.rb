@@ -23,7 +23,7 @@ module Dev
       # make-like: the builder runs first unless the store's artifact for the
       # build is current — packaged from a clean tree at the commit the tree
       # is at now (Manifest::Artifact#current?) — or `--no-build` says to
-      # trust the install as it is; a target with no `build:` stages the
+      # trust the install as it is; a target with no `builder:` stages the
       # checkout's tracked files (the identity builder). A target with
       # `packager: none` is built, never packaged, and is refused here by
       # name.

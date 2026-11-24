@@ -15,7 +15,7 @@ module Dev
       # numbered parts plus `<STEM>.MANIFEST` with `--split`. STEM is the
       # archive path without its extension, `./<DIR's name>` unless given;
       # the files written are printed one per line. Plumbing for a target's
-      # `package:` script that wants the default form with a twist (`dev
+      # `packager:` script that wants the default form with a twist (`dev
       # pack "$DEV_INSTALL" --out "$DEV_ARTIFACT"`), so hidden from the
       # listings.
       class PackCommand < BuiltinCommand

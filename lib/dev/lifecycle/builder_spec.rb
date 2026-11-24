@@ -5,9 +5,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a target declares for its Builder port: a `build:` line. A target
-    # declaring none gets the identity builder: the checkout's tracked
-    # files are its install.
+    # What a target declares for its Builder port: `builder: <command>`, a
+    # script (dev has no built-in builder to name yet). A target declaring
+    # none gets the identity builder: the checkout's tracked files are its
+    # install.
     #
     # A declaration, not the port: Ports turns it into a Builder for this
     # checkout. Sealed, so the composition matches exhaustively.
@@ -22,7 +23,7 @@ module Dev
       sig { abstract.returns(String) }
       def to_s; end
 
-      # `build: <command>` — a shell command run at the project root with
+      # `builder: <command>` — a shell command run at the project root with
       # the build in its env (ScriptEnv).
       class Script < T::Struct
         extend T::Sig

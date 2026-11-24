@@ -9,7 +9,7 @@ require_relative "shell"
 
 module Dev
   module Lifecycle
-    # The script form of the Builder port: the target's `build:` line, run
+    # The script form of the Builder port: the target's `builder:` script, run
     # at the project root with the build in its env and `DEV_INSTALL`
     # naming the directory to stage into. The script owns the mapping from
     # dev's ids to the toolchain's switches; dev owns where the install goes
@@ -26,11 +26,11 @@ module Dev
       # build name it refused (`*) exit 2`).
       class BuildScriptFailedError < RuntimeError; end
 
-      # @return [String] the `build:` line as declared
+      # @return [String] the `builder:` command line as declared
       sig { returns(String) }
       attr_reader :command
 
-      # @param command [String] the target's `build:` line, a shell command
+      # @param command [String] the target's `builder:` script, a shell command
       # @param project_root [Pathname] where the script runs
       # @param shell [Shell]
       sig { params(command: String, project_root: Pathname, shell: Shell).void }
@@ -60,7 +60,7 @@ module Dev
         []
       end
 
-      # What the manifest records for an install a `build:` line made.
+      # What the manifest records for an install a `builder:` script made.
       NAME = "script"
 
       sig { override.returns(String) }

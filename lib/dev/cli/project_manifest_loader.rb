@@ -182,6 +182,7 @@ module Dev
         reject_removed_ruby_key(yaml)
         reject_retired_keys(yaml)
         warn_retired_runner_key(yaml)
+        warn_deprecated_port_keys(yaml["targets"])
         raw_commands = yaml["commands"] || {}
         lifecycle = parse_lifecycle(yaml["targets"], raw_commands)
         # Once targets are declared, `deploy` is the channels' and `release`
@@ -452,6 +453,34 @@ module Dev
 
         $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
                      "from the repo name (`dev runner register`); delete the block."
+      end
+
+      # A target's `build:` and `package:` are the deprecated spellings of
+      # its port keys, `builder:` and `packager:` (TargetParser reads them
+      # as those for one release, dev#692). One note per load, naming each
+      # key to rename, so the rename lands before the spellings go; a note
+      # and not a refusal, since the declaration still means what it meant.
+      # Scanned on the raw entries: the note is owed whether or not the
+      # block parses on this dev.
+      #
+      # @param raw_targets [Object, nil] the `targets` value as YAML delivered it
+      # @return [void]
+      sig { params(raw_targets: T.untyped).void }
+      def warn_deprecated_port_keys(raw_targets)
+        return unless raw_targets.is_a?(Hash)
+
+        lines = raw_targets.flat_map do |name, entry|
+          next [] unless entry.is_a?(Hash)
+
+          TargetParser::DEPRECATED_PORT_KEYS.filter_map do |key, deprecated_key|
+            "targets.#{name}.#{deprecated_key} → #{key}" if entry.key?(deprecated_key)
+          end
+        end
+        return if lines.empty?
+
+        $stderr.puts "dev: dev.yml `#{TargetParser::BUILD_KEY}:` and `#{TargetParser::PACKAGE_KEY}:` on a target are the " \
+                     "deprecated spellings of `#{TargetParser::BUILDER_KEY}:` and `#{TargetParser::PACKAGER_KEY}:` — rename " \
+                     "each (the value is unchanged); they go away next release:\n  #{lines.join("\n  ")}"
       end
 
       # The declared runner roles, the top-level `runner_roles:` block —

@@ -19,7 +19,7 @@ module Dev
   # hard way: a spinner captures every Ruby-level write and
   # masks stdin while it animates, so only in-process work or a
   # captured subprocess (`Open3.capture3`, stdin supplied) may run
-  # under one. A child that inherits the terminal — a `build:` script,
+  # under one. A child that inherits the terminal — a `builder:` script,
   # a publisher, anything that may prompt — runs under a step: no
   # spinner, nothing captured, its lines and prompts landing as
   # written. The rule is enforced, not reviewed: a spin owns
@@ -96,7 +96,7 @@ module Dev
     def spin(name, &block); end
 
     # One action that owns the terminal: a child with inherited stdio
-    # (a `build:` script, a publisher, `sudo`), whose lines, colors,
+    # (a `builder:` script, a publisher, `sudo`), whose lines, colors,
     # progress bars and prompts land exactly as it writes them. No
     # spinner; the name before, ✓ or ✗ after; the raise comes back out
     # as itself.

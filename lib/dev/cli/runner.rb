@@ -473,7 +473,7 @@ module Dev
             category: Command::Category::Workflow,
             children: { "gc" => Builtins::CacheGcCommand.new },
           ),
-          # Hidden plumbing for a target's `package:` script: dev's own
+          # Hidden plumbing for a target's `packager:` script: dev's own
           # archive forms over any directory.
           "pack" => Builtins::PackCommand.new(out: @out),
         }, T::Hash[String, Command])

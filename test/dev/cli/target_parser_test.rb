@@ -109,24 +109,24 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "configs"   | "Shipping"    | "debug, dev, release"
   end
 
-  test "build: and package: are the script forms; packager: a built-in by name; neither packager key means archive" do
+  test "builder: and packager: each take a script as a string or a built-in by name; no packager: means archive (dev#692)" do
     Given "cellbound-3d's editor, client and snappy's steam targets, as dev.yml spells them"
     raw = YAML.safe_load(<<~YAML)
       cellbound-3d-editor:
         platforms: [linux64, macos]
-        build: ./bin/build-editor
+        builder: ./bin/build-editor
         packager: none
       cellbound-3d:
         platforms: [win64, linux64]
         configs: [dev, release]
-        build: ./bin/build
+        builder: ./bin/build
       snappy-steam:
         platforms: [win64]
-        build: ./bin/build.sh
+        builder: ./bin/build.sh
         packager: as-is
       combatmode:
-        build: ./bin/layout
-        package: ./bin/zip-addon
+        builder: ./bin/layout
+        packager: ./bin/zip-addon
       rspock: {}
     YAML
 
@@ -143,6 +143,61 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     targets["combatmode"].packager == Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/zip-addon")
     targets["rspock"].builder.nil?
     targets["rspock"].packager == Dev::Lifecycle::PackagerSpec::Archive.new
+  end
+
+  test "a packager: string that is not a built-in's name is a script: #{raw.inspect}" do
+    Expect
+    Dev::Cli::TargetParser.new.parse("combatmode", { "packager" => raw }).packager ==
+      Dev::Lifecycle::PackagerSpec::Script.new(command: raw)
+
+    Where
+    raw
+    "./bin/zip-addon"
+    "make package"
+    "rubygem"
+  end
+
+  test "build: and package: are the deprecated spellings of builder: and packager:, read as them for one release" do
+    Given "the keys as the adopters still spell them, with every value form"
+    raw = YAML.safe_load(<<~YAML)
+      cellbound-3d:
+        build: ./bin/build
+        package: ./bin/zip
+      snappy-steam:
+        build: ./bin/build.sh
+        package: as-is
+      ue-toolchain:
+        package: { archive: { split: 2GiB } }
+    YAML
+
+    When
+    targets = Dev::Cli::TargetParser.new.parse_all(raw)
+
+    Then
+    targets["cellbound-3d"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build")
+    targets["cellbound-3d"].packager == Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/zip")
+    targets["snappy-steam"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build.sh")
+    targets["snappy-steam"].packager == Dev::Lifecycle::PackagerSpec::AsIs.new
+    targets["ue-toolchain"].builder.nil?
+    targets["ue-toolchain"].packager == Dev::Lifecycle::PackagerSpec::Archive.new(
+      form: Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB")),
+    )
+  end
+
+  test "one port spelled both ways on a target is refused: #{entry.inspect}" do
+    When
+    Dev::Cli::TargetParser.new.parse("snappy-steam", entry)
+
+    Then
+    error = raises(Dev::Cli::TargetParser::ConflictingPortError)
+    error.message.include?("target 'snappy-steam': declares both `#{deprecated_key}:` and `#{key}:`")
+    error.message.include?("`#{deprecated_key}:` is the deprecated spelling of `#{key}:`")
+
+    Where
+    entry                                                           | deprecated_key | key
+    { "build" => "./bin/build", "builder" => "./bin/build" }        | "build"        | "builder"
+    { "package" => "./bin/package", "packager" => "as-is" }         | "package"      | "packager"
+    { "package" => "as-is", "packager" => { "archive" => {} } }     | "package"      | "packager"
   end
 
   test "packager: archive takes its form and vendoring as options: #{options.inspect}" do
@@ -197,7 +252,7 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     targets["dev-core"].packager.to_s == "archive, files: bin lib !lib/scratch VERSION"
   end
 
-  test "a build: or package: line must be a command: #{key}: #{raw.inspect}" do
+  test "a port's script form must be a command line, under either spelling: #{key}: #{raw.inspect}" do
     When
     Dev::Cli::TargetParser.new.parse("opencell", { key => raw })
 
@@ -206,34 +261,43 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     error.message.include?("target 'opencell': `#{key}:` must be a command line")
 
     Where
-    key       | raw     | error_class
-    "build"   | ""      | Dev::Cli::TargetParser::InvalidBuilderError
-    "build"   | true    | Dev::Cli::TargetParser::InvalidBuilderError
-    "build"   | ["sh"]  | Dev::Cli::TargetParser::InvalidBuilderError
-    "package" | "   "   | Dev::Cli::TargetParser::InvalidPackagerError
-    "package" | nil     | Dev::Cli::TargetParser::InvalidPackagerError
+    key        | raw     | error_class
+    "builder"  | ""      | Dev::Cli::TargetParser::InvalidBuilderError
+    "builder"  | true    | Dev::Cli::TargetParser::InvalidBuilderError
+    "builder"  | ["sh"]  | Dev::Cli::TargetParser::InvalidBuilderError
+    "build"    | nil     | Dev::Cli::TargetParser::InvalidBuilderError
+    "packager" | "   "   | Dev::Cli::TargetParser::InvalidPackagerError
+    "package"  | ""      | Dev::Cli::TargetParser::InvalidPackagerError
   end
 
-  test "builder: is the integration form, refused until it lands, pointing at build:" do
+  test "builder: as a mapping names a built-in, and dev has none yet" do
     When
-    Dev::Cli::TargetParser.new.parse("cellbound-3d", { "builder" => "unreal" })
+    Dev::Cli::TargetParser.new.parse("cellbound-3d", { "builder" => { "unreal" => { "engine" => "5.6" } } })
 
     Then
     error = raises(Dev::Cli::TargetParser::InvalidBuilderError)
-    error.message.include?("`builder:` is not a builder form")
-    error.message.include?("`build:`")
+    error.message.include?("target 'cellbound-3d': `builder:` as a mapping names a built-in builder, and dev has none yet")
+    error.message.include?("`builder: ./bin/build`")
   end
 
-  test "both package: and packager: on one target is a conflict" do
+  test "a packager: that is neither a command line, a built-in nor a mapping is refused: #{raw.inspect}" do
     When
-    Dev::Cli::TargetParser.new.parse("snappy-steam", { "package" => "./bin/package", "packager" => "as-is" })
+    Dev::Cli::TargetParser.new.parse("opencell", { "packager" => raw })
 
     Then
-    error = raises(Dev::Cli::TargetParser::ConflictingPackagerError)
-    error.message.include?("target 'snappy-steam'")
+    error = raises(Dev::Cli::TargetParser::InvalidPackagerError)
+    error.message.include?("target 'opencell': `packager:` is a script's command line, a built-in's name (archive, as-is, none)")
+    error.message.include?("got #{raw.inspect}")
+
+    Where
+    raw
+    nil
+    ["archive"]
+    42
+    true
   end
 
-  test "a packager: that is not a built-in, or carries options it does not take, is refused: #{raw.inspect}" do
+  test "a packager: mapping naming no built-in, or carrying options it does not take, is refused: #{raw.inspect}" do
     When
     Dev::Cli::TargetParser.new.parse("opencell", { "packager" => YAML.safe_load(raw) })
 
@@ -244,8 +308,7 @@ class Dev::Cli::TargetParserTest < Minitest::Test
 
     Where
     raw                                        | message
-    "rubygem"                                  | "unknown packager \"rubygem\" (built-ins: archive, as-is, none)"
-    "[archive]"                                | "must be a built-in's name or a mapping"
+    "{ rubygem: {} }"                          | "unknown packager \"rubygem\" (built-ins: archive, as-is, none)"
     "{ archive: {}, as-is: {} }"               | "one built-in's name to its options"
     "{ archive: tar }"                         | "one built-in's name to its options"
     "{ as-is: { strip: true } }"               | "as-is takes no options, got strip"

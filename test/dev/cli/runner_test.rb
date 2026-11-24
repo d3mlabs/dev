@@ -355,8 +355,8 @@ class RunnerTest < Minitest::Test
     Given "a Runner over a project with two targets, and one without"
     out = StringIO.new
     with_targets = build_runner(out: out, targets: {
-      "rspock" => { "desc" => "The gem", "build" => "true" },
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "rspock" => { "desc" => "The gem", "builder" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
     })
     without = StringIO.new
     build_runner(out: without).run([])
@@ -382,12 +382,12 @@ class RunnerTest < Minitest::Test
     every_build = StringIO.new
     build_runner(out: every_build, targets: {
       "rspock" => { "desc" => "The gem" },
-      "site" => { "desc" => "The site", "configs" => ["release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["release"], "builder" => "true" },
     }, commands: { "release" => {} }).run(["help", "release"])
     declared = StringIO.new
     build_runner(out: declared, targets: {
       "rspock" => { "desc" => "The gem" },
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
     }, commands: { "release" => { "targets" => ["site-release"] } }).run(["help", "release"])
     without = StringIO.new
     build_runner(out: without, targets: { "rspock" => { "desc" => "The gem" } }).run([])
@@ -412,7 +412,7 @@ class RunnerTest < Minitest::Test
     out = StringIO.new
     runner = build_runner(out: out, targets: {
       "rspock" => { "desc" => "The gem" },
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
     })
 
     When
@@ -434,7 +434,7 @@ class RunnerTest < Minitest::Test
     old_stderr = $stderr
     $stderr = StringIO.new
     runner = build_runner(out: out, root: pinned_root("snappy-linux"), targets: {
-      "snappy-steam" => { "desc" => "The Steam client", "platforms" => ["win64"], "build" => "true" },
+      "snappy-steam" => { "desc" => "The Steam client", "platforms" => ["win64"], "builder" => "true" },
     })
 
     When "we print build's listing, then deps update's usage"
@@ -463,7 +463,7 @@ class RunnerTest < Minitest::Test
     Dev::DataRoot.stubs(:path).returns(data_root.to_s)
     out = StringIO.new
     runner = build_runner(out: out, root: root, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_INSTALL/env\"" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_INSTALL/env\"" },
       "rspock" => { "desc" => "The gem" },
     })
 
@@ -482,7 +482,7 @@ class RunnerTest < Minitest::Test
     Dev.stubs(:target_project_root).returns(root)
     tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
     tmp.write(YAML.dump({ "name" => "testproject",
-                          "targets" => { "site" => { "desc" => "The site", "build" => "true" } },
+                          "targets" => { "site" => { "desc" => "The site", "builder" => "true" } },
                           "commands" => { "deploy" => { "commands" => {
                             "staging" => { "desc" => "rsync", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
                           } } } }))
@@ -506,7 +506,7 @@ class RunnerTest < Minitest::Test
     Dev.stubs(:target_project_root).returns(root)
     tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
     tmp.write(YAML.dump({ "name" => "testproject",
-                          "targets" => { "site" => { "desc" => "The site", "configs" => ["release"], "build" => "true" } },
+                          "targets" => { "site" => { "desc" => "The site", "configs" => ["release"], "builder" => "true" } },
                           "commands" => { "release" => {} } }))
     tmp.flush
     out = StringIO.new
@@ -525,7 +525,7 @@ class RunnerTest < Minitest::Test
     Given "a project with two channels, and one with targets but none"
     out = StringIO.new
     with_channels = build_runner(out: out, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
       "rspock" => { "desc" => "The gem" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -582,7 +582,7 @@ class RunnerTest < Minitest::Test
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/9/statuses"], with: { "state" => "success" })
     runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, gh: gh, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "echo site > \"$DEV_INSTALL/index.html\"" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo site > \"$DEV_INSTALL/index.html\"" },
     }, commands: {
       "deploy" => { "commands" => {
         "staging" => { "targets" => ["site"], "run" => "echo \"$DEV_CHANNEL $DEV_BUILD $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },
@@ -633,7 +633,7 @@ class RunnerTest < Minitest::Test
       gh.answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/#{id}/statuses"], with: { "state" => "success" })
     end
     runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, gh: gh, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
       "rspock" => { "desc" => "The gem" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -665,7 +665,7 @@ class RunnerTest < Minitest::Test
       }])
       .answers(["api", "repos/d3mlabs/testproject/deployments/9/statuses?per_page=1"], with: [{ "state" => "success", "description" => "run: ./bin/stage" }])
     runner = build_runner(out: out, gh: gh, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
     }, commands: {
       "deploy" => { "commands" => { "staging" => { "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" } } },
     })
@@ -686,7 +686,7 @@ class RunnerTest < Minitest::Test
     Dev::Deps::Registry.stubs(:publishers).returns({ "steam" => steam })
     out = StringIO.new
     configured = build_runner(out: out, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
       "rspock" => { "desc" => "The gem" },
     }, commands: {
       "deploy" => { "commands" => {
@@ -761,7 +761,7 @@ class RunnerTest < Minitest::Test
     runner = build_runner(
       name: "dev",
       out: out,
-      targets: { "dev-core" => { "desc" => "The org-blank tool", "packager" => { "archive" => { "files" => ["bin", "lib"] } } } },
+      targets: { "dev-core" => { "desc" => "The org-blank tool", "packager" => { "archive" => { "files" => ["bin", "lib"], "level" => 9 } } } },
       commands: {
         "up" => { "desc" => "Setup dev environment", "run" => "./bin/setup.rb" },
         "test" => { "desc" => "Run this repo's tests", "run" => "./bin/test.rb" },
@@ -788,7 +788,7 @@ class RunnerTest < Minitest::Test
     refusals = $stderr.string.lines.grep(/^dev: /)
     refusals.size == 4
     refusals.all? { |line| line.include?("dev.yml `targets:` is not readable by this dev (#{Dev::Version.current})") }
-    refusals.all? { |line| line.include?("target 'dev-core': archive takes format, split, vendor, not files") }
+    refusals.all? { |line| line.include?("target 'dev-core': archive takes format, split, vendor, files, not level") }
     refusals.all? { |line| line.include?("`dev up` upgrades dev") }
 
     Cleanup
@@ -798,7 +798,7 @@ class RunnerTest < Minitest::Test
   test "a `targets:` this dev cannot read registers only the verbs the declaration implies: build and package alone without deploy: or release: entries" do
     Given
     out = StringIO.new
-    runner = build_runner(out: out, targets: { "snappy" => { "platforms" => ["win64"], "packager" => { "archive" => { "files" => ["bin"] } } } })
+    runner = build_runner(out: out, targets: { "snappy" => { "platforms" => ["win64"], "packager" => { "archive" => { "level" => 9 } } } })
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -1050,7 +1050,7 @@ class RunnerTest < Minitest::Test
     out = StringIO.new
     runner = build_runner(
       out: out, root: pinned_root("myapp-linux"),
-      targets: { "site" => { "desc" => "The site", "configs" => ["dev", "release"], "build" => "true" } },
+      targets: { "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" } },
       commands: {
         "release" => { "targets" => ["site-release"] },
         "deploy" => { "commands" => { "staging" => { "desc" => "rsync to the box", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" } } },

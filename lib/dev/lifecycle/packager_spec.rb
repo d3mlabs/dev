@@ -6,10 +6,10 @@ require_relative "../value_equality"
 
 module Dev
   module Lifecycle
-    # What a target declares for its Packager port: a `package:` script
-    # line, or one of the built-ins by name: `archive` (the default; `{
-    # archive: { format: tar, split: 2GiB } }` for its tar form), `as-is`,
-    # `none`.
+    # What a target declares for its Packager port, under `packager:`: a
+    # script's command line, or one of the built-ins by name: `archive`
+    # (the default; `{ archive: { format: tar, split: 2GiB } }` for its tar
+    # form), `as-is`, `none`.
     #
     # A declaration, not the port: Ports turns it into a Packager for this
     # checkout. Sealed, so the composition matches exhaustively.
@@ -20,14 +20,14 @@ module Dev
       abstract!
       sealed!
 
-      # The names a `packager:` line may carry.
+      # The names a `packager:` may carry; any other string is a script.
       BUILTIN_NAMES = T.let(["archive", "as-is", "none"].freeze, T::Array[String])
 
       # The declaration as `dev help` renders it.
       sig { abstract.returns(String) }
       def to_s; end
 
-      # `package: <command>` — a shell command run at the project root with
+      # `packager: <command>` — a shell command run at the project root with
       # the build, the install and the archive path in its env (ScriptEnv).
       class Script < T::Struct
         extend T::Sig
