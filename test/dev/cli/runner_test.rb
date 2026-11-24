@@ -463,16 +463,16 @@ class RunnerTest < Minitest::Test
     Dev::DataRoot.stubs(:path).returns(data_root.to_s)
     out = StringIO.new
     runner = build_runner(out: out, root: root, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_INSTALL/env\"" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_STAGE/env\"" },
       "rspock" => { "desc" => "The gem" },
     })
 
     When
     runner.run(["build"])
 
-    Then "site-dev was built into <data root>/artifacts/<project>/site-dev/install"
-    (data_root / "artifacts" / "testproject" / "site-dev" / "install" / "env").read == "site dev\n"
-    out.string == "built site-dev → #{data_root / "artifacts" / "testproject" / "site-dev" / "install"}\n"
+    Then "site-dev was built into <data root>/artifacts/<project>/site-dev/stage"
+    (data_root / "artifacts" / "testproject" / "site-dev" / "stage" / "env").read == "site dev\n"
+    out.string == "built site-dev → #{data_root / "artifacts" / "testproject" / "site-dev" / "stage"}\n"
   end
 
   test "without an injected ledger the Runner builds the real one: GithubDeployments over a Gh at the project root" do
@@ -582,7 +582,7 @@ class RunnerTest < Minitest::Test
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments/9/statuses"], with: { "state" => "success" })
     runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, gh: gh, targets: {
-      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo site > \"$DEV_INSTALL/index.html\"" },
+      "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo site > \"$DEV_STAGE/index.html\"" },
     }, commands: {
       "deploy" => { "commands" => {
         "staging" => { "targets" => ["site"], "run" => "echo \"$DEV_CHANNEL $DEV_BUILD $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },

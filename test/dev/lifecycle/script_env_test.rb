@@ -68,6 +68,7 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
     env.slice("DEV_SHA", "DEV_DIRTY", "DEV_ARTIFACT", "DEV_TRACK") ==
       { "DEV_SHA" => "unknown", "DEV_DIRTY" => "true", "DEV_ARTIFACT" => "/store/rspock/rspock.gem", "DEV_TRACK" => "testing" }
     !env.key?("DEV_PLATFORM")
+    !env.key?("DEV_STAGE")
     !env.key?("DEV_INSTALL")
     !env.key?("DEV_RELEASE_VERSION")
   end
@@ -100,21 +101,23 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
     }
   end
 
-  test "a build: script sees the build's declared axes and the install directory" do
+  test "a build: script sees the build's declared axes and the stage as DEV_STAGE — and as DEV_INSTALL, one release's alias of it (dev#678)" do
     Expect
-    Dev::Lifecycle::ScriptEnv.for_build(build("cellbound-3d-win64-dev"), install: Pathname("/data/install")) == {
+    Dev::Lifecycle::ScriptEnv.for_build(build("cellbound-3d-win64-dev"), stage: Pathname("/data/stage")) == {
       "DEV_TARGET" => "cellbound-3d",
       "DEV_PLATFORM" => "win64",
       "DEV_CONFIG" => "dev",
-      "DEV_INSTALL" => "/data/install",
+      "DEV_STAGE" => "/data/stage",
+      "DEV_INSTALL" => "/data/stage",
     }
   end
 
   test "an axis the target does not declare is absent, not empty" do
     Expect
-    Dev::Lifecycle::ScriptEnv.for_build(build("rspock"), install: Pathname("/data/install")) == {
+    Dev::Lifecycle::ScriptEnv.for_build(build("rspock"), stage: Pathname("/data/stage")) == {
       "DEV_TARGET" => "rspock",
-      "DEV_INSTALL" => "/data/install",
+      "DEV_STAGE" => "/data/stage",
+      "DEV_INSTALL" => "/data/stage",
     }
   end
 
@@ -122,14 +125,22 @@ class Dev::Lifecycle::ScriptEnvTest < Minitest::Test
     Expect
     Dev::Lifecycle::ScriptEnv.for_package(
       build("cellbound-3d-server-linux64-release"),
-      install: Pathname("/data/install"),
+      stage: Pathname("/data/stage"),
       archive: Pathname("/data/store/cellbound-3d-server-linux64-release"),
     ) == {
       "DEV_TARGET" => "cellbound-3d-server",
       "DEV_PLATFORM" => "linux64",
       "DEV_CONFIG" => "release",
-      "DEV_INSTALL" => "/data/install",
+      "DEV_STAGE" => "/data/stage",
+      "DEV_INSTALL" => "/data/stage",
       "DEV_ARTIFACT" => "/data/store/cellbound-3d-server-linux64-release",
     }
+  end
+
+  test "the deprecation line names the script's key, the alias and what to read instead" do
+    Expect
+    Dev::Lifecycle::ScriptEnv.stage_alias_deprecation(script: "packager:") ==
+      "deprecated: the packager: script reads $DEV_INSTALL, one release's alias of $DEV_STAGE — " \
+        "read $DEV_STAGE; the next dev release drops $DEV_INSTALL"
   end
 end

@@ -145,8 +145,8 @@ is that **built-in**.
 | `platforms` | list of `win64` \| `linux64` \| `macos` | no | none: builds carry no platform segment | no id twice | The platforms the target builds for. First is the default. |
 | `configs` | list of `debug` \| `dev` \| `release` | no | none: builds carry no config segment | no id twice | The configs the target builds in. First is the default. |
 | `environment` | image name \| `host` \| map of platform → the same | no | the project's default, as for a command | the map form requires `platforms` and names exactly them | Where the builds run: one value for every build, or one per platform (`{ linux64: img, macos: host }`). |
-| `builder` | string \| map | no | the checkout's tracked files (`git ls-files`; nothing ignored or untracked ships) | — | How the **install** — the runnable, staged output — is made. A string is a script writing it into `$DEV_INSTALL`. A map names a built-in builder; dev has none yet, so a map is refused. |
-| `packager` | string \| `archive` \| `as-is` \| `none` \| map | no | `archive` | — | How the install becomes the **archive**. A built-in by name, or `{ <name>: { options } }` for one with options; any other string is a script writing the archive at `$DEV_ARTIFACT` plus the extension it chooses. See [Packagers](#packagers). |
+| `builder` | string \| map | no | the checkout's tracked files (`git ls-files`; nothing ignored or untracked ships) | — | How the **stage** — the runnable, laid-out output — is made. A string is a script writing it into `$DEV_STAGE`. A map names a built-in builder; dev has none yet, so a map is refused. |
+| `packager` | string \| `archive` \| `as-is` \| `none` \| map | no | `archive` | — | How the stage becomes the **archive**. A built-in by name, or `{ <name>: { options } }` for one with options; any other string is a script writing the archive at `$DEV_ARTIFACT` plus the extension it chooses. See [Packagers](#packagers). |
 
 ### Build names
 
@@ -179,8 +179,8 @@ asks for the build, because the same `dev.yml` loads on every machine.
 
 | `packager` | result |
 |---|---|
-| `archive` (default) | `<build>.zip` of the install's contents, symlinks kept; or, with options, a `.tar.zst`, split or whole, over a selection of the install. See [archive](#archive). |
-| `as-is` | The install already is the archive (Alpakit's zip, `gem build`'s `.gem`): its one file is adopted as `<build>.<ext>`. |
+| `archive` (default) | `<build>.zip` of the stage's contents, symlinks kept; or, with options, a `.tar.zst`, split or whole, over a selection of the stage. See [archive](#archive). |
+| `as-is` | The stage already is the archive (Alpakit's zip, `gem build`'s `.gem`): its one file is adopted as `<build>.<ext>`. |
 | `none` | Built, never shipped. Invisible to `package`, `release` and `deploy`. |
 | any other string | A script, run from the repo root, that writes the archive at `$DEV_ARTIFACT` plus the extension it chooses. |
 
@@ -207,14 +207,14 @@ takes these:
 asset ships the tool's gems and the install writes launchers only (see
 [Self-contained trees](dependencies.md#self-contained-trees)).
 
-`files:` archives only the install's files the list selects, at their
-install paths — nothing is rerooted: `{ archive: { files: [/bin, /lib,
+`files:` archives only the stage's files the list selects, at their
+stage paths — nothing is rerooted: `{ archive: { files: [/bin, /lib,
 /VERSION, "!lib/scratch"] } }`. Patterns are in gitignore syntax and
 follow three rules: they apply **in order**, the last matching pattern
 deciding; a leading `!` **negates**; a **directory means its contents**
 (`/bin` is every file under `bin/`). As in gitignore, a pattern with no
 slash matches at any depth (`lib` also takes `test/lib`); a leading or
-inner slash anchors it at the install root. A list with no positive
+inner slash anchors it at the stage root. A list with no positive
 pattern starts from everything (an exclude-only list, like a
 `.npmignore`). With `vendor: true` the list also sees `vendor/bundle`, so
 list `vendor` to ship it. The selection is what the build's channels
@@ -224,7 +224,7 @@ accepts that ships `dependencies.rb` must list `deps.lock` beside it, or
 ([`dev package`](lifecycle.md#dev-package)).
 
 A target whose shippable tree is a selection of the checkout needs no
-`builder:`: the checkout's tracked files are the install, and `files:`
+`builder:`: the checkout's tracked files are the stage, and `files:`
 says which ship. dev's own `dev.yml` is the example — `dev-core` lists
 `/bin`, `/lib`, `/share`, `/VERSION`, `/LICENSE`, `/README.md`; the `dev`
 deployment lists `/deploy/d3mlabs/config.yml`, `/deploy/d3mlabs/Brewfile`,
@@ -239,7 +239,8 @@ environment, never from flags:
 |---|---|
 | `DEV_TARGET` | always |
 | `DEV_PLATFORM`, `DEV_CONFIG` | the target declares that axis |
-| `DEV_INSTALL` | always; the install directory, emptied and recreated before a `builder:` script runs — a previous build's files are never there to clear |
+| `DEV_STAGE` | always; the stage, emptied and recreated before a `builder:` script runs — a previous build's files are never there to clear |
+| `DEV_INSTALL` | always, for one release: the same path under the key's old name. `dev build` and `dev package` end with a `deprecated:` line when the script's line, or a file it names, reads it; the next release drops it |
 | `DEV_ARTIFACT` | `packager:` scripts only; the archive path **without** its extension |
 
 Map dev's ids to the toolchain's switches in the script (`dev → Development`,

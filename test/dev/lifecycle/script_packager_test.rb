@@ -12,7 +12,7 @@ transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
   include LifecycleFixtures
 
-  test "the package: line sees the build, the install and DEV_ARTIFACT, and what it writes at <archive>.* is read back" do
+  test "the package: line sees the build, the stage and DEV_ARTIFACT, and what it writes at <archive>.* is read back" do
     Given "a script that writes its own extension onto DEV_ARTIFACT"
     root = Pathname(Dir.mktmpdir("script-packager-"))
     project = root / "project"
@@ -20,23 +20,45 @@ class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
     (project / "package.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$DEV_TARGET $DEV_PLATFORM $DEV_CONFIG $DEV_INSTALL" > env.txt
-      cp "$DEV_INSTALL/mod.zip" "$DEV_ARTIFACT.zip"
+      echo "$DEV_TARGET $DEV_PLATFORM $DEV_CONFIG $DEV_STAGE" > env.txt
+      cp "$DEV_STAGE/mod.zip" "$DEV_ARTIFACT.zip"
     SH
-    install = root / "install"
-    install.mkpath
-    (install / "mod.zip").write("zip bytes")
+    stage = root / "stage"
+    stage.mkpath
+    (stage / "mod.zip").write("zip bytes")
     packager = Dev::Lifecycle::ScriptPackager.new(command: "sh ./package.sh", project_root: project)
     archive = root / "store/cellbound-3d-win64-release/cellbound-3d-win64-release"
 
     When
-    packed = packager.package(build("cellbound-3d-win64-release"), install, archive)
+    packed = packager.package(build("cellbound-3d-win64-release"), stage, archive)
 
     Then
     packed == Dev::Lifecycle::PackedArchive.new(archive: root / "store/cellbound-3d-win64-release/cellbound-3d-win64-release.zip")
     packed.archive.read == "zip bytes"
-    (project / "env.txt").read == "cellbound-3d win64 release #{install}\n"
+    (project / "env.txt").read == "cellbound-3d win64 release #{stage}\n"
+    packager.deprecations == []
     packager.command == "sh ./package.sh"
+
+    Cleanup
+    FileUtils.rm_rf(root)
+  end
+
+  test "a package: line that reads $DEV_INSTALL inline still packages through the alias, and reports the deprecation (dev#678)" do
+    Given
+    root = Pathname(Dir.mktmpdir("script-packager-"))
+    (root / "stage").mkpath
+    (root / "stage/mod.zip").write("zip bytes")
+    packager = Dev::Lifecycle::ScriptPackager.new(command: 'cp "$DEV_INSTALL/mod.zip" "$DEV_ARTIFACT.zip"', project_root: root)
+
+    When
+    packed = packager.package(build("rspock"), root / "stage", root / "store/rspock")
+
+    Then
+    packed.archive.read == "zip bytes"
+    packager.deprecations == [
+      "deprecated: the packager: script reads $DEV_INSTALL, one release's alias of $DEV_STAGE — " \
+        "read $DEV_STAGE; the next dev release drops $DEV_INSTALL",
+    ]
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -50,7 +72,7 @@ class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
     archive = root / "store/rspock"
 
     When
-    packed = packager.package(build("rspock"), root / "install", archive)
+    packed = packager.package(build("rspock"), root / "stage", archive)
 
     Then
     packed.archive == root / "store/rspock.MANIFEST"
@@ -68,7 +90,7 @@ class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
     packager = Dev::Lifecycle::ScriptPackager.new(command: 'printf g > "$DEV_ARTIFACT.gem"', project_root: root)
 
     When
-    packed = packager.package(build("rspock"), root / "install", root / "store/rspock")
+    packed = packager.package(build("rspock"), root / "stage", root / "store/rspock")
 
     Then
     packed == Dev::Lifecycle::PackedArchive.new(archive: root / "store/rspock.gem")
@@ -83,7 +105,7 @@ class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
     packager = Dev::Lifecycle::ScriptPackager.new(command: "exit 3", project_root: root)
 
     When
-    packager.package(build("rspock"), root / "install", root / "store/rspock")
+    packager.package(build("rspock"), root / "stage", root / "store/rspock")
 
     Then
     error = raises(Dev::Lifecycle::ScriptPackager::PackageScriptFailedError)
@@ -99,7 +121,7 @@ class Dev::Lifecycle::ScriptPackagerTest < Minitest::Test
     packager = Dev::Lifecycle::ScriptPackager.new(command: "true", project_root: root)
 
     When
-    packager.package(build("rspock"), root / "install", root / "store/rspock")
+    packager.package(build("rspock"), root / "stage", root / "store/rspock")
 
     Then
     error = raises(Dev::Lifecycle::ScriptPackager::NothingPackagedError)

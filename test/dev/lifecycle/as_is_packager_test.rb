@@ -12,20 +12,20 @@ transform!(RSpock::AST::Transformation)
 class Dev::Lifecycle::AsIsPackagerTest < Minitest::Test
   include LifecycleFixtures
 
-  test "the one file in the install is adopted under the build's name with its own extension: #{file}" do
+  test "the one file in the stage is adopted under the build's name with its own extension: #{file}" do
     Given
     root = Pathname(Dir.mktmpdir("as-is-"))
-    install = root / "install"
-    install.mkpath
-    (install / file).write("bytes")
+    stage = root / "stage"
+    stage.mkpath
+    (stage / file).write("bytes")
 
     When
-    packed = Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), install, root / "store/rspock")
+    packed = Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), stage, root / "store/rspock")
 
     Then
     packed == Dev::Lifecycle::PackedArchive.new(archive: root / "store/#{adopted}")
     packed.archive.read == "bytes"
-    (install / file).file?
+    (stage / file).file?
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -39,18 +39,18 @@ class Dev::Lifecycle::AsIsPackagerTest < Minitest::Test
     "payload"              | "rspock"
   end
 
-  test "an install with no file has nothing to adopt: #{description}" do
+  test "a stage with no file has nothing to adopt: #{description}" do
     Given
     root = Pathname(Dir.mktmpdir("as-is-"))
-    install = root / "install"
-    (install / "sub").mkpath if present
+    stage = root / "stage"
+    (stage / "sub").mkpath if present
 
     When
-    Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), install, root / "store/rspock")
+    Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), stage, root / "store/rspock")
 
     Then
-    error = raises(Dev::Lifecycle::AsIsPackager::NoInstallFileError)
-    error.message.include?(install.to_s)
+    error = raises(Dev::Lifecycle::AsIsPackager::NoStageFileError)
+    error.message.include?(stage.to_s)
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -61,19 +61,19 @@ class Dev::Lifecycle::AsIsPackagerTest < Minitest::Test
     "only a subdirectory"     | true
   end
 
-  test "an install with several files is ambiguous, and the error lists them" do
+  test "a stage with several files is ambiguous, and the error lists them" do
     Given
     root = Pathname(Dir.mktmpdir("as-is-"))
-    install = root / "install"
-    install.mkpath
-    (install / "a.zip").write("a")
-    (install / "b.zip").write("b")
+    stage = root / "stage"
+    stage.mkpath
+    (stage / "a.zip").write("a")
+    (stage / "b.zip").write("b")
 
     When
-    Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), install, root / "store/rspock")
+    Dev::Lifecycle::AsIsPackager.new.package(build("rspock"), stage, root / "store/rspock")
 
     Then
-    error = raises(Dev::Lifecycle::AsIsPackager::AmbiguousInstallError)
+    error = raises(Dev::Lifecycle::AsIsPackager::AmbiguousStageError)
     error.message.include?("2 files (a.zip, b.zip)")
 
     Cleanup

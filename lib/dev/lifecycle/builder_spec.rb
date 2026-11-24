@@ -8,7 +8,7 @@ module Dev
     # What a target declares for its Builder port: `builder: <command>`, a
     # script (dev has no built-in builder to name yet). A target declaring
     # none gets the identity builder: the checkout's tracked files are its
-    # install.
+    # stage.
     #
     # A declaration, not the port: Ports turns it into a Builder for this
     # checkout. Sealed, so the composition matches exhaustively.

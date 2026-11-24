@@ -22,14 +22,14 @@ module Dev
       class NeverPackagedError < RuntimeError; end
 
       # @param build [Build]
-      # @param install [Pathname]
+      # @param stage [Pathname]
       # @param archive [Pathname]
       # @param acceptance [Acceptance]
       # @return [PackedArchive] never
       # @raise [NeverPackagedError] always
-      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
-      def package(build, install, archive, acceptance: Acceptance.unconditional)
-        _ = [install, archive, acceptance]
+      sig { override.params(build: Build, stage: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, stage, archive, acceptance: Acceptance.unconditional)
+        _ = [stage, archive, acceptance]
         raise NeverPackagedError, "target '#{build.target}' declares `packager: none` — it is built, never packaged"
       end
 

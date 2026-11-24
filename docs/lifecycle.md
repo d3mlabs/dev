@@ -16,9 +16,10 @@ the axes it varies over (`platforms`, `configs`). A **build** is one
 point of target × platform × config, named `<target>[-<platform>][-<config>]`.
 dev derives the builds; nothing declares them.
 
-`dev build` produces a build's **install**: the runnable, staged output,
-whatever the toolchain calls done. `dev package` turns the install into
-an **artifact**: the archive plus a `build-id.json` manifest, kept in the
+`dev build` produces a build's **stage**: the runnable, laid-out output,
+whatever the toolchain calls done — Unreal's cook → stage → package uses
+the word for the same thing. `dev package` turns the stage into an
+**artifact**: the archive plus a `build-id.json` manifest, kept in the
 **store** at `<data root>/artifacts/<project>/<build>/`. The store is
 keyed by the project's `name:`, so one host serves every checkout of the
 project.
@@ -43,8 +44,8 @@ target gets by declaring nothing, which hands the input through unchanged.
 
 | Stage | Input → output | Built-ins | Escape hatch | Identity |
 | --- | --- | --- | --- | --- |
-| build | the checkout → the install | — | `builder: <command>` | no `builder:` — the checkout's tracked files are the install |
-| package | the install → the archive | `archive`, `as-is`, `none` | `packager: <command>` | `as-is` — the one file the install holds is the archive |
+| build | the checkout → the stage | — | `builder: <command>` | no `builder:` — the checkout's tracked files are the stage |
+| package | the stage → the archive | `archive`, `as-is`, `none` | `packager: <command>` | `as-is` — the one file the stage holds is the archive |
 | deploy | the archive → the destination | the lock's publishers, `gh` | `run: <command>` | — |
 
 ## Naming a build
@@ -87,19 +88,27 @@ dev build [BUILD] [--target T] [--platform P] [--config C] [--runner L | --conta
 
 Runs the target's `builder:` script at the repo root with the build in its
 environment ([the build script's environment](dev-yml.md#the-build-scripts-environment))
-and `DEV_INSTALL` naming `<store>/<build>/install/`. A target with no
-`builder:` has the checkout as its install: `dev build rspock` copies the
+and `DEV_STAGE` naming `<store>/<build>/stage/`. A target with no
+`builder:` has the checkout as its stage: `dev build rspock` copies the
 checkout's tracked files (`git ls-files`, so nothing ignored or
 untracked — `coverage/`, `vendor/`, a nested checkout — ever reaches the
-install) into the same directory, modes and symlinks kept, and
+stage) into the same directory, modes and symlinks kept, and
 `build-id.json` records the builder as `checkout`. Which of those files
 ship is the packager's question.
 
-The install is fresh before any builder runs: dev empties and recreates
+The stage is fresh before any builder runs: dev empties and recreates
 the directory, so a file a previous build left is gone whether the
 builder is a script or the checkout, and no script needs a `find -delete`
 of its own. A toolchain's incremental state belongs in its build
-directory, not the install.
+directory, not the stage.
+
+For one release the stage is also exported as `DEV_INSTALL`, its earlier
+name: a script written for it still builds, and `dev build` (or `dev
+package`, for a `packager:` script) ends with a `deprecated:` line when
+the script's line, or a file it names, reads the old key. The next
+release drops it. A store an earlier dev wrote keeps each build's old
+stage at `<store>/<build>/install/`, which nothing reads now; reclaim it
+by hand (`rm -rf <data root>/artifacts/<project>/<build>/install`).
 
 Where the script runs is decided by the target's `environment:`; see
 [Where a verb runs](#where-a-verb-runs).
@@ -119,9 +128,9 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
    artifact is **current**: packaged from a clean tree at the commit the
    tree is at now. A dirty tree is never current, so an uncommitted
    change rebuilds every time.
-3. The packager writes `<build>.<ext>` beside the install: `archive`
-   zips the install (or writes `.tar.zst`, split into parts with a
-   `MANIFEST` when asked); `as-is` adopts the one file the install holds;
+3. The packager writes `<build>.<ext>` beside the stage: `archive`
+   zips the stage (or writes `.tar.zst`, split into parts with a
+   `MANIFEST` when asked); `as-is` adopts the one file the stage holds;
    a `packager:` script writes whatever it writes at `$DEV_ARTIFACT.<ext>`.
    See [Packagers](dev-yml.md#packagers).
 4. Before `archive` writes, every channel whose `targets:` names the
@@ -797,7 +806,7 @@ read by older devs](dev-yml.md#devyml-is-read-by-older-devs)).
 | Verb | Needs | When missing |
 | --- | --- | --- |
 | `build` | the build's environment, able to produce its platform: here, or on a host the remote dispatch reaches; for a target with no `builder:`, a git checkout to take the tracked files from | an image without the platform in `target_platforms` is reported at load and the build refuses until `dev deps update`; a host-placed build whose platform this machine is not is refused (`--runner` sends it elsewhere); an environment this machine is not goes to a runner, else to the project's container, which needs the engine up (`dev up`); a project root outside git is refused for a target with no `builder:` |
-| `package` | a current build; a tree every channel accepting the build takes | makes it: the builder runs when the artifact is not current; `--no-build` trusts the install; a channel's refusal of the tree as it ships names the channel and the gap, and nothing is written |
+| `package` | a current build; a tree every channel accepting the build takes | makes it: the builder runs when the artifact is not current; `--no-build` trusts the stage; a channel's refusal of the tree as it ships names the channel and the gap, and nothing is written |
 | `deploy <channel>` | an artifact per accepted (target, platform) in the store; a channel; the channel's environment; a protocol; to record, a repo `gh` reaches with `deployments: write` | "`dev package <build>` first"; a channel exists or `deploy` does not; a channel with no protocol is refused at load with both fixes; a record the forge refuses fails after the shipped lines |
 | `deploy <channel> --release V` | release `V` cut, carrying an archive of each accepted build; `contents: read` for the download | "`dev release V` cuts it" for a tag with no release; a build the release has no archive of is refused; a download whose digest is not `release.json`'s is removed and refused |
 | `deploy gh --release V` | the above; release `V` immutable; `contents: write` for the series tag and the latest designation | a store artifact is refused naming `dev release`; a mutable release is refused naming the repository setting; a refused ref write is the heads' error |

@@ -50,15 +50,15 @@ One class per noun, none playing two roles.
 ## Ports
 
 Three ports separate dev from the toolchain and the destination. The
-**builder** makes the install. The **packager** turns the install into
+**builder** makes the stage. The **packager** turns the stage into
 the archive. The **publisher** ships the archives `deploy` selected. The
 builder never knows the archive format; the packager never knows the
 toolchain; the publisher never selects and never rewrites an archive.
 
 | Port | Interface | Implementations | Declared as |
 | --- | --- | --- | --- |
-| Builder | `Lifecycle::Builder#build(build, install)` (final: empties and recreates the install, then `#fill(build, install)`), `#name`, `#version` | `ScriptBuilder` (`name` = `script`, no version); `CheckoutBuilder` (`name` = `checkout`, no version: the checkout's tracked files, the identity) | `builder: <command>`; no `builder:` |
-| Packager | `Lifecycle::Packager#package(build, install, archive_stem, acceptance:) → PackedArchive` (`acceptance` unconditional by default; `Archive` shows it the selected tree before writing, the others have no tree to show) | `Archive` (zip or tar.zst, optionally split; over the whole install or the files its `Lifecycle::FileSelection` — `files:`, gitignore-syntax `Lifecycle::FilePattern`s — selects), `AsIsPackager`, `ScriptPackager`, `NonePackager`; `VendoredPackager` wraps an `Archive` for `vendor: true` | `packager: <name> \| { <name>: { options } } \| <command>` |
+| Builder | `Lifecycle::Builder#build(build, stage)` (final: empties and recreates the stage, then `#fill(build, stage)`), `#name`, `#version`, `#deprecations` (what the verb prints after the port ran; `ScriptBuilder` names the one-release `DEV_INSTALL` alias when its script reads it) | `ScriptBuilder` (`name` = `script`, no version); `CheckoutBuilder` (`name` = `checkout`, no version: the checkout's tracked files, the identity) | `builder: <command>`; no `builder:` |
+| Packager | `Lifecycle::Packager#package(build, stage, archive_stem, acceptance:) → PackedArchive` (`acceptance` unconditional by default; `Archive` shows it the selected tree before writing, the others have no tree to show), `#deprecations` | `Archive` (zip or tar.zst, optionally split; over the whole stage or the files its `Lifecycle::FileSelection` — `files:`, gitignore-syntax `Lifecycle::FilePattern`s — selects), `AsIsPackager`, `ScriptPackager`, `NonePackager`; `VendoredPackager` wraps an `Archive` for `vendor: true` | `packager: <name> \| { <name>: { options } } \| <command>` |
 | Publisher | `Lifecycle::Publisher#publish(shipments, channel:, track:, scratch:) → Receipt`, `#head_strategy → HeadStrategy`, `#preview(shipments, channel:, track:) → Array<String>` (default: none), `#owns_release_designation? → Boolean` (default: false; `release` cuts with `--latest=false` when any contributed publisher answers true), `#accept!(tree, channel:)` (default: accepts; `Deps::GhPublisher` raises `IncompleteTreeError` over `Deps::SelfContainedTree#gaps`) | `ScriptPublisher`; the lock's integration publishers; `Deps::GhPublisher`, reached by declaration | a channel's `run: <command>`; a registry entry's `publisher:` |
 
 `Lifecycle::Ports` maps a target's specs and a channel's to port
@@ -185,7 +185,7 @@ channel's deploy as a child invocation.
 ## Adding a port implementation
 
 A new builder implements `Lifecycle::Builder` (`fill`, `name`,
-`version` — `build` is the port's own: it empties the install before
+`version` — `build` is the port's own: it empties the stage before
 `fill`, so no implementation clears a previous build's files); a new
 packager `Lifecycle::Packager` (`package`); a new
 publisher `Lifecycle::Publisher` (`publish`, and `head_strategy` — say

@@ -14,7 +14,7 @@ module Dev
     # `packager:` script gets the build's axes as `DEV_TARGET`,
     # `DEV_PLATFORM` and `DEV_CONFIG` (each set exactly when the target
     # declares it, so a `case` over an undeclared axis fails under `set
-    # -u`), `DEV_INSTALL`, and for a `packager:` script `DEV_ARTIFACT` (the
+    # -u`), `DEV_STAGE`, and for a `packager:` script `DEV_ARTIFACT` (the
     # archive path without its extension).
     #
     # A channel's `run:` gets the same axes for the archive it ships,
@@ -27,7 +27,12 @@ module Dev
       TARGET = "DEV_TARGET"
       PLATFORM = "DEV_PLATFORM"
       CONFIG = "DEV_CONFIG"
-      INSTALL = "DEV_INSTALL"
+      STAGE = "DEV_STAGE"
+      # One release's alias of STAGE, the key's earlier name: exported
+      # beside it so a script written for `$DEV_INSTALL` keeps working,
+      # and named in the verb's output when a script reads it
+      # (`stage_alias_deprecation`). Delete with the next release.
+      STAGE_ALIAS = "DEV_INSTALL"
       ARTIFACT = "DEV_ARTIFACT"
       CHANNEL = "DEV_CHANNEL"
       TRACK = "DEV_TRACK"
@@ -51,22 +56,34 @@ module Dev
         # The env a `builder:` script runs with.
         #
         # @param build [Build]
-        # @param install [Pathname] the directory to write the install into
+        # @param stage [Pathname] the directory to stage into
         # @return [Hash{String => String}]
-        sig { params(build: Build, install: Pathname).returns(Env) }
-        def for_build(build, install:)
-          axes(build).merge(INSTALL => install.to_s)
+        sig { params(build: Build, stage: Pathname).returns(Env) }
+        def for_build(build, stage:)
+          axes(build).merge(STAGE => stage.to_s, STAGE_ALIAS => stage.to_s)
         end
 
         # The env a `packager:` script runs with.
         #
         # @param build [Build]
-        # @param install [Pathname] the install the builder wrote
+        # @param stage [Pathname] the stage the builder wrote
         # @param archive [Pathname] the archive path without its extension
         # @return [Hash{String => String}]
-        sig { params(build: Build, install: Pathname, archive: Pathname).returns(Env) }
-        def for_package(build, install:, archive:)
-          for_build(build, install:).merge(ARTIFACT => archive.to_s)
+        sig { params(build: Build, stage: Pathname, archive: Pathname).returns(Env) }
+        def for_package(build, stage:, archive:)
+          for_build(build, stage:).merge(ARTIFACT => archive.to_s)
+        end
+
+        # The line a verb prints when a script still reads the alias: what
+        # to change, and when the alias goes.
+        #
+        # @param script [String] the dev.yml key of the script that reads it
+        #   (`builder:`, `packager:`)
+        # @return [String]
+        sig { params(script: String).returns(String) }
+        def stage_alias_deprecation(script:)
+          "deprecated: the #{script} script reads $#{STAGE_ALIAS}, one release's alias of $#{STAGE} — " \
+            "read $#{STAGE}; the next dev release drops $#{STAGE_ALIAS}"
         end
 
         # The env a channel's `run:` ships one archive with.

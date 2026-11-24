@@ -128,16 +128,16 @@ class Dev::Lifecycle::PortsTest < Minitest::Test
     project.mkpath
     target = Dev::Lifecycle::Target.new(
       name: "cellbound-3d",
-      builder: BUILDER::Script.new(command: 'echo built > "$DEV_INSTALL/built.txt"'),
-      packager: PACKAGER::Script.new(command: 'cp "$DEV_INSTALL/built.txt" "$DEV_ARTIFACT.txt"'),
+      builder: BUILDER::Script.new(command: 'echo built > "$DEV_STAGE/built.txt"'),
+      packager: PACKAGER::Script.new(command: 'cp "$DEV_STAGE/built.txt" "$DEV_ARTIFACT.txt"'),
     )
     ports = Dev::Lifecycle::Ports.new(project_root: project)
     build = target.default_build
-    install = root / "install"
+    stage = root / "stage"
 
     When
-    ports.builder_for(target).build(build, install)
-    packed = ports.packager_for(target).package(build, install, root / "store/cellbound-3d")
+    ports.builder_for(target).build(build, stage)
+    packed = ports.packager_for(target).package(build, stage, root / "store/cellbound-3d")
 
     Then
     packed.archive == root / "store/cellbound-3d.txt"

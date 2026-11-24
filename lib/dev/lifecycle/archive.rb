@@ -19,7 +19,7 @@ module Dev
   module Lifecycle
     # The built-in `archive` packager, the default for every target that
     # declares no other, and what `dev pack` runs over any directory. Two
-    # forms over an install directory's contents:
+    # forms over a stage's contents:
     #
     # - zip (the default): `<build>.zip`, symlinks kept as symlinks.
     # - tar: `<build>.tar.zst`; with `split:`, cut into `<build>.tar.zst.00`,
@@ -27,10 +27,10 @@ module Dev
     #   part's SHA-256 in `sha256sum -c` form. GitHub's 2 GiB per release
     #   asset is the limit the split exists for.
     #
-    # Which of the install's files ship is its `files:` (FileSelection):
-    # the whole install unless the target lists patterns, the selected
-    # files at their install paths when it does. The selection — the tree
-    # as it ships — is what the destinations are shown (Acceptance) before
+    # Which of the stage's files ship is its `files:` (FileSelection):
+    # the whole stage unless the target lists patterns, the selected files
+    # at their stage paths when it does. The selection — the tree as it
+    # ships — is what the destinations are shown (Acceptance) before
     # anything is written; a refusal leaves the previous archive in place.
     #
     # Writes over its own previous output. The tar form needs `zstd` on
@@ -40,11 +40,11 @@ module Dev
       include Packager
       include Dev::ValueEquality::Derived
 
-      # The install directory does not exist.
-      class MissingInstallError < RuntimeError; end
+      # The directory to archive does not exist.
+      class MissingDirectoryError < RuntimeError; end
 
-      # The install directory holds nothing to archive.
-      class EmptyInstallError < RuntimeError; end
+      # The directory to archive holds nothing.
+      class EmptyDirectoryError < RuntimeError; end
 
       # A stage of the archive pipeline failed.
       class PackFailedError < RuntimeError; end
@@ -196,7 +196,7 @@ module Dev
       attr_reader :files
 
       # @param form [Form]
-      # @param files [FileSelection] which of the install's files ship; the whole install by default
+      # @param files [FileSelection] which of the stage's files ship; the whole stage by default
       # @param shell [Shell]
       sig { params(form: Form, files: FileSelection, shell: Shell).void }
       def initialize(form: Form::Zip.new, files: FileSelection.all, shell: Shell.new)
@@ -209,42 +209,42 @@ module Dev
       # is #pack.
       #
       # @param build [Build] unused
-      # @param install [Pathname]
+      # @param stage [Pathname]
       # @param archive [Pathname]
       # @param acceptance [Acceptance] shown the selected tree before it is written
       # @return [PackedArchive]
-      # @raise [MissingInstallError]
-      # @raise [EmptyInstallError]
+      # @raise [MissingDirectoryError]
+      # @raise [EmptyDirectoryError]
       # @raise [FileSelection::EmptySelectionError]
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
-      def package(build, install, archive, acceptance: Acceptance.unconditional)
+      sig { override.params(build: Build, stage: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, stage, archive, acceptance: Acceptance.unconditional)
         _ = build
-        pack(install, archive, acceptance:)
+        pack(stage, archive, acceptance:)
       end
 
       # Archive a directory's contents in this form — what `dev pack` runs
       # over any directory, no build in sight.
       #
-      # @param install [Pathname] the directory whose contents are archived
+      # @param directory [Pathname] the directory whose contents are archived
       # @param archive [Pathname] the path without extension; its directory
       #   is created if absent, and its previous output removed
       # @param acceptance [Acceptance] the destinations shown the selected
       #   tree before anything is written; a refusal is theirs and leaves
       #   the previous output in place
       # @return [PackedArchive]
-      # @raise [MissingInstallError]
-      # @raise [EmptyInstallError]
+      # @raise [MissingDirectoryError]
+      # @raise [EmptyDirectoryError]
       # @raise [FileSelection::EmptySelectionError] when `files:` selects nothing
       # @raise [PackFailedError]
       # @raise [Shell::SpawnError] when `zip`, `tar`, `zstd` or `split` is missing
-      sig { params(install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
-      def pack(install, archive, acceptance: Acceptance.unconditional)
-        raise MissingInstallError, "no install at #{install}" unless install.directory?
-        raise EmptyInstallError, "nothing to archive: #{install} is empty" if install.children.empty?
+      sig { params(directory: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def pack(directory, archive, acceptance: Acceptance.unconditional)
+        raise MissingDirectoryError, "nothing to archive: no directory at #{directory}" unless directory.directory?
+        raise EmptyDirectoryError, "nothing to archive: #{directory} is empty" if directory.children.empty?
 
-        with_selected(install) do |selected|
+        with_selected(directory) do |selected|
           acceptance.accept!(selected)
           archive.dirname.mkpath
           remove_previous(archive)
@@ -269,43 +269,43 @@ module Dev
 
       private
 
-      # The directory the pipelines read: the install itself for the whole
-      # selection; for a `files:` list, a scratch copy of the selected files
-      # at their install paths, gone once the block returns. A copy rather
+      # The directory the pipelines read: the directory itself for the
+      # whole selection; for a `files:` list, a scratch copy of the selected
+      # files at their paths, gone once the block returns. A copy rather
       # than a file list fed to `zip -@` and `tar -T`: the three pipelines
       # then read one directory the same way, and a selected archive lays
       # out exactly as a whole one does, directory entries included. The
       # selection is decided before anything is written.
       #
-      # @param install [Pathname]
+      # @param directory [Pathname]
       # @yieldparam selected [Pathname] the directory to archive
       # @return [PackedArchive] the block's
       # @raise [FileSelection::EmptySelectionError]
-      sig { params(install: Pathname, block: T.proc.params(selected: Pathname).returns(PackedArchive)).returns(PackedArchive) }
-      def with_selected(install, &block)
-        return yield(install) if @files.whole?
+      sig { params(directory: Pathname, block: T.proc.params(selected: Pathname).returns(PackedArchive)).returns(PackedArchive) }
+      def with_selected(directory, &block)
+        return yield(directory) if @files.whole?
 
-        selected = @files.select(install)
+        selected = @files.select(directory)
         Dir.mktmpdir("dev-archive-") do |scratch|
           selected.each do |relative|
             destination = Pathname(scratch) / relative
             destination.dirname.mkpath
-            FileUtils.copy_entry(install / relative, destination, true)
+            FileUtils.copy_entry(directory / relative, destination, true)
           end
           yield Pathname(scratch)
         end
       end
 
-      # @param install [Pathname] the directory archived
+      # @param directory [Pathname] the directory archived
       # @param archive [Pathname] the path without extension
       # @return [PackedArchive]
       # @raise [PackFailedError]
-      sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def write(install, archive)
+      sig { params(directory: Pathname, archive: Pathname).returns(PackedArchive) }
+      def write(directory, archive)
         form = @form
         case form
-        when Form::Zip then pack_zip(install, archive)
-        when Form::Tar then form.split? ? pack_split_tar(install, archive, T.must(form.split)) : pack_tar(install, archive)
+        when Form::Zip then pack_zip(directory, archive)
+        when Form::Tar then form.split? ? pack_split_tar(directory, archive, T.must(form.split)) : pack_tar(directory, archive)
         else
           # simplecov:disable — the sealed form has no third variant; T.absurd keeps the static proof.
           T.absurd(form)
@@ -324,47 +324,47 @@ module Dev
         (previous + parts_of(archive)).select(&:file?).each(&:delete)
       end
 
-      # @param install [Pathname]
+      # @param directory [Pathname]
       # @param archive [Pathname]
       # @return [PackedArchive]
       # @raise [PackFailedError]
-      sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def pack_zip(install, archive)
+      sig { params(directory: Pathname, archive: Pathname).returns(PackedArchive) }
+      def pack_zip(directory, archive)
         zip = with(archive, Form::Zip::EXTENSION)
-        # Run from inside the install so entries are relative to its root;
+        # Run from inside the directory so entries are relative to its root;
         # -y keeps symlinks as symlinks, -q leaves the terminal to dev.
-        status = @shell.run(["zip", "-r", "-q", "-y", zip.to_s, "."], chdir: install)
-        raise PackFailedError, "zip of #{install} #{Shell.describe(status)}" unless status.success?
+        status = @shell.run(["zip", "-r", "-q", "-y", zip.to_s, "."], chdir: directory)
+        raise PackFailedError, "zip of #{directory} #{Shell.describe(status)}" unless status.success?
 
         PackedArchive.new(archive: zip)
       end
 
-      # @param install [Pathname]
+      # @param directory [Pathname]
       # @param archive [Pathname]
       # @return [PackedArchive]
       # @raise [PackFailedError]
-      sig { params(install: Pathname, archive: Pathname).returns(PackedArchive) }
-      def pack_tar(install, archive)
+      sig { params(directory: Pathname, archive: Pathname).returns(PackedArchive) }
+      def pack_tar(directory, archive)
         tar = with(archive, Form::Tar::EXTENSION)
-        run_pipeline([tar_stage(install), ["zstd", "-q", "-T0", "-f", "-o", tar.to_s, "-"]], install)
+        run_pipeline([tar_stage(directory), ["zstd", "-q", "-T0", "-f", "-o", tar.to_s, "-"]], directory)
         PackedArchive.new(archive: tar)
       end
 
-      # @param install [Pathname]
+      # @param directory [Pathname]
       # @param archive [Pathname]
       # @param split [ByteSize] the part size
       # @return [PackedArchive] the MANIFEST, then the parts in order
       # @raise [PackFailedError]
-      sig { params(install: Pathname, archive: Pathname, split: ByteSize).returns(PackedArchive) }
-      def pack_split_tar(install, archive, split)
+      sig { params(directory: Pathname, archive: Pathname, split: ByteSize).returns(PackedArchive) }
+      def pack_split_tar(directory, archive, split)
         prefix = "#{with(archive, Form::Tar::EXTENSION)}."
         run_pipeline(
           [
-            tar_stage(install),
+            tar_stage(directory),
             ["zstd", "-q", "-T0", "-c", "-"],
             ["split", "-d", "-a", PART_SUFFIX_DIGITS, "-b", split.bytes.to_s, "-", prefix],
           ],
-          install,
+          directory,
         )
         parts = parts_of(archive)
         manifest = with(archive, Form::Tar::MANIFEST_EXTENSION)
@@ -372,25 +372,25 @@ module Dev
         PackedArchive.new(archive: manifest, parts:)
       end
 
-      # @param install [Pathname]
-      # @return [Array<String>] `tar` streaming the install's contents
-      sig { params(install: Pathname).returns(Shell::Argv) }
-      def tar_stage(install)
-        ["tar", "-C", install.to_s, "-cf", "-", "."]
+      # @param directory [Pathname]
+      # @return [Array<String>] `tar` streaming the directory's contents
+      sig { params(directory: Pathname).returns(Shell::Argv) }
+      def tar_stage(directory)
+        ["tar", "-C", directory.to_s, "-cf", "-", "."]
       end
 
       # @param commands [Array<Array<String>>]
-      # @param install [Pathname] named in the failure
+      # @param directory [Pathname] named in the failure
       # @return [void]
       # @raise [PackFailedError] naming the first stage that failed
-      sig { params(commands: T::Array[Shell::Argv], install: Pathname).void }
-      def run_pipeline(commands, install)
-        statuses = @shell.pipeline(commands, chdir: install)
+      sig { params(commands: T::Array[Shell::Argv], directory: Pathname).void }
+      def run_pipeline(commands, directory)
+        statuses = @shell.pipeline(commands, chdir: directory)
         failed = statuses.index { |status| !status.success? }
         return if failed.nil?
 
         raise PackFailedError,
-          "archiving #{install}: `#{T.must(commands[failed]).first}` #{Shell.describe(T.must(statuses[failed]))}"
+          "archiving #{directory}: `#{T.must(commands[failed]).first}` #{Shell.describe(T.must(statuses[failed]))}"
       end
 
       # @param archive [Pathname]

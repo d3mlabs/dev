@@ -13,7 +13,7 @@ require_relative "packed_archive"
 
 module Dev
   module Lifecycle
-    # The `vendor: true` form of a packager: the install is a self-contained
+    # The `vendor: true` form of a packager: the stage is a self-contained
     # tree (Deps::SelfContainedTree), and its gems are vendored into it — a
     # frozen `bundle install` under the project's Ruby — before the wrapped
     # packager archives it. The asset then ships the vendored gems, and
@@ -24,20 +24,20 @@ module Dev
       extend T::Sig
       include Packager
 
-      # The install carries no `dependencies.rb` and `deps.lock`: it is not
+      # The stage carries no `dependencies.rb` and `deps.lock`: it is not
       # self-contained, so `vendor: true` names nothing to vendor.
       class NotSelfContainedError < RuntimeError
         extend T::Sig
 
-        # @param install [Pathname]
-        sig { params(install: Pathname).void }
-        def initialize(install:)
-          super("vendor: #{install} carries no #{Deps::Integration::MANIFEST_FILE} and #{Deps::Lockfile::DEPS_LOCK_FILE} — " \
+        # @param stage [Pathname]
+        sig { params(stage: Pathname).void }
+        def initialize(stage:)
+          super("vendor: #{stage} carries no #{Deps::Integration::MANIFEST_FILE} and #{Deps::Lockfile::DEPS_LOCK_FILE} — " \
             "a vendored archive is of a self-contained tree with its own lock")
         end
       end
 
-      # @param packager [Packager] what archives the install once vendored
+      # @param packager [Packager] what archives the stage once vendored
       # @param exec [Deps::ToolchainExec] the project's Ruby, which the gems
       #   are installed under — the one the tree's own lock pins, in the
       #   checkout that releases it
@@ -48,18 +48,24 @@ module Dev
       end
 
       # @param build [Build]
-      # @param install [Pathname] the self-contained tree the builder wrote
+      # @param stage [Pathname] the self-contained tree the builder wrote
       # @param archive [Pathname] the path without extension
       # @param acceptance [Acceptance] handed to the wrapped packager, which presents the vendored tree
       # @return [PackedArchive]
       # @raise [NotSelfContainedError]
       # @raise [Deps::SelfContainedTree::GemBundle::VendorError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
-      def package(build, install, archive, acceptance: Acceptance.unconditional)
-        raise NotSelfContainedError.new(install:) unless Deps::SelfContainedTree.carried_by?(install)
+      sig { override.params(build: Build, stage: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, stage, archive, acceptance: Acceptance.unconditional)
+        raise NotSelfContainedError.new(stage:) unless Deps::SelfContainedTree.carried_by?(stage)
 
-        Deps::SelfContainedTree.new(root: install).gem_bundle.vendor!(exec: @exec)
-        @packager.package(build, install, archive, acceptance:)
+        Deps::SelfContainedTree.new(root: stage).gem_bundle.vendor!(exec: @exec)
+        @packager.package(build, stage, archive, acceptance:)
+      end
+
+      # The wrapped packager's: vendoring deprecates nothing of its own.
+      sig { override.returns(T::Array[String]) }
+      def deprecations
+        @packager.deprecations
       end
 
       # The declaration as `dev help` renders it: the wrapped packager's,

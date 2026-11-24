@@ -56,7 +56,7 @@ class Dev::Lifecycle::ScriptPublisherTest < Minitest::Test
     (@project / "stage.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$(pwd) $DEV_CHANNEL $DEV_TRACK $DEV_BUILD $DEV_CONFIG $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY ${DEV_INSTALL:-unset}" >> "#{@root}/shipped"
+      echo "$(pwd) $DEV_CHANNEL $DEV_TRACK $DEV_BUILD $DEV_CONFIG $DEV_BUILD_ID $DEV_SHA $DEV_DIRTY ${DEV_STAGE:-unset}" >> "#{@root}/shipped"
       echo "$DEV_ARTIFACT" >> "#{@root}/shipped"
       test -d "$DEV_SCRATCH" && echo "$DEV_SCRATCH" >> "#{@root}/shipped"
     SH

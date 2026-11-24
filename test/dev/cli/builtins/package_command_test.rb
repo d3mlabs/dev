@@ -61,13 +61,13 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     (@project / "build.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_INSTALL/built.txt"
+      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_STAGE/built.txt"
       echo run >> "#{@root}/build-runs"
     SH
     (@project / "artifact.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      mkdir -p "$DEV_INSTALL" && echo gem > "$DEV_INSTALL/rspock-3.0.0.gem"
+      mkdir -p "$DEV_STAGE" && echo gem > "$DEV_STAGE/rspock-3.0.0.gem"
     SH
     (@project / "VERSION").write("1.2.3\n")
     tool_tree(@project)
@@ -205,17 +205,17 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     Dev::Lifecycle::Build.parse(name, targets)
   end
 
-  test "bare `dev package` builds the first target's default build, zips the install and stamps build-id.json last" do
+  test "bare `dev package` builds the first target's default build, zips the stage and stamps build-id.json last" do
     Given
     the_build = build("cellbound-3d-linux64-dev")
 
     When
     execute(command)
 
-    Then "the builder ran once into the store's install dir; the archive sits beside the manifest, " \
+    Then "the builder ran once into the store's stage; the archive sits beside the manifest, " \
          "which records the clean tree, the builder and the archive's digest; the verb reports the artifact"
     build_runs == 1
-    (store.install_dir(the_build) / "built.txt").read == "cellbound-3d linux64 dev\n"
+    (store.stage_dir(the_build) / "built.txt").read == "cellbound-3d linux64 dev\n"
     artifact = store.artifact(the_build)
     artifact.archive == store.dir(the_build) / "cellbound-3d-linux64-dev.zip"
     artifact.archive.file?
@@ -230,7 +230,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     @out.string == "packaged cellbound-3d-linux64-dev → #{artifact.archive} (1.2.3+#{head})\n"
   end
 
-  test "a current artifact skips the build and re-packages the install" do
+  test "a current artifact skips the build and re-packages the stage" do
     Given "an artifact packaged from this clean tree"
     execute(command)
     @out.truncate(0)
@@ -302,8 +302,8 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     store.artifact(build("cellbound-3d-linux64-dev")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.3+#{head}.dirty.20261104T123000Z")
   end
 
-  test "--no-build packages the install as it is" do
-    Given "an install the builder left"
+  test "--no-build packages the stage as it is" do
+    Given "a stage the builder left"
     execute(command, "cellbound-3d-release")
     commit("two")
     @out.truncate(0)
@@ -321,9 +321,9 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "a target with no build: stages the checkout's tracked files and archives them; untracked files never ship (dev#674)" do
     Given "an untracked file beside the tracked ones, and a stale file in the stage"
     (@project / "notes.txt").write("untracked")
-    install = store.install_dir(build("site"))
-    install.mkpath
-    (install / "stale.txt").write("from a previous build")
+    stage = store.stage_dir(build("site"))
+    stage.mkpath
+    (stage / "stale.txt").write("from a previous build")
 
     When
     execute(command, "site")
@@ -331,7 +331,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     Then "the checkout builder ran (no script did); the zip holds exactly the tracked files; the manifest names the builder"
     build_runs == 0
     !@out.string.include?("build skipped")
-    install.children.map { |child| child.basename.to_s }.sort == TRACKED
+    stage.children.map { |child| child.basename.to_s }.sort == TRACKED
     artifact = store.artifact(build("site"))
     artifact.archive == store.dir(build("site")) / "site.zip"
     Open3.capture2("unzip", "-Z1", artifact.archive.to_s).first.lines.map(&:chomp).sort == TRACKED_ENTRIES
@@ -342,7 +342,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "a target with no build: is current like any other: a second package from the same clean tree skips the checkout copy" do
     Given
     execute(command, "site")
-    (store.install_dir(build("site")) / "marker.txt").write("left by hand")
+    (store.stage_dir(build("site")) / "marker.txt").write("left by hand")
     @out.truncate(0)
     @out.rewind
 
@@ -351,7 +351,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
 
     Then "the stage was not refreshed, so the marker survived into the re-archived zip"
     @out.string.lines.first == "build skipped: the artifact is current (1.2.3+#{head})\n"
-    (store.install_dir(build("site")) / "marker.txt").file?
+    (store.stage_dir(build("site")) / "marker.txt").file?
   end
 
   test "a complete self-contained tree packages for the gh channel: the selection ships, nothing of the checkout beyond it" do
@@ -477,7 +477,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "`after` without a packed archive is a wiring bug, named" do
     Given
     env = Dev::Cli::Builtins::PackageCommand::PackageEnv.new(
-      build: build("site"), install: Pathname("/i"), archive_stem: Pathname("/a"),
+      build: build("site"), stage: Pathname("/i"), archive_stem: Pathname("/a"),
       builder: Dev::Lifecycle::CheckoutBuilder.new(project_root: @project), packager: Dev::Lifecycle::Archive.new,
       acceptance: Dev::Lifecycle::Acceptance.unconditional,
       state: Dev::Lifecycle::GitState.new(sha: nil, dirty: true), build_skipped: nil,
