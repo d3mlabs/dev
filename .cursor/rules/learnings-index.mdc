@@ -23,8 +23,14 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [testing/rspock-bare-assertions] In rspock `transform!`-ed test classes,
   bare `Then`/`Expect` statements are assertions; outside a transformed
   class they silently assert nothing.
-  → skill: rspock (ships in the rspock gem; linked by `dev up` /
-  `dev deps install`)
+ → skill: rspock (ships in the rspock gem; linked by `dev up` /
+ `dev deps install`)
+- [testing/composition-root-tests-pin-env-posture] A test building the
+ real `Dev::Cli::Runner` over a locked checkout inherits the suite
+ process's `CI` posture: pin `Dev::Deps.detect_env` (and every other
+ host answer the root reads) or the staleness guard, not the code under
+ test, decides the verb — green locally, red in the job.
+ → .cursor/skills/learnings/composition-root-tests-pin-env-posture/
 
 ## process
 
