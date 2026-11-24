@@ -8,7 +8,7 @@ description: MUST be used when adding a lifecycle port or a stage a target may l
 A stage that a target may leave undeclared gets an identity implementation
 — the form that hands its input through unchanged (`CheckoutBuilder` for no
 `build:`, `as-is` for package) — and the verbs see one port type with no
-nil branch. A precondition of the stage (the install is fresh) is the port's
+nil branch. A precondition of the stage (the stage is fresh) is the port's
 own rule, stated once in dev, never each script's.
 
 Why: a nil port does not stay nil. Every verb grows an `if builder` arm,
@@ -21,14 +21,14 @@ dev left both "what no `build:` means" and "is the stage fresh" unspecified.
 # WRONG: the absent declaration is nil, and callers branch on it
 sig { params(target: Target).returns(T.nilable(Builder)) }
 def builder_for(target) = target.builder ? ScriptBuilder.new(...) : nil
-env.builder&.build(build, install)          # in every verb
+env.builder&.build(build, stage)            # in every verb
 builder: env.builder&.name || "none"        # a sentinel in the stamp
 
 # RIGHT: the absent declaration is the identity; the precondition is the port's
 sig { params(target: Target).returns(Builder) }
 def builder_for(target) = target.builder ? ScriptBuilder.new(...) : @checkout_builder
-sig(:final) { params(build: Build, install: Pathname).void }
-def build(build, install) = (FileUtils.rm_rf(install); install.mkpath; fill(build, install))
+sig(:final) { params(build: Build, stage: Pathname).void }
+def build(build, stage) = (FileUtils.rm_rf(stage); stage.mkpath; fill(build, stage))
 ```
 
 Before adding a nilable port or a "declares nothing" skip, name the

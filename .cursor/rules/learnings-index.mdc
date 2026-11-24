@@ -105,8 +105,14 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [architecture/port-identity-form] A lifecycle stage a target may leave
  undeclared gets an identity implementation (`CheckoutBuilder`, `as-is`),
  never a nil port the verbs branch on; a precondition of the stage (the
- install is fresh) is the port's one rule, not each script's.
+ stage is fresh) is the port's one rule, not each script's.
  → .cursor/skills/learnings/port-identity-form/
+- [architecture/one-release-alias] Renaming anything a project reads
+ from dev (a `DEV_*` key a script reads, a dev.yml key, a flag) keeps the
+ old name one release as a warning alias reported through the port that
+ owns it; a path dev wrote in the store is not aliased — the docs name it
+ for `rm -rf`, gc reclaims only what it placed.
+ → .cursor/skills/learnings/one-release-alias/
 
 ## toolchain
 
