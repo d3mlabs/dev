@@ -8,15 +8,6 @@ require "dev/job_identity/linux"
 require "dev/runner_discovery"
 require "dev/runner_registry"
 require "dev/deps/dependency"
-require "dev/deps/gh_integration"
-require "dev/deps/local_store"
-require "dev/lifecycle/build_pattern"
-require "dev/lifecycle/channel"
-require "dev/lifecycle/publisher_spec"
-require "dev/lifecycle/target"
-require "dev/stream"
-require "dev/stream_head_lookup"
-require "dev/stream_store"
 require "dev/host_reach"
 require "dev/runner_role_aliases"
 require "dev/runner_status"
@@ -439,151 +430,47 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui.rows.none? { |_kind, text, _depth| text.include?("job identity ai-agent") }
   end
 
-  # --- the stream a family follows (dev#658) -------------------------------
+  # --- the job-started hook dev 0.9.x left (dev#700) -------------------------
 
-  # cellbound-3d deployed through gh: its declared roles follow its stream.
-  GH_CHANNELS = { "gh" => Dev::Lifecycle::Channel.new(
-    name: "gh", accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "cellbound-3d"))],
-    publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "gh"),
-  ) }.freeze
-  FARM_DECLARATION = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], job_identity: "ue-builder")
-  FARM_STREAM = Dev::Stream.parse("d3mlabs/cellbound-3d@gh ~> 3")
-
-  test "a family following its stream: the stream line reads the head against what is installed and names the jobs' identity; each slot's hook is a held fact" do
-    Given "the ue-farm role bound in the gh-deployed checkout at 3.1.0; one slot whose hook follows the stream; 3.1.0 installed and at the head"
+  test "a slot still carrying the retired job-started hook is a finding — the hook's keys in .env or its script — #{what}" do
+    Given "two orchestrator slots, the second from dev 0.9.x"
     ui = RecordingUi.new
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "box-ue-farm")
-    follow!(dir, FARM_STREAM)
-    role = FARM_DECLARATION.bind(repo: "d3mlabs/cellbound-3d", version: "3.1.0", channels: GH_CHANNELS)
-    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ue-builder"] => true }, capture_results: cooperative_work_trees(home, "actions-runner-ue-farm"))
-    status = build_status(ui: ui, home: home, registry: registry, roles: { "ue-farm" => role }, executor: executor,
-      stream_lookup: lookup_answering(FARM_STREAM, version: "3.1.0"), stream_store: stream_store_with(FARM_STREAM, "3.0.0", "3.1.0"))
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    stale = write_runner(home, "actions-runner-orchestrator-2", scope: "d3mlabs", name: "box-orchestrator-2")
+    File.write(File.join(stale, ".env"), env) if env
+    File.write(File.join(stale, "dev-job-started.sh"), "#!/usr/bin/env bash\n") if script
+    registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
+    status = build_status(ui: ui, home: home, registry: registry)
 
     When
     status.report
 
-    Then "the stream line sits between the reach and the slots"
-    rows_from(ui, "ue-farm · 1 slot · d3mlabs/cellbound-3d").take(5) == [
-      [:frame, "ue-farm · 1 slot · d3mlabs/cellbound-3d", 0],
-      [:note, "{{v}} reach: jobs from d3mlabs/cellbound-3d", 1],
-      [:note, "#{INDENT}via any workflow", 1],
-      [:note, "#{INDENT}runs-on ue | gpu", 1],
-      [:note, "{{v}} stream: d3mlabs/cellbound-3d@gh ~> 3 — head 3.1.0 installed · jobs as ue-builder", 1],
-    ]
-    ui.rows.include?([:note, "{{v}} box-ue-farm — online · service installed · runs as #{ME} · hook follows the stream · _work shared with group dev", 1])
-  end
-
-  test "a head this host has not installed is red, with the next job and the follow verb as the remedy — #{what}" do
-    Given "the head at 3.2.0, the host #{what}"
-    ui = RecordingUi.new
-    home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "box-ue-farm")
-    follow!(dir, FARM_STREAM)
-    role = FARM_DECLARATION.bind(repo: "d3mlabs/cellbound-3d", version: "3.1.0", channels: GH_CHANNELS)
-    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ue-builder"] => true }, capture_results: cooperative_work_trees(home, "actions-runner-ue-farm"))
-    status = build_status(ui: ui, home: home, registry: registry, roles: { "ue-farm" => role }, executor: executor,
-      stream_lookup: lookup_answering(FARM_STREAM, version: "3.2.0"), stream_store: stream_store_with(FARM_STREAM, *installed_versions))
-
-    When
-    status.report
-
-    Then
-    ui.rows.include?([:note, "{{x}} stream: d3mlabs/cellbound-3d@gh ~> 3 — head 3.2.0, installed #{installed} · jobs as ue-builder " \
-                             "(the next job installs it; now: `dev runner follow ~/actions-runner-ue-farm`)", 1])
+    Then "the clean slot holds; the stale one names the hook, with register as the remedy"
+    ui.rows.include?([:note, "{{v}} box-orchestrator — online · service installed · runs as #{ME}", 1])
+    ui.rows.include?([:note, "{{x}} box-orchestrator-2 (~/actions-runner-orchestrator-2) — job-started hook left from dev 0.9.x (dev-job-started.sh) — " \
+                             "jobs run the checkout's lock, not a head (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator-2` to retire it)", 1])
 
     Where
-    what                    | installed_versions | installed
-    "behind at 3.1.0"       | ["3.1.0"]          | "3.1.0"
-    "with nothing installed" | []                | "none"
+    what               | env                                                                                           | script
+    "both keys"        | "ACTIONS_RUNNER_HOOK_JOB_STARTED=/x/dev-job-started.sh\nDEV_STREAM=d3mlabs/ai-flow@gh ~> 1\n" | false
+    "the script alone" | nil                                                                                           | true
   end
 
-  test "a stream whose head cannot be read: no head or an unreleased pointer is red with the lookup's words; gh unreachable is unknown" do
-    Given "the lookup raising #{error_class}"
-    ui = RecordingUi.new
-    home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "box-ue-farm")
-    follow!(dir, FARM_STREAM)
-    role = FARM_DECLARATION.bind(repo: "d3mlabs/cellbound-3d", version: "3.1.0", channels: GH_CHANNELS)
-    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ue-builder"] => true }, capture_results: cooperative_work_trees(home, "actions-runner-ue-farm"))
-    status = build_status(ui: ui, home: home, registry: registry, roles: { "ue-farm" => role }, executor: executor,
-      stream_lookup: lookup_answering(FARM_STREAM, error: error_class.new("words from the lookup")), stream_store: stream_store_with(FARM_STREAM, "3.1.0"))
-
-    When
-    status.report
-
-    Then
-    ui.rows.include?([:note, "#{glyph} stream: d3mlabs/cellbound-3d@gh ~> 3 — #{text}; installed 3.1.0 · jobs as ue-builder", 1])
-
-    Where
-    error_class                                  | glyph   | text
-    Dev::StreamHeadLookup::NoHeadError           | "{{x}}" | "words from the lookup"
-    Dev::StreamHeadLookup::HeadNotReleasedError  | "{{x}}" | "words from the lookup"
-    Dev::StreamHeadLookup::QueryError            | "{{?}}" | "head unknown (words from the lookup)"
-  end
-
-  test "a slot of a stream role whose hook is missing or follows another stream is a finding — #{what}" do
+  test "a slot whose .env holds only the runner's own lines is not a hook finding" do
     Given
     ui = RecordingUi.new
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "box-ue-farm")
-    follow!(dir, recorded) if recorded
-    role = FARM_DECLARATION.bind(repo: "d3mlabs/cellbound-3d", version: "3.1.0", channels: GH_CHANNELS)
-    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
-    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ue-builder"] => true }, capture_results: cooperative_work_trees(home, "actions-runner-ue-farm"))
-    status = build_status(ui: ui, home: home, registry: registry, roles: { "ue-farm" => role }, executor: executor,
-      stream_lookup: lookup_answering(FARM_STREAM, version: "3.1.0"), stream_store: stream_store_with(FARM_STREAM, "3.1.0"))
+    dir = write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    File.write(File.join(dir, ".env"), "LANG=C\n")
+    registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
+    status = build_status(ui: ui, home: home, registry: registry)
 
     When
     status.report
 
     Then
-    ui.rows.include?([:note, "{{x}} box-ue-farm (~/actions-runner-ue-farm) — #{finding} (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-ue-farm` to retire it)", 1])
-
-    Where
-    what             | recorded                                           | finding
-    "no hook"        | nil                                                | "no job-started hook — jobs run no head of d3mlabs/cellbound-3d@gh ~> 3"
-    "another stream" | Dev::Stream.parse("d3mlabs/cellbound-3d@gh ~> 2") | "hook follows d3mlabs/cellbound-3d@gh ~> 2, not the role's d3mlabs/cellbound-3d@gh ~> 3"
-  end
-
-  test "a pooled family (no declaration at hand) whose hooks record a stream has its stream read from the record, jobs as the runner user, the hook a held fact" do
-    Given "an org slot in the ue-farm pool following cellbound-3d's v3, status run outside the checkout"
-    ui = RecordingUi.new
-    home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs", name: "box-ue-farm", pool: "ue-farm")
-    follow!(dir, FARM_STREAM)
-    group = Dev::RunnerRegistry::Group.new(id: 9, name: "ue-farm", visibility: "selected", allows_public_repositories: false,
-      restricted_to_workflows: false, selected_workflows: [])
-    registry = CannedRegistry.new(group: group, repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: %w[ue gpu], status: "online") }
-    status = build_status(ui: ui, home: home, registry: registry, roles: {},
-      stream_lookup: lookup_answering(FARM_STREAM, version: "3.1.0"), stream_store: stream_store_with(FARM_STREAM, "3.1.0"))
-
-    When
-    status.report
-
-    Then
-    ui.rows.include?([:note, "{{v}} stream: d3mlabs/cellbound-3d@gh ~> 3 — head 3.1.0 installed · jobs as #{ME}", 1])
-    ui.rows.include?([:note, "{{v}} box-ue-farm — online · service installed · runs as #{ME} · hook follows d3mlabs/cellbound-3d@gh ~> 3", 1])
-  end
-
-  test "a build host with a hook left from an earlier role is a finding: its jobs run the checkout, the hook is stale" do
-    Given "a repo build host whose dir still records a stream"
-    ui = RecordingUi.new
-    home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-cellbound-3d", scope: "d3mlabs/cellbound-3d", name: "box")
-    follow!(dir, FARM_STREAM)
-    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["cellbound-3d"], status: "online") }
-    status = build_status(ui: ui, home: home, registry: registry, roles: {})
-
-    When
-    status.report
-
-    Then "the stream line is the record's; the slot is red on the hook"
-    ui.rows.none? { |_kind, text, _depth| text.start_with?("{{v}} stream:") || text.start_with?("{{x}} stream:") }
-    ui.rows.any? { |_kind, text, _depth| text.include?("hook follows d3mlabs/cellbound-3d@gh ~> 3, but the role follows no stream") }
+    ui.rows.include?([:note, "{{v}} box-orchestrator — online · service installed · runs as #{ME}", 1])
   end
 
   test "an agent family's group drifted to every repo: the from clause names the expected shape" do
@@ -1649,38 +1536,6 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui.rows.drop_while { |row| row != [:frame, frame_title, 0] }
   end
 
-  # A stream store over an empty artifact store.
-  def empty_stream_store
-    Dev::StreamStore.new(store: Dev::Deps::LocalStore.new(data_root: Dir.mktmpdir("stream-store")))
-  end
-
-  # A stream store with the given releases of the stream published.
-  def stream_store_with(stream, *versions)
-    local = Dev::Deps::LocalStore.new(data_root: Dir.mktmpdir("stream-store"))
-    store = Dev::StreamStore.new(store: local)
-    versions.each do |version|
-      key = Dev::Deps::GhIntegration.tree_key(store.dependency(stream, Dev::Stream::Head.new(version: version, commit: "")))
-      local.publish_tree(key) { |staging| staging }
-    end
-    store
-  end
-
-  # A lookup answering the stream's head — or raising the given error.
-  def lookup_answering(stream, version: nil, error: nil)
-    lookup = typed_mock(Dev::StreamHeadLookup)
-    if error
-      lookup.stubs(:head).with(stream).raises(error)
-    else
-      lookup.stubs(:head).with(stream).returns(Dev::Stream::Head.new(version: version, commit: "c0ffee"))
-    end
-    lookup
-  end
-
-  # The hook record register writes in a slot's dir when it follows a stream.
-  def follow!(dir, stream)
-    File.write(File.join(dir, ".env"), "ACTIONS_RUNNER_HOOK_JOB_STARTED=#{dir}/dev-job-started.sh\nDEV_STREAM=#{stream}\n")
-  end
-
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON), with
   # svc.sh's `.service` marker unless `service: false`.
   def write_runner(home, dir_name, scope:, name:, pool: nil, service: true)
@@ -1762,8 +1617,7 @@ class Dev::RunnerStatusTest < Minitest::Test
                    identity_factory: ->(user) { identity || darwin_identity(user, executor, shared_root: shared_root, brew: brew, runner_user: runner_user) },
                    roles: Dev::RunnerRoleAliases::ALL, brewfile_path: nil,
                    container_required: false, host_identity: nil, pins: [], repo: nil, reach: nil, reach_factory: ->(_identity) { reach },
-                   wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: runner_user,
-                   stream_lookup: typed_mock(Dev::StreamHeadLookup), stream_store: empty_stream_store)
+                   wsl_runner_host: nil, host: "mac1", host_os: "darwin", operator: runner_user)
     # :default leaves RunnerStatus's own factory in place.
     reach_wiring = reach_factory == :default ? {} : { reach_factory: reach_factory }
     identity_wiring = identity_factory == :default ? {} : { identity_factory: identity_factory }
@@ -1772,10 +1626,6 @@ class Dev::RunnerStatusTest < Minitest::Test
       repo: repo,
       **reach_wiring,
       **identity_wiring,
-      # The stream seams (dev#658): a lookup never asked unless a family
-      # follows a stream, and a store with nothing installed.
-      stream_lookup: stream_lookup,
-      stream_store: stream_store,
       # The WSL runner host (dev#261): nil is any host but a WSL2 distro.
       wsl_runner_host: wsl_runner_host,
       discovery: Dev::RunnerDiscovery.new(home: home),

@@ -15,7 +15,7 @@ module Dev
   # the runner binaries in place so the dir is an unconfigured download a
   # later `register --dir` can reuse, and its _diag logs stay readable.
   #
-  # Order matters and follows the runner's own rules: config.sh refuses to
+  # Order matters and is the runner's own rule: config.sh refuses to
   # deregister while the service unit is installed ("Uninstall service
   # first"), so the service goes first; the remove token is minted at the
   # enrollment's *own* scope (read from its .runner record), never at a

@@ -508,25 +508,38 @@ is the destination's, and every publisher declares which of two it has:
 A head is kept per **series** — every version of one major, `v1`, `v2`:
 a pointed channel holds one pointer per series it serves, a derived
 channel's head within a series is that major's greatest release. A
-follower on a series (`~> 1`) never crosses a major by following.
+follower on a series never crosses a major by following.
 
-A lock and a follower read the same head. A dependency declared with a
-**series-shaped** requirement — one whose bounds are series boundaries
-and nothing finer: `~> 1`, `>= 1, < 2`, `>= 1` — resolves, on a pointed
-channel, to the head of the newest series it covers: `dev deps update`
-locks what `v1` points at, the version and the commit, from the same
-pointer an adopter's `@v1` resolves. A rollback is `dev deploy gh
---release <previous>`, which moves `v1`, and the next re-lock follows it
-down; nothing re-locks the greatest tag the operator just rolled away
-from. A series the channel keeps no pointer for, and every derived
-channel, resolves to the greatest satisfying version. A requirement with
-a bound inside a series (`>= 1.4`, `~> 1.2`) names versions, not series,
-and takes the greatest satisfying one on every channel; `tag:` and `sha:`
-are exact. The lock report says which rule chose: `series head v1 →
-v1.3.0` or `greatest satisfying` ([dependencies.md](dependencies.md#series-heads)).
-The set of strategies is closed: a destination that keeps no pointer and
-whose versions are not totally ordered is a third strategy to name in dev
-before it gets a publisher, never a special case inside one.
+Two kinds of follower read a head, and no host is one. A **workflow
+caller** names the series in its `uses:` (`d3mlabs/ai-flow/.github/
+workflows/ai-commands.yml@v1`) and takes whatever `v1` points at on each
+run. A **project's lock** names the series in a **series-shaped**
+requirement — one whose bounds are series boundaries and nothing finer:
+`~> 1`, `>= 1, < 2`, `>= 1` (`gh "d3mlabs/ai-flow", "~> 1"` in its
+`dependencies.rb`) — and resolves it, on a pointed channel, to the head
+of the newest series it covers: `dev deps update` locks what `v1` points
+at, the version and the commit, from the same pointer the caller's `@v1`
+resolves. A rollback is `dev deploy gh --release <previous>`, which
+moves `v1`, and the next re-lock follows it down; nothing re-locks the
+greatest tag the operator just rolled away from — a rollback, which is a
+`deploy`, reaches the caller and the lock alike. A series the channel
+keeps no pointer for, and every derived channel, resolves to the greatest
+satisfying version. A requirement with a bound inside a series (`>= 1.4`,
+`~> 1.2`) names versions, not series, and takes the greatest satisfying
+one on every channel; `tag:` and `sha:` are exact. The lock report says
+which rule chose: `series head v1 → v1.3.0` or `greatest satisfying`
+([dependencies.md](dependencies.md#series-heads)). A runner host follows
+nothing: its jobs run the checkout they are given, and the tool that
+checkout pins is installed from its lock by the job's own `dev up`
+([Runners: what a slot runs](runners.md#what-a-slot-runs)).
+
+The head is not the resolver's greatest-satisfying version. A requirement
+that is not a series (`>= 1.4`) wants the greatest version that satisfies
+it; a follower wants what is deployed; after a rollback the deployed
+version is lower than the greatest one there, and the two must be allowed
+to say so. The set of strategies is closed: a destination that keeps no
+pointer and whose versions are not totally ordered is a third strategy to
+name in dev before it gets a publisher, never a special case inside one.
 
 **Acceptance.** Whether a tree is complete for a destination is the
 destination's to say, and it says so at `package`, not on the host

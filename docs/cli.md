@@ -66,7 +66,6 @@ happens without a verb.
 | `install`, `up` | Bring the machine to a state the project already recorded — the lock, the manifest. They read that record and resolve nothing. |
 | `update` | Moves the record: re-resolves and writes it. |
 | `register` / `unregister` | Enroll this host with, or retire it from, a remote. |
-| `follow` | Bring the machine to the current head of something it is enrolled to follow, and make it the one in use. What a hook runs; a hand run does the same now. |
 | `pull` / `push` | Copy the remote's version here, or this copy to the remote. |
 | `link` | Attach a local file to a remote thing, creating the remote thing when none is named. |
 | `new` / `init` | Create a remote thing, or scaffold local files. |
@@ -183,7 +182,7 @@ Each builtin runs in one of three scopes:
 | `dev cred get <namespace> <key>` | Resolve a credential and print it. |
 | `dev engine up\|down [--force]\|status` | The per-user container engine. |
 | `dev container up\|down\|reset\|status` | This checkout's images and containers. |
-| `dev runner register\|status\|unregister [<scope>\|<dir>] [--yes]\|follow <dir>` | Self-hosted runner enrollment. |
+| `dev runner register\|status\|unregister [<scope>\|<dir>] [--yes]` | Self-hosted runner enrollment. |
 | `dev plan new <title>\|link <n> [<file>] \| <file>\|pull <n>\|push [<plan>]\|status\|init` | Plans as GitHub issues. |
 | `dev learnings sync\|status\|invariants\|init` | Org learnings read path. |
 | `dev skills status [--json]\|sync` | Agent skill links. |

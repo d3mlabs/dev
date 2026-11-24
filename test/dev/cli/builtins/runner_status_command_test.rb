@@ -6,12 +6,7 @@ require "dev/cli/builtins/runner_status_command"
 require "dev/deps/dependency"
 require "dev/deps/lockfile"
 require "dev/environment_image"
-require "dev/lifecycle/build_pattern"
-require "dev/lifecycle/channel"
 require "dev/lifecycle/project_version"
-require "dev/lifecycle/publisher_spec"
-require "dev/lifecycle/target"
-require "dev/stream"
 require "dev/runner_role"
 require "dev/runner_role_aliases"
 require "pathname"
@@ -27,15 +22,6 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
   GROUPED_FARM = Dev::RunnerRole::Declaration.new(
     name: "ue-farm", labels: %w[ue gpu], group: "ue-farm", workflows: [".github/workflows/build.yml"], job_identity: "ue-builder",
   )
-  # A project deployed through gh: the channel a declared role's slots follow.
-  GH_CHANNELS = {
-    "gh" => Dev::Lifecycle::Channel.new(
-      name: "gh",
-      accepts: [Dev::Lifecycle::BuildPattern.new(target: Dev::Lifecycle::Target.new(name: "ai-flow"))],
-      publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "gh"),
-    ),
-  }.freeze
-
   test "traits: lifecycle section, guarded like any read command, never stamps" do
     Given "the builtin"
     command = Dev::Cli::Builtins::RunnerStatusCommand.new
@@ -55,7 +41,7 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:check).once
     status.expects(:report).never
-    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _channels, _ui) { status })
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When "running status --check with no project"
     command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
@@ -68,7 +54,7 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "an inspector whose check finds drift"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:check).raises(Dev::RunnerStatus::PostureDriftError, "host posture: 1 of 2 facts drifted")
-    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _channels, _ui) { status })
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When
     error = assert_raises(Dev::RunnerStatus::PostureDriftError) do
@@ -79,14 +65,14 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     error.message == "host posture: 1 of 2 facts drifted"
   end
 
-  test "status wires the inspector with the container fact, the checkout's declared roles and channels, and the context's Ui (plans#52, dev#657, dev#658)" do
-    Given "a status factory recording its wiring; a checkout declaring ue-farm and a gh channel"
+  test "status wires the inspector with the container fact, the checkout's declared roles and the context's Ui (plans#52, dev#657)" do
+    Given "a status factory recording its wiring; a checkout declaring ue-farm"
     seen = []
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(
-      runner_status_factory: ->(container_required, project_root, declarations, channels, ui) {
-        seen << [container_required, project_root, declarations, channels, ui]
+      runner_status_factory: ->(container_required, project_root, declarations, ui) {
+        seen << [container_required, project_root, declarations, ui]
         status
       },
     )
@@ -94,17 +80,17 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     ui = typed_mock(Dev::Ui)
 
     When "running status inside a container repo (its lock pins an image)"
-    command.call(args: no_args, context: build_context(root: root, ui: ui, runner_roles: { "ue-farm" => FARM }, channels: GH_CHANNELS))
+    command.call(args: no_args, context: build_context(root: root, ui: ui, runner_roles: { "ue-farm" => FARM }))
 
-    Then "the container fact, the checkout, its declarations, its channels and the Ui reach the inspector"
-    seen == [[true, Pathname.new(root), { "ue-farm" => FARM }, GH_CHANNELS, ui]]
+    Then "the container fact, the checkout, its declarations and the Ui reach the inspector"
+    seen == [[true, Pathname.new(root), { "ue-farm" => FARM }, ui]]
   end
 
   test "status works projectless (the machine view needs no checkout)" do
     Given "a status factory"
     status = typed_mock(Dev::RunnerStatus)
     status.expects(:report).once
-    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _channels, _ui) { status })
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When "running status with no project"
     command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
@@ -166,21 +152,6 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     roles.fetch("ue-farm").job_identity == "ue-builder"
   end
 
-  test "roles_at_hand anchors a declared role to the checkout's stream when it deploys through gh (dev#658)" do
-    Given "a checkout at 3.4.1 with a gh channel"
-    root = Pathname.new(Dir.mktmpdir)
-    File.write(root.join(Dev::Lifecycle::ProjectVersion::FILE_NAME), "3.4.1\n")
-
-    When
-    roles = Dev::Cli::Builtins::RunnerStatusCommand.roles_at_hand(
-      { "ue-farm" => FARM }, project_root: root, repo: "d3mlabs/ai-flow", channels: GH_CHANNELS,
-    )
-
-    Then "the declared role follows d3mlabs/ai-flow@gh ~> 3; the aliases follow nothing"
-    roles.fetch("ue-farm").stream == Dev::Stream.parse("d3mlabs/ai-flow@gh ~> 3")
-    roles.fetch("agent").stream.nil?
-  end
-
   test "roles_at_hand outside a checkout, or in one gh cannot name, is the aliases alone: a declaration's pins are spelled with the repo" do
     Expect
     Dev::Cli::Builtins::RunnerStatusCommand.roles_at_hand({ "ue-farm" => GROUPED_FARM }, project_root: nil, repo: nil) == Dev::RunnerRoleAliases::ALL
@@ -190,10 +161,10 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
 
   private
 
-  def build_context(root: "/tmp/runner-status-test", ui: typed_mock(Dev::Ui), runner_roles: {}, channels: {})
+  def build_context(root: "/tmp/runner-status-test", ui: typed_mock(Dev::Ui), runner_roles: {})
     Dev::Cli::ExecutionContext.new(
       ui: ui,
-      project: Dev::Cli::ProjectContext.new(name: "Cellbound3D", root: Pathname.new(root), runner_roles: runner_roles, channels: channels),
+      project: Dev::Cli::ProjectContext.new(name: "Cellbound3D", root: Pathname.new(root), runner_roles: runner_roles),
     )
   end
 

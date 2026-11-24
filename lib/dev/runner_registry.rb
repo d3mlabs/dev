@@ -398,7 +398,7 @@ module Dev
       Runner.new(id: Integer(record.fetch("id")), custom_labels: custom, status: record.fetch("status").to_s)
     end
 
-    # The API path prefix for a scope, following its shape (repos/... for
+    # The API path prefix for a scope, by its shape (repos/... for
     # "owner/repo", orgs/... for a bare org) — same convention as
     # RunnerSetup's token minting.
     #

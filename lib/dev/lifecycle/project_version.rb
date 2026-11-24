@@ -56,7 +56,7 @@ module Dev
 
         # The tag naming a version's **series** — its major: `v1` for
         # `1.4.2`. Everything a consumer takes from a project follows the
-        # series (a host on `~> 1`, a workflow `uses:` at `@v1`), so the
+        # series (a lock on `~> 1`, a workflow `uses:` at `@v1`), so the
         # series is what a role's workflow pins and a deploy moves.
         #
         # @param version [String] a `major.minor.patch`

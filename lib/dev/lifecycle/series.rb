@@ -7,7 +7,7 @@ require_relative "release_tag"
 module Dev
   module Lifecycle
     # A release **series**: every version of one major, named `v<major>`
-    # as the plan names a series tag. What a follower is on — a host on
+    # as the plan names a series tag. What a follower is on — a lock on
     # `~> 1`, an adopter on `@v1` — and what a head is kept per: a pointed
     # channel holds one pointer per series, a derived channel's head within
     # a series is the greatest non-prerelease version of that major

@@ -40,7 +40,7 @@ module Dev
     # pin and a deploy moving a pointer share nothing but the forge.
     #
     # The channel's head is pointed: the series tag is what a follower of
-    # the series (`~> 1` on a host's stream, `@v1` in a workflow) resolves,
+    # the series (`~> 1` in a project's lock, `@v1` in a workflow) resolves,
     # and this publisher is what moves it — forward on a deploy, back when
     # an earlier release of the series is deployed again. The latest
     # designation follows the newest deployed series only, so a 1.x patch
