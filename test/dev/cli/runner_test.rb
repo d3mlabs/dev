@@ -750,6 +750,87 @@ class RunnerTest < Minitest::Test
     $stderr = old_stderr
   end
 
+  # dev#689: the installed dev predates every grammar change dev's own
+  # checkout makes to its dev.yml, and runs `dev up` on it before the
+  # checkout's dev can; in any project an older dev `dev up`s a newer
+  # dev.yml. A `targets:` this dev cannot read therefore stops the lifecycle
+  # verbs, naming the key, and nothing else.
+  test "a `targets:` this dev cannot read registers the lifecycle verbs as refusing stand-ins: the tree loads, help names the fault, and each verb refuses with the key (dev#689)" do
+    Given "dev's own dev.yml, one archive option ahead of this dev"
+    out = StringIO.new
+    runner = build_runner(
+      name: "dev",
+      out: out,
+      targets: { "dev-core" => { "desc" => "The org-blank tool", "packager" => { "archive" => { "files" => ["bin", "lib"] } } } },
+      commands: {
+        "up" => { "desc" => "Setup dev environment", "run" => "./bin/setup.rb" },
+        "test" => { "desc" => "Run this repo's tests", "run" => "./bin/test.rb" },
+        "deploy" => { "commands" => { "brew" => { "desc" => "Point the tap at a release", "targets" => ["dev-core"] } } },
+        "release" => { "desc" => "Cut a release" },
+      },
+    )
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When "the root usage prints, then each verb is asked for"
+    runner.run([])
+    Kernel.expects(:exit).with(1).times(4)
+    %w[build package deploy release].each { |verb| runner.run([verb]) }
+
+    Then "load said nothing; the project commands list; the four verbs list under Lifecycle carrying the fault; each refused under the dev: prefix, naming the key and the way out"
+    out.string.include?("Development commands for dev")
+    out.string.include?("  up           Setup dev environment")
+    out.string.include?("  test         Run this repo's tests")
+    out.string.include?("Lifecycle:")
+    %w[build package deploy release].all? do |verb|
+      out.string.lines.any? { |line| line.start_with?("  #{verb} ") && line.include?("Refused: this dev cannot read dev.yml `targets:`") }
+    end
+    refusals = $stderr.string.lines.grep(/^dev: /)
+    refusals.size == 4
+    refusals.all? { |line| line.include?("dev.yml `targets:` is not readable by this dev (#{Dev::Version.current})") }
+    refusals.all? { |line| line.include?("target 'dev-core': archive takes format, split, vendor, not files") }
+    refusals.all? { |line| line.include?("`dev up` upgrades dev") }
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "a `targets:` this dev cannot read registers only the verbs the declaration implies: build and package alone without deploy: or release: entries" do
+    Given
+    out = StringIO.new
+    runner = build_runner(out: out, targets: { "snappy" => { "platforms" => ["win64"], "packager" => { "archive" => { "files" => ["bin"] } } } })
+    old_stderr = $stderr
+    $stderr = StringIO.new
+
+    When
+    runner.run([])
+    Kernel.expects(:exit).with(1).once
+    runner.run(["deploy"])
+
+    Then "build and package list; deploy is not found, as in any project without channels"
+    out.string.lines.any? { |line| line.start_with?("  build ") }
+    out.string.lines.any? { |line| line.start_with?("  package ") }
+    out.string.lines.none? { |line| line.start_with?("  deploy ", "  release ") }
+    $stderr.string.include?("Command 'deploy' not found")
+
+    Cleanup
+    $stderr = old_stderr
+  end
+
+  test "the faulted verb's refusal is its own typed error, a RuntimeError the CLI boundary reports as a clean dev: line" do
+    Given
+    fault = Dev::Cli::LifecycleFault.new(refusal: ArgumentError.new("target 't': archive takes format, not files"), verbs: ["build", "package"])
+    command = Dev::Cli::Builtins::FaultedVerbCommand.new(verb: "build", fault: fault)
+
+    When
+    command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: fake_ui))
+
+    Then
+    error = raises(Dev::Cli::Builtins::FaultedVerbCommand::LifecycleFaultError)
+    error.message.include?("target 't': archive takes format, not files")
+    error.message.include?("`dev build` cannot run")
+  end
+
   test "a declared `deploy: gh` channel binds to dev's gh publisher with no pin at all: the destination is the project's own releases, reached by declaring it (dev#655)" do
     Given "a project declaring gh without run: over no lock"
     out = StringIO.new

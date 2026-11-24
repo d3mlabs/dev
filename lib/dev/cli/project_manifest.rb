@@ -5,6 +5,7 @@ require "dev/engine_resources"
 require "dev/lifecycle"
 require "dev/runner_role"
 require_relative "command"
+require_relative "lifecycle_fault"
 
 module Dev
   module Cli
@@ -37,6 +38,12 @@ module Dev
       # from them. Nil when the project declares none, and then `release`
       # does not exist for it.
       const :release, T.nilable(Lifecycle::ReleaseBuilds), default: nil
+      # Why `targets:` — and with it the channels and the release — could
+      # not be read by this dev, when it could not: the three above are then
+      # empty, and the lifecycle verbs the declaration implies refuse with
+      # this when asked (LifecycleFault). Nil when the lifecycle half read,
+      # or when the project declares none.
+      const :lifecycle_fault, T.nilable(LifecycleFault), default: nil
       # The engine floor this project's build was tuned for (`engine:`); nil
       # means the provisioner's defaults and no check.
       const :engine, T.nilable(Dev::EngineResources::Hint), default: nil

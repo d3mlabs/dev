@@ -228,6 +228,101 @@ class Dev::BinDevTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  # --- inside dev's own checkout, dev is the checkout (dev#689) ------------
+  #
+  # The installed dev predates every grammar change the checkout makes to
+  # its own dev.yml, so once the checkout's lock is installed the installed
+  # shim hands every verb to the checkout's bin/dev, under the checkout's
+  # shadowenv; until then (`dev up` is what installs it) it runs itself.
+  # The sh half is the only place the rule can live — it must run before
+  # any Ruby of the installed dev reads the dev.yml — so these tests spawn
+  # the real shim over a synthetic checkout, with a shadowenv stub that
+  # records what it was asked to run and then runs it: the handoff and the
+  # probe are the shim's; the activation they ride on is shadowenv's own.
+
+  test "inside dev's own checkout with its lock installed, the installed shim hands off to the checkout's bin/dev under the checkout's shadowenv — from any directory within" do
+    Given "a checkout that is dev (name: dev, bin/dev, lib/dev.rb) with a lock bundle check satisfies, and a shadowenv stub"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    checkout = build_dev_checkout(dir, lock_installed: true)
+    env = { "PATH" => "#{write_stub_shadowenv(dir)}:#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+
+    When "running the repo's shim, standing in for the installed one, from a subdirectory of the checkout"
+    out, err, status = Open3.capture3(env, "sh", BIN_DEV, "--version", chdir: File.join(checkout, "lib"))
+
+    Then "the checkout's bin/dev answered with the argv unchanged, reached through `shadowenv exec --dir <checkout>` after the probe"
+    status.success?
+    out == "checkout-dev --version\n"
+    err.empty?
+    shadowenv_calls(dir) == [
+      "exec -- bundle check --dry-run",
+      "exec --dir #{checkout} -- #{checkout}/bin/dev --version",
+    ]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "inside dev's own checkout with its lock not yet installed, the installed shim runs itself: that is what `dev up` is for" do
+    Given "a checkout that is dev whose lock names a gem not installed anywhere"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    checkout = build_dev_checkout(dir, lock_installed: false)
+    env = { "PATH" => "#{write_stub_shadowenv(dir)}:#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+
+    When "running the repo's shim there"
+    out, _err, status = Open3.capture3(env, "sh", BIN_DEV, "--version", chdir: checkout)
+
+    Then "the probe failed and the installed dev answered for itself"
+    status.success?
+    out.strip == File.read(File.join(DEV_ROOT, "VERSION")).strip
+    shadowenv_calls(dir) == ["exec -- bundle check --dry-run"]
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "the checkout's own bin/dev never hands off to itself" do
+    Given "a checkout that is dev, provisioned, whose bin/dev is the real shim over the repo's lib and VERSION"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    checkout = build_dev_checkout(dir, lock_installed: true, shim: :real)
+    env = { "PATH" => "#{write_stub_shadowenv(dir)}:#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+
+    When "running the checkout's own shim"
+    out, _err, status = Open3.capture3(env, "sh", File.join(checkout, "bin", "dev"), "--version", chdir: checkout)
+
+    Then "it answered itself — no probe, no exec: the rule is for the installed dev"
+    status.success?
+    out.strip == File.read(File.join(DEV_ROOT, "VERSION")).strip
+    shadowenv_calls(dir) == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a project that is not dev's checkout never hands off: #{missing}" do
+    Given "a provisioned checkout that is dev in all but one of the three facts"
+    dir = Dir.mktmpdir("dev-bin-test-")
+    checkout = build_dev_checkout(dir, lock_installed: true)
+    unmake.call(checkout)
+    env = { "PATH" => "#{write_stub_shadowenv(dir)}:#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
+
+    When "running the repo's shim there"
+    out, _err, status = Open3.capture3(env, "sh", BIN_DEV, "--version", chdir: checkout)
+
+    Then "the installed dev answered for itself without probing"
+    status.success?
+    out.strip == File.read(File.join(DEV_ROOT, "VERSION")).strip
+    shadowenv_calls(dir) == []
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+
+    Where
+    missing                         | unmake
+    "dev.yml names another project" | ->(root) { File.write(File.join(root, "dev.yml"), "name: devtools\n") }
+    "no bin/dev"                    | ->(root) { File.delete(File.join(root, "bin", "dev")) }
+    "no lib/dev.rb"                 | ->(root) { File.delete(File.join(root, "lib", "dev.rb")) }
+  end
+
   test "the shim removes every scrub key from the env it hands to ruby" do
     Given "every scrub key planted hostile, and a stub ruby that prints the env it receives"
     dir = Dir.mktmpdir("dev-bin-test-")
@@ -292,6 +387,89 @@ class Dev::BinDevTest < Minitest::Test
     SH
     FileUtils.chmod(0o755, File.join(stub_bin, "ruby"))
     stub_bin
+  end
+
+  # A checkout the shim's rule recognises as dev itself: `dev.yml` saying
+  # `name: dev`, `bin/dev`, `lib/dev.rb` — and the state the probe reads, a
+  # `.shadowenv.d` and a Gemfile with its lock. Installed means the lock
+  # names nothing (`bundle check` is satisfied by any Ruby, offline); not
+  # installed means it names a gem no machine has, which `bundle check`
+  # refuses from the lock alone, offline. The checkout's `bin/dev` is a
+  # stub that prints its name and argv — the handoff's proof — or, for the
+  # loop test, a copy of the real shim over the repo's lib and VERSION.
+  # Returns the checkout's path.
+  def build_dev_checkout(dir, lock_installed:, shim: :stub)
+    checkout = File.join(dir, "checkout")
+    FileUtils.mkdir_p([File.join(checkout, "bin"), File.join(checkout, "lib"), File.join(checkout, ".shadowenv.d")])
+    File.write(File.join(checkout, "dev.yml"), "name: dev\ncommands:\n  test:\n    run: ./bin/test.rb\n")
+    File.write(File.join(checkout, "Gemfile"), lock_installed ? "source \"https://rubygems.org\"\n" : <<~GEMFILE)
+      source "https://rubygems.org"
+      gem "dev-bin-test-missing-gem"
+    GEMFILE
+    File.write(File.join(checkout, "Gemfile.lock"), lock_installed ? <<~INSTALLED : <<~MISSING)
+      GEM
+        remote: https://rubygems.org/
+        specs:
+
+      PLATFORMS
+        ruby
+
+      DEPENDENCIES
+    INSTALLED
+      GEM
+        remote: https://rubygems.org/
+        specs:
+          dev-bin-test-missing-gem (99.0.0)
+
+      PLATFORMS
+        ruby
+
+      DEPENDENCIES
+        dev-bin-test-missing-gem
+    MISSING
+    case shim
+    when :stub
+      File.write(File.join(checkout, "lib", "dev.rb"), "")
+      File.write(File.join(checkout, "bin", "dev"), "#!/bin/sh\necho \"checkout-dev $*\"\n")
+      FileUtils.chmod(0o755, File.join(checkout, "bin", "dev"))
+    when :real
+      FileUtils.cp(BIN_DEV, File.join(checkout, "bin", "dev"))
+      FileUtils.rm_rf(File.join(checkout, "lib"))
+      %w[lib VERSION].each { |entry| File.symlink(File.join(DEV_ROOT, entry), File.join(checkout, entry)) }
+    end
+    checkout
+  end
+
+  # A PATH-front stub standing in for shadowenv: records every invocation
+  # (its argv, one line each) and runs the command after `--` as given,
+  # applying no environment — the shim's rule is what is under test, not
+  # the activation it rides on. Returns the bin dir to prepend to PATH.
+  def write_stub_shadowenv(dir)
+    stub_bin = File.join(dir, "stub-bin")
+    FileUtils.mkdir_p(stub_bin)
+    File.write(File.join(stub_bin, "shadowenv"), <<~SH)
+      #!/bin/sh
+      printf '%s\\n' "$*" >> "#{shadowenv_log(dir)}"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --) shift; break ;;
+          *) shift ;;
+        esac
+      done
+      exec "$@"
+    SH
+    FileUtils.chmod(0o755, File.join(stub_bin, "shadowenv"))
+    stub_bin
+  end
+
+  # Where the shadowenv stub records its invocations.
+  def shadowenv_log(dir)
+    File.join(dir, "shadowenv-calls")
+  end
+
+  # The shadowenv stub's recorded invocations, in order; none when it never ran.
+  def shadowenv_calls(dir)
+    File.exist?(shadowenv_log(dir)) ? File.read(shadowenv_log(dir)).lines.map(&:chomp) : []
   end
 
   # A PATH-front stub standing in for gh: were the help flag ever to fall

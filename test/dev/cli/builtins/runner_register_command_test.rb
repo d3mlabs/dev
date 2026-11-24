@@ -1523,6 +1523,33 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     ["--role", "ue-farm", "--org"]         | "org scope needs a group pinned to the project's workflows"     | "drop --org"
   end
 
+  # dev#689: the stream a declared role anchors to is read from the
+  # project's channels, which derive from `targets:`; a dev that could not
+  # read the declaration does not know whether there is one, and must not
+  # enroll slots following nothing where the project deploys through gh.
+  test "--role <declared> from a checkout whose `targets:` this dev cannot read is refused before anything converges: the role's stream is unknown" do
+    Given "a checkout declaring ue-farm, its lifecycle half unreadable by this dev"
+    farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu])
+    fault = Dev::Cli::LifecycleFault.new(
+      refusal: ArgumentError.new("target 'cellbound-3d': archive takes format, split, vendor, not files"), verbs: %w[build package deploy],
+    )
+    harness = build_harness(scope: "d3mlabs/cellbound-3d", hostname: "mac1")
+    context = harness.build_context(
+      name: "Cellbound3D", root: declaring_checkout(version: "2.3.0"), runner_roles: { "ue-farm" => farm }, lifecycle_fault: fault,
+    )
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "ue-farm"]), context: context)
+
+    Then
+    error = raises Dev::Cli::Builtins::RunnerRegisterCommand::RoleStreamUnreadableError
+    error.message.include?("runner role 'ue-farm'")
+    error.message.include?("this dev cannot read dev.yml `targets:`")
+    error.message.include?("not files")
+    harness.wirings == []
+    harness.hooks == []
+  end
+
   test "--role outside a project is refused: there is no dev.yml to declare it" do
     Given
     harness = build_harness
@@ -2038,10 +2065,12 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     # A project context carrying this harness's Ui — the terminal the
     # command asks at — the runner roles its dev.yml declares and the
     # channels it deploys through.
-    def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {}, channels: {})
+    def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {}, channels: {}, lifecycle_fault: nil)
       Dev::Cli::ExecutionContext.new(
         ui: ui,
-        project: Dev::Cli::ProjectContext.new(name: name, root: Pathname.new(root), engine: engine, runner_roles: runner_roles, channels: channels),
+        project: Dev::Cli::ProjectContext.new(
+          name: name, root: Pathname.new(root), engine: engine, runner_roles: runner_roles, channels: channels, lifecycle_fault: lifecycle_fault,
+        ),
       )
     end
 

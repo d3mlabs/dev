@@ -89,6 +89,14 @@ module Dev
         # A RuntimeError so the CLI boundary prints it and exits 1.
         class RegistrationHeldError < RuntimeError; end
 
+        # `--role <declared>` from a checkout whose `targets:` this dev
+        # cannot read (ProjectContext#lifecycle_fault): the channels a
+        # declared role anchors to derive from it, so whether the role
+        # follows a stream is unknown — register did not enroll slots that
+        # would follow nothing. A RuntimeError so the CLI boundary prints it
+        # and exits 1.
+        class RoleStreamUnreadableError < RuntimeError; end
+
         ORG_FLAG = "--org"
         ROLE_FLAG = "--role"
         LABELS_FLAG = "--labels"
@@ -1138,6 +1146,9 @@ module Dev
         # and, when the checkout deploys through gh, to its stream there.
         # A declared role without a group is its repo's — org scope needs a
         # group to fix the slots' reach — and `--org` is refused for it.
+        # Whether the checkout deploys through gh is read from its channels,
+        # which a dev that could not read `targets:` does not have: it
+        # refuses rather than bind the role to no stream.
         #
         # @param name [String]
         # @param context [Dev::Cli::ExecutionContext]
@@ -1145,6 +1156,7 @@ module Dev
         # @param resolve_repo [Proc] the repo this registration is for
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError]
+        # @raise [RoleStreamUnreadableError]
         # @raise [Dev::RunnerRole::DeclarationError]
         sig { params(name: String, context: ExecutionContext, org: T::Boolean, resolve_repo: T.proc.returns(String)).returns(RunnerRole) }
         def declared_role(name, context, org, resolve_repo)
@@ -1154,6 +1166,13 @@ module Dev
             raise ArgumentError,
               "runner role '#{name}' is not declared in #{project ? "this checkout's" : "a"} dev.yml — declare it once: " \
                 "runner_roles: { #{name}: { labels: [...] } }"
+          end
+
+          fault = T.must(project).lifecycle_fault
+          if fault
+            raise RoleStreamUnreadableError,
+              "runner role '#{name}' anchors to this project's channels, and this dev cannot read dev.yml `targets:` " \
+                "they derive from (#{fault.message}) — upgrade dev (`dev up` upgrades it) and retry"
           end
 
           role = declaration.bind(

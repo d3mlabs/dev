@@ -748,7 +748,11 @@ channel cuts every release with `--latest=false`
 ## The dependency graph
 
 Each verb needs what the one before it leaves, and names the missing step
-rather than performing it:
+rather than performing it. Every verb first needs a `targets:` this dev
+can read: one it cannot (a key from a newer release) leaves the verbs
+registered and refusing with the key named — upgrade dev (`dev up`), or
+fix the declaration — so that `dev up` itself still runs ([dev.yml is
+read by older devs](dev-yml.md#devyml-is-read-by-older-devs)).
 
 | Verb | Needs | When missing |
 | --- | --- | --- |
