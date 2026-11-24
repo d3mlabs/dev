@@ -157,47 +157,22 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "rubygem"
   end
 
-  test "build: and package: are the deprecated spellings of builder: and packager:, read as them for one release" do
-    Given "the keys as the adopters still spell them, with every value form"
+  test "build: and package: are no longer target keys: the parser reads only builder: and packager: (the loader refuses the retired spellings)" do
+    Given "a target spelling its ports the current way beside a stray retired key the loader would have refused"
     raw = YAML.safe_load(<<~YAML)
-      cellbound-3d:
-        build: ./bin/build
-        package: ./bin/zip
       snappy-steam:
-        build: ./bin/build.sh
-        package: as-is
-      ue-toolchain:
-        package: { archive: { split: 2GiB } }
+        builder: ./bin/build.sh
+        packager: as-is
     YAML
 
     When
     targets = Dev::Cli::TargetParser.new.parse_all(raw)
 
     Then
-    targets["cellbound-3d"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build")
-    targets["cellbound-3d"].packager == Dev::Lifecycle::PackagerSpec::Script.new(command: "./bin/zip")
     targets["snappy-steam"].builder == Dev::Lifecycle::BuilderSpec::Script.new(command: "./bin/build.sh")
     targets["snappy-steam"].packager == Dev::Lifecycle::PackagerSpec::AsIs.new
-    targets["ue-toolchain"].builder.nil?
-    targets["ue-toolchain"].packager == Dev::Lifecycle::PackagerSpec::Archive.new(
-      form: Dev::Lifecycle::Archive::Form::Tar.new(split: Dev::Lifecycle::ByteSize.parse("2GiB")),
-    )
-  end
-
-  test "one port spelled both ways on a target is refused: #{entry.inspect}" do
-    When
-    Dev::Cli::TargetParser.new.parse("snappy-steam", entry)
-
-    Then
-    error = raises(Dev::Cli::TargetParser::ConflictingPortError)
-    error.message.include?("target 'snappy-steam': declares both `#{deprecated_key}:` and `#{key}:`")
-    error.message.include?("`#{deprecated_key}:` is the deprecated spelling of `#{key}:`")
-
-    Where
-    entry                                                           | deprecated_key | key
-    { "build" => "./bin/build", "builder" => "./bin/build" }        | "build"        | "builder"
-    { "package" => "./bin/package", "packager" => "as-is" }         | "package"      | "packager"
-    { "package" => "as-is", "packager" => { "archive" => {} } }     | "package"      | "packager"
+    !Dev::Cli::TargetParser.const_defined?(:DEPRECATED_PORT_KEYS)
+    !Dev::Cli::TargetParser.const_defined?(:ConflictingPortError)
   end
 
   test "packager: archive takes its form and vendoring as options: #{options.inspect}" do
@@ -252,7 +227,7 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     targets["dev-core"].packager.to_s == "archive, files: bin lib !lib/scratch VERSION"
   end
 
-  test "a port's script form must be a command line, under either spelling: #{key}: #{raw.inspect}" do
+  test "a port's script form must be a command line: #{key}: #{raw.inspect}" do
     When
     Dev::Cli::TargetParser.new.parse("opencell", { key => raw })
 
@@ -265,9 +240,9 @@ class Dev::Cli::TargetParserTest < Minitest::Test
     "builder"  | ""      | Dev::Cli::TargetParser::InvalidBuilderError
     "builder"  | true    | Dev::Cli::TargetParser::InvalidBuilderError
     "builder"  | ["sh"]  | Dev::Cli::TargetParser::InvalidBuilderError
-    "build"    | nil     | Dev::Cli::TargetParser::InvalidBuilderError
+    "builder"  | nil     | Dev::Cli::TargetParser::InvalidBuilderError
     "packager" | "   "   | Dev::Cli::TargetParser::InvalidPackagerError
-    "package"  | ""      | Dev::Cli::TargetParser::InvalidPackagerError
+    "packager" | ""      | Dev::Cli::TargetParser::InvalidPackagerError
   end
 
   test "builder: as a mapping names a built-in, and dev has none yet" do

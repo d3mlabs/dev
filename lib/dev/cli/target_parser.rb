@@ -19,10 +19,7 @@ module Dev
     # a one-key mapping of that name to its options is the built-in. dev has
     # no built-in builder yet; its packagers are `archive` (the default,
     # `{ archive: { format: tar, split: 2GiB, files: [bin, lib], vendor:
-    # true } }` with options), `as-is` and `none`. `build:` and `package:`
-    # are the deprecated spellings of the two keys, read as them for one
-    # release (ProjectManifestLoader notes each once per load); a target
-    # spelling one port both ways is refused. The rules a single target
+    # true } }` with options), `as-is` and `none`. The rules a single target
     # owns (its name's shape and suffix, duplicate axis values, a
     # per-platform environment's fit with its platforms) are Target's and
     # surface from its constructor; the rules that span targets and
@@ -55,25 +52,11 @@ module Dev
       # are not the built-in's.
       class InvalidPackagerError < ArgumentError; end
 
-      # One port declared under both its key and its deprecated spelling
-      # (`builder:` beside `build:`, `packager:` beside `package:`): a
-      # target has one builder and one packager.
-      class ConflictingPortError < ArgumentError; end
-
       PLATFORMS_KEY = "platforms"
       CONFIGS_KEY = "configs"
       ENVIRONMENT_KEY = "environment"
       BUILDER_KEY = "builder"
       PACKAGER_KEY = "packager"
-      # The deprecated spellings, read as the port keys for one release
-      # (dev#692) and then removed.
-      BUILD_KEY = "build"
-      PACKAGE_KEY = "package"
-      # Port key → its deprecated spelling; what the loader's note lists.
-      DEPRECATED_PORT_KEYS = T.let(
-        { BUILDER_KEY => BUILD_KEY, PACKAGER_KEY => PACKAGE_KEY }.freeze,
-        T::Hash[String, String],
-      )
       ARCHIVE_NAME = "archive"
       AS_IS_NAME = "as-is"
       NONE_NAME = "none"
@@ -97,7 +80,6 @@ module Dev
       # @raise [InvalidAxisError]
       # @raise [InvalidBuilderError]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPortError]
       # @raise [InvalidEnvironmentError]
       # @raise [Lifecycle::Target::InvalidTargetNameError]
       # @raise [Lifecycle::Target::ReservedTargetSuffixError]
@@ -126,7 +108,6 @@ module Dev
       # @raise [InvalidAxisError]
       # @raise [InvalidBuilderError]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPortError]
       # @raise [InvalidEnvironmentError]
       # @raise [Lifecycle::Target::InvalidTargetNameError]
       # @raise [Lifecycle::Target::ReservedTargetSuffixError]
@@ -156,11 +137,10 @@ module Dev
       # @param target_hash [TargetHash]
       # @return [Lifecycle::BuilderSpec, nil]
       # @raise [InvalidBuilderError]
-      # @raise [ConflictingPortError]
       sig { params(name: String, target_hash: TargetHash).returns(T.nilable(Lifecycle::BuilderSpec)) }
       def parse_builder(name, target_hash)
-        key = declared_port_key(name, target_hash, BUILDER_KEY)
-        return nil if key.nil?
+        key = BUILDER_KEY
+        return nil unless target_hash.key?(key)
 
         raw = target_hash[key]
         if raw.is_a?(Hash)
@@ -181,11 +161,10 @@ module Dev
       # @param target_hash [TargetHash]
       # @return [Lifecycle::PackagerSpec]
       # @raise [InvalidPackagerError]
-      # @raise [ConflictingPortError]
       sig { params(name: String, target_hash: TargetHash).returns(Lifecycle::PackagerSpec) }
       def parse_packager(name, target_hash)
-        key = declared_port_key(name, target_hash, PACKAGER_KEY)
-        return Lifecycle::PackagerSpec::Archive.new if key.nil?
+        key = PACKAGER_KEY
+        return Lifecycle::PackagerSpec::Archive.new unless target_hash.key?(key)
 
         raw = target_hash[key]
         case raw
@@ -200,26 +179,6 @@ module Dev
               "(#{Lifecycle::PackagerSpec::BUILTIN_NAMES.join(", ")}) or a mapping of one built-in's name to its options, " \
               "got #{raw.inspect}"
         end
-      end
-
-      # The key one port is declared under — its own, or the deprecated
-      # spelling the loader notes — or nil when the target leaves the port
-      # undeclared. Both at once is refused: a target has one of each port.
-      #
-      # @param name [String] the target, for messages
-      # @param target_hash [TargetHash]
-      # @param key [String] BUILDER_KEY or PACKAGER_KEY
-      # @return [String, nil] the key present in the entry
-      # @raise [ConflictingPortError]
-      sig { params(name: String, target_hash: TargetHash, key: String).returns(T.nilable(String)) }
-      def declared_port_key(name, target_hash, key)
-        deprecated_key = DEPRECATED_PORT_KEYS.fetch(key)
-        declared = [key, deprecated_key].select { |candidate| target_hash.key?(candidate) }
-        return declared.first unless declared.size == 2
-
-        raise ConflictingPortError,
-          "target '#{name}': declares both `#{deprecated_key}:` and `#{key}:` — a target has one #{key}; " \
-            "`#{deprecated_key}:` is the deprecated spelling of `#{key}:`, so keep one"
       end
 
       # @param name [String] the target, for messages

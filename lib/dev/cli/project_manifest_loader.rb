@@ -144,6 +144,13 @@ module Dev
       # The block's keys that fed the Dockerfile build and have no successor.
       GONE_WITH_THE_DOCKERFILE = "delete it — the Dockerfile path is gone"
 
+      # The retired spellings of a target's port keys → the key each became
+      # (dev#692); the value under either is unchanged.
+      RETIRED_PORT_KEYS = T.let(
+        { "build" => TargetParser::BUILDER_KEY, "package" => TargetParser::PACKAGER_KEY }.freeze,
+        T::Hash[String, String],
+      )
+
       sig do
         params(
           command_parser: CommandParser,
@@ -182,7 +189,6 @@ module Dev
         reject_removed_ruby_key(yaml)
         reject_retired_keys(yaml)
         warn_retired_runner_key(yaml)
-        warn_deprecated_port_keys(yaml["targets"])
         raw_commands = yaml["commands"] || {}
         lifecycle = parse_lifecycle(yaml["targets"], raw_commands)
         # Once targets are declared, `deploy` is the channels' and `release`
@@ -359,9 +365,10 @@ module Dev
 
       # The retired keys are refused before any command exists: the
       # Dockerfile path's `build.container` block (each key it carries, with
-      # where it went) and every command's `container:` flag, and every
-      # command's `runs_on:` with its `environment:` replacement — nested
-      # commands included, in document order, one message.
+      # where it went), every command's `container:` flag, every command's
+      # `runs_on:` with its `environment:` replacement — nested commands
+      # included — and every target's `build:` / `package:` with the port
+      # key each became; in document order, one message.
       #
       # @param yaml [Hash]
       # @return [void]
@@ -372,12 +379,32 @@ module Dev
         block = yaml.dig("build", "container")
         lines.concat(block_migrations(block)) if block.is_a?(Hash)
         lines.concat(command_key_migrations(["commands"], yaml["commands"]))
+        lines.concat(target_port_key_migrations(yaml["targets"]))
         return if lines.empty?
 
         raise RetiredKeysError,
           "dev.yml carries retired keys — migrate each (the Dockerfile path is gone: " \
-            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`):" \
+            "declare an `image` block in dependencies.rb; `#{RUNS_ON_KEY}:` is `#{ENVIRONMENT_KEY}:`; " \
+            "a target's ports are `#{TargetParser::BUILDER_KEY}:` and `#{TargetParser::PACKAGER_KEY}:`):" \
             "\n  #{lines.join("\n  ")}"
+      end
+
+      # @param raw_targets [Object, nil] the `targets` value as YAML delivered it
+      # @return [Array<String>] a migration line per retired port spelling
+      #   on each target, the value unchanged; scanned on the raw entries,
+      #   so the refusal names the key whether or not the block parses on
+      #   this dev
+      sig { params(raw_targets: T.untyped).returns(T::Array[String]) }
+      def target_port_key_migrations(raw_targets)
+        return [] unless raw_targets.is_a?(Hash)
+
+        raw_targets.flat_map do |name, entry|
+          next [] unless entry.is_a?(Hash)
+
+          RETIRED_PORT_KEYS.filter_map do |retired_key, key|
+            "targets.#{name}.#{retired_key} → #{key}" if entry.key?(retired_key)
+          end
+        end
       end
 
       # @param block [Hash] the `build.container` mapping
@@ -453,34 +480,6 @@ module Dev
 
         $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
                      "from the repo name (`dev runner register`); delete the block."
-      end
-
-      # A target's `build:` and `package:` are the deprecated spellings of
-      # its port keys, `builder:` and `packager:` (TargetParser reads them
-      # as those for one release, dev#692). One note per load, naming each
-      # key to rename, so the rename lands before the spellings go; a note
-      # and not a refusal, since the declaration still means what it meant.
-      # Scanned on the raw entries: the note is owed whether or not the
-      # block parses on this dev.
-      #
-      # @param raw_targets [Object, nil] the `targets` value as YAML delivered it
-      # @return [void]
-      sig { params(raw_targets: T.untyped).void }
-      def warn_deprecated_port_keys(raw_targets)
-        return unless raw_targets.is_a?(Hash)
-
-        lines = raw_targets.flat_map do |name, entry|
-          next [] unless entry.is_a?(Hash)
-
-          TargetParser::DEPRECATED_PORT_KEYS.filter_map do |key, deprecated_key|
-            "targets.#{name}.#{deprecated_key} → #{key}" if entry.key?(deprecated_key)
-          end
-        end
-        return if lines.empty?
-
-        $stderr.puts "dev: dev.yml `#{TargetParser::BUILD_KEY}:` and `#{TargetParser::PACKAGE_KEY}:` on a target are the " \
-                     "deprecated spellings of `#{TargetParser::BUILDER_KEY}:` and `#{TargetParser::PACKAGER_KEY}:` — rename " \
-                     "each (the value is unchanged); they go away next release:\n  #{lines.join("\n  ")}"
       end
 
       # The declared runner roles, the top-level `runner_roles:` block —
