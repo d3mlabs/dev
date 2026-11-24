@@ -866,6 +866,11 @@ class RunnerTest < Minitest::Test
     outside = Pathname.new(Dir.mktmpdir("runner-test-"))
     @tmp_roots.push(outside)
     Dev::DataRoot.stubs(:path).returns((outside / "data").to_s)
+    # The checkout's lock was never installed on this machine, and `package`
+    # runs under the staleness guard: a workstation warns and goes on, CI
+    # refuses the verb before the channel is asked. The refusal under test
+    # is the channel's, so the guard reads the workstation posture.
+    Dev::Deps.stubs(:detect_env).returns("dev")
     out = StringIO.new
     runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, targets: {
       "ai-flow" => { "desc" => "The dispatcher", "packager" => { "archive" => { "files" => ["/exe", "/dependencies.rb"] } } },
