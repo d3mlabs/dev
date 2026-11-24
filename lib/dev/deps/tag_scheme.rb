@@ -90,6 +90,17 @@ module Dev
         raise InvalidVersionError, "not a version tag: #{coordinate.inspect}"
       end
 
+      # A tag with a letter in it precedes its release as rubygems reads
+      # it (`v2.0.0-rc.1` precedes `2.0.0`), so `^1` never picks a
+      # release candidate of 2.0.0 and `Any` never picks one at all.
+      #
+      # @param key [Gem::Version]
+      # @return [Gem::Version, nil] the release a prerelease precedes
+      sig { override.params(key: Gem::Version).returns(T.nilable(Gem::Version)) }
+      def prerelease_base(key)
+        key.release if key.prerelease?
+      end
+
       private
 
       # The series whose floor a bound sits on: its version is a major and
