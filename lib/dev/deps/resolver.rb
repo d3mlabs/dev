@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require_relative "selection_rule"
 require_relative "declaration"
 require_relative "declarations"
 require_relative "dependency"
@@ -22,8 +23,10 @@ module Dev
     # versions exist — Repository#find), schemes evaluate predicates (does a
     # version satisfy a requirement — VersionScheme), and this class chooses:
     # for each declaration it filters the package's universe through the
-    # integration's scheme, takes the highest satisfying version, mints the
-    # pin, and walks that version's edges to resolve transitives. Whole-set
+    # integration's scheme, takes the highest satisfying version — or, for
+    # a series-shaped requirement on a universe that keeps series heads,
+    # the head of the newest series it covers (#choose) — mints the pin,
+    # and walks that version's edges to resolve transitives. Whole-set
     # solves (bundle lock) happen before resolution, in the integration's
     # Locker — by the time find runs, a tool-locked universe is already
     # materialized.
@@ -73,6 +76,13 @@ module Dev
       # The walk's conclusion for one package identity: the pin minted for
       # it, or the declaration left unresolved.
       Verdict = T.type_alias { T.any(Dependency, Unresolved) }
+
+      # The version chosen for one declaration and the rule that chose it.
+      # An addressed declaration (a revision) has no rule: the author chose.
+      class Pick < T::Struct
+        const :version, PackageVersion
+        const :rule, T.nilable(SelectionRule), default: nil
+      end
 
       # What two declarations of one package must agree on to resolve once.
       Ask = T.type_alias { T::Hash[Symbol, T.untyped] }
@@ -141,15 +151,15 @@ module Dev
           next if verdicts.key?(id)
 
           declared = platforms[[decl.integration, decl.name]] || []
-          chosen = decl.revision ? address(decl) : choose(decl, declared)
-          case chosen
-          when PackageVersion
-            verdicts[id] = mint(chosen, decl, declared)
-            queue.concat(universe_edges(chosen, decl))
+          picked = decl.revision ? Pick.new(version: address(decl)) : choose(decl, declared)
+          case picked
+          when Pick
+            verdicts[id] = mint(picked, decl, declared)
+            queue.concat(universe_edges(picked.version, decl))
           when Unresolved
-            verdicts[id] = chosen
+            verdicts[id] = picked
           else
-            T.absurd(chosen)
+            T.absurd(picked)
           end
 
           queue.concat(needs_under(decl, asks, needed_by))
@@ -263,9 +273,13 @@ module Dev
         repository.at(package_id(decl), T.must(decl.revision))
       end
 
-      # Ask the declaration's repository for the package universe and pick the
-      # highest version that satisfies the requirement (per the integration's
-      # scheme) and publishes every explicitly requested platform.
+      # Ask the declaration's repository for the package universe, keep the
+      # versions that satisfy the requirement (per the integration's
+      # scheme) and publish every explicitly requested platform, and let
+      # the SelectionRule for this ask against this universe pick among
+      # them: the head of the newest covered series where the universe
+      # keeps one and the requirement is series-shaped, the greatest
+      # satisfying version otherwise.
       #
       # The requirement is held to the scheme's contract first, before any
       # I/O: a form the channel does not support is the declaration being
@@ -282,8 +296,8 @@ module Dev
       # @param decl [ScopedDeclaration] the declaration to satisfy
       # @param platforms [Array<String, nil>] union of the declaring groups'
       #   platforms; nil entries mean "the integration's default"
-      # @return [PackageVersion, Unresolved] the chosen version, or the
-      #   declaration with the repository's failure
+      # @return [Pick, Unresolved] the chosen version with the rule that
+      #   chose it, or the declaration with the repository's failure
       # @raise [UnknownIntegrationError] if the repository is unwired
       # @raise [UnsupportedRequirementError] if the channel cannot evaluate the requirement
       # @raise [NoSatisfyingVersionError] if nothing in the universe qualifies
@@ -291,7 +305,7 @@ module Dev
         params(
           decl: ScopedDeclaration,
           platforms: T::Array[T.nilable(String)],
-        ).returns(T.any(PackageVersion, Unresolved))
+        ).returns(T.any(Pick, Unresolved))
       end
       def choose(decl, platforms)
         repository = @repositories[decl.integration]
@@ -320,7 +334,9 @@ module Dev
         # rows); selection is over distinct version strings, first fact wins.
         by_version = T.let({}, T::Hash[String, PackageVersion])
         candidates.each { |version| by_version[version.version] ||= version }
-        T.must(sorted_versions(scheme, by_version.values).last)
+
+        rule = SelectionRule.for(requirement: decl.requirement, scheme:, heads: package.heads, candidates: by_version.keys)
+        Pick.new(version: rule.pick(by_version.values, scheme), rule:)
       end
 
       # Hold the declaration's ask to its channel's contract: a scheme-less
@@ -346,17 +362,6 @@ module Dev
 
         raise UnsupportedRequirementError,
           "#{decl.name}: #{decl.integration} cannot evaluate `#{decl.requirement}` — it takes #{scheme.supported}"
-      end
-
-      # Order distinct versions ascending: the scheme's total order, or the
-      # universe's reported order when no scheme exists.
-      #
-      # @param scheme [VersionScheme, nil] the integration's semantics, if any
-      # @param versions [Array<PackageVersion>] distinct versions
-      # @return [Array<PackageVersion>]
-      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[PackageVersion]).returns(T::Array[PackageVersion]) }
-      def sorted_versions(scheme, versions)
-        scheme ? scheme.sort(versions) : versions
       end
 
       # Requirement satisfaction, treating versions the scheme cannot parse
@@ -397,7 +402,8 @@ module Dev
       # Mint the pin: the chosen version's facts become the Dependency, the
       # declaration contributes name/integration/group, its materialization
       # (install instructions the repository never saw), the post-install
-      # hook, and the install-scoping axes. The version's source — the
+      # hook, and the install-scoping axes; the rule that chose the version
+      # rides along for the lock report. The version's source — the
       # service's exact reference for it — becomes the pin's `source`, and
       # the version digest becomes the pin's integrity hash uniformly; an empty version string (ecosystems
       # that expose no version — brew casks, url artifacts) becomes a nil pin
@@ -406,18 +412,19 @@ module Dev
       # Versions carrying per-platform artifacts get them projected into
       # install facts against the declared platforms.
       #
-      # @param chosen [PackageVersion] the version the resolver picked
+      # @param picked [Pick] the version the resolver picked, and the rule that picked it
       # @param decl [ScopedDeclaration] the declaration it satisfies
       # @param platforms [Array<String, nil>] union of the declaring groups' platforms
       # @return [Dependency]
       sig do
         params(
-          chosen: PackageVersion,
+          picked: Pick,
           decl: ScopedDeclaration,
           platforms: T::Array[T.nilable(String)],
         ).returns(Dependency)
       end
-      def mint(chosen, decl, platforms)
+      def mint(picked, decl, platforms)
+        chosen = picked.version
         metadata = chosen.metadata.merge(decl.materialization)
         pin_version = chosen.version.empty? ? metadata.delete("version_label") : chosen.version
         hash = chosen.digest
@@ -433,6 +440,7 @@ module Dev
           hash: hash,
           source: chosen.source,
           metadata: metadata,
+          rule: picked.rule,
         )
         dependency = dependency.with(post_install: decl.post_install) if decl.post_install
         attach_install_scoping(dependency, decl)

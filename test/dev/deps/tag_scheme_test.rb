@@ -46,6 +46,34 @@ class Dev::Deps::TagSchemeTest < Minitest::Test
     !scheme.satisfies?(pv("toolchain-3"), Requirement::Exact.new(version: "toolchain-2"))
   end
 
+  test "a requirement whose bounds are series boundaries covers whole series: #{expression.inspect} → #{span.inspect}" do
+    When "reading the series out of the requirement"
+    result = scheme.series_span(Requirement.parse(expression))
+
+    Then "a floor-to-floor range names its series; a bound inside a series names versions and has no span"
+    result&.to_s == span
+
+    Where
+    expression      | span
+    "~> 1"          | "v1"
+    ">= 1, < 2"     | "v1"
+    ">= 1.0.0, < 2" | "v1"
+    ">= 1, < 3"     | "v1..v3"
+    ">= 1"          | "v1.."
+    ">= 0"          | "v0.."
+    nil             | "v0.."
+    ">= 1.4"        | nil
+    "~> 1.2"        | nil
+    "~> 1.2.3"      | nil
+    "> 0"           | nil
+    ">= 1, <= 2"    | nil
+    ">= 1, < 2.1"   | nil
+    ">= 1, != 1.1"  | nil
+    ">= 1.0.0-rc.1" | nil
+    "= 1.3.0"       | nil
+    "1.3.0"         | nil
+  end
+
   test "a tag that is no version is not a candidate for a range" do
     When "ranging over a non-version tag"
     scheme.satisfies?(pv(tag), Requirement.parse(">= 1"))

@@ -15,23 +15,27 @@ require "dev/deps/declarations"
 require "dev/deps/scope"
 require "dev/deps/scoped_declaration"
 require "dev/deps/requirement"
+require "dev/deps/series_head"
 require "dev/deps/version_scheme"
+require "dev/lifecycle/series"
 require "dev/deps/brew_scheme"
 require "dev/deps/gem_scheme"
 require "dev/deps/semver_scheme"
 require "dev/deps/steam_scheme"
 require "dev/deps/tag_scheme"
 
-# Stub repository over a canned universe: name -> [PackageVersion, ...].
-# Records every find call (id) and at call (id + revision) for assertion.
-# addressed: maps revision -> PackageVersion; an unmapped revision falls
-# through to the base's NoAddressableSpaceError.
+# Stub repository over a canned universe: name -> [PackageVersion, ...],
+# and heads: name -> [SeriesHead, ...] for a store that keeps per-series
+# pointers. Records every find call (id) and at call (id + revision) for
+# assertion. addressed: maps revision -> PackageVersion; an unmapped
+# revision falls through to the base's NoAddressableSpaceError.
 class StubRepository < Dev::Deps::Repository
   attr_reader :finds, :ats
 
-  def initialize(universes: {}, addressed: {})
+  def initialize(universes: {}, addressed: {}, heads: {})
     @universes = universes
     @addressed = addressed
+    @heads = heads
     @finds = []
     @ats = []
   end
@@ -41,7 +45,7 @@ class StubRepository < Dev::Deps::Repository
     versions = @universes.fetch(id.name) do
       raise Dev::Deps::Repository::PackageNotFoundError, "no package #{id.name}"
     end
-    Dev::Deps::Package.new(id: id, versions: versions)
+    Dev::Deps::Package.new(id: id, versions: versions, heads: @heads.fetch(id.name, []))
   end
 
   def at(id, revision)
@@ -146,6 +150,97 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then "the highest in-range version wins — not the highest overall"
     result[0].version == "3.13.1"
+  end
+
+  # A gh-shaped universe deploying heads: 1.3.0, 1.4.0 and 2.0.0 cut, v1
+  # rolled back to 1.3.0 (the deploy that moved the workflow back), v2 at
+  # 2.0.0; heads: which series tags exist.
+  def deployed(*majors)
+    pointers = { 1 => head(1, "1.3.0"), 2 => head(2, "2.0.0") }
+    StubRepository.new(
+      universes: { "ai-flow" => [version("1.3.0", source: "sha13"), version("1.4.0", source: "sha14"), version("2.0.0", source: "sha20")] },
+      heads: { "ai-flow" => majors.map { |major| pointers.fetch(major) } },
+    )
+  end
+
+  def head(major, version)
+    Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(major), version:)
+  end
+
+  def gh_ask(requirement)
+    [declaration(name: "ai-flow", integration: :gh, requirement:, source: "d3mlabs/ai-flow")]
+  end
+
+  test "a series-shaped requirement resolves through the series head where the universe keeps one: #{requirement.inspect} → #{expected}" do
+    Given "tags 1.3.0, 1.4.0, 2.0.0 with v1 → 1.3.0 and v2 → 2.0.0"
+    repo = deployed(1, 2)
+
+    When "resolving under TagScheme"
+    pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask(requirement)).fetch(0)
+
+    Then "one series takes its head; a span of series takes the newest covered head; a bound inside a series takes the greatest tag, and says so beside the heads"
+    pin.version == expected
+    pin.source == source
+    pin.rule.explanation == rule
+
+    Where
+    requirement   | expected | source  | rule
+    "~> 1"        | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
+    ">= 1, < 2"   | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
+    ">= 1"        | "2.0.0"  | "sha20" | "series head v2 → 2.0.0"
+    ">= 1, < 3"   | "2.0.0"  | "sha20" | "series head v2 → 2.0.0"
+    ">= 1.4"      | "2.0.0"  | "sha20" | "greatest satisfying"
+    ">= 1.4, < 2" | "1.4.0"  | "sha14" | "greatest satisfying"
+    "= 1.4.0"     | "1.4.0"  | "sha14" | "greatest satisfying"
+  end
+
+  test "a series the universe keeps no head for resolves to the greatest satisfying version, as on a derived channel" do
+    Given "the same tags with no series tag at all, and with v1 only while 2.0.0 is cut but never deployed"
+    derived = deployed
+    one_deployed = deployed(1)
+
+    When "resolving ~> 1 on the derived repo, and >= 1 on the one with v1 alone"
+    on_derived = resolver_for(:gh, derived, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
+    one_series = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
+    spanning = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask(">= 1")).fetch(0)
+
+    Then "derived: 1.4.0 by the only rule there is, with nothing to report; v1 alone: its head, for the span too — the undeployed 2.0.0 is not a head"
+    on_derived.version == "1.4.0"
+    on_derived.rule == Dev::Deps::SelectionRule::Greatest.new(beside: [])
+    on_derived.rule.explanation.nil?
+    one_series.version == "1.3.0"
+    one_series.rule == Dev::Deps::SelectionRule::Head.new(head: head(1, "1.3.0"))
+    spanning.version == "1.3.0"
+    spanning.rule == Dev::Deps::SelectionRule::Head.new(head: head(1, "1.3.0"))
+  end
+
+  test "a head that is not a candidate does not apply: the rule falls back to the greatest satisfying version" do
+    Given "v1 pointing at a pre-release below the series floor, so ~> 1 does not admit it"
+    repo = StubRepository.new(
+      universes: { "ai-flow" => [version("1.0.0-rc.1"), version("1.0.0"), version("1.1.0")] },
+      heads: { "ai-flow" => [head(1, "1.0.0-rc.1")] },
+    )
+
+    When "resolving ~> 1"
+    pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
+
+    Then
+    pin.version == "1.1.0"
+    pin.rule == Dev::Deps::SelectionRule::Greatest.new(beside: [head(1, "1.0.0-rc.1")])
+  end
+
+  test "an addressed declaration has no rule: the author chose" do
+    Given "a universe with heads and a sha-addressed declaration"
+    repo = StubRepository.new(heads: { "json" => [head(1, "1.0.0")] }, addressed: { "9cca280a" => version("9cca280a", source: "9cca280a") })
+
+    When "resolving the address"
+    pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new)
+      .resolve([declaration(name: "json", integration: :gh, source: "nlohmann/json", revision: "9cca280a")]).fetch(0)
+
+    Then
+    pin.version == "9cca280a"
+    pin.rule.nil?
+    repo.finds.empty?
   end
 
   test "skips universe versions the scheme cannot parse instead of failing" do

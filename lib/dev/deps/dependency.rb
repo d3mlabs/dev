@@ -23,12 +23,15 @@ module Dev
     # - dependencies: transitive dependencies discovered during fetch ([{name:, requirement:}, …])
     # - post_install: callable or array of callables to run after the dep is fetched.
     #                 Each callable receives (dep, project_root). Not serialized to lockfile.
+    # - rule:         the SelectionRule the Resolver chose the version by; nil on an addressed
+    #                 pin (the author chose) and on a pin the lock carried rather than resolved.
+    #                 What the lock report says; not serialized to lockfile.
     # The :hash member (integrity hash) shadows Data#hash; instances are never
     # used as Hash keys, and renaming it would ripple through the lockfile
     # format. Known trade-off.
-    Dependency = Data.define(:name, :integration, :group, :version, :hash, :source, :metadata, :dependencies, :post_install) do # rubocop:disable Lint/DataDefineOverride
-      def initialize(name:, integration:, group:, version:, hash:, metadata:, source: nil, dependencies: [], post_install: nil)
-        super(name:, integration:, group:, version:, hash:, source:, metadata:, dependencies:, post_install:)
+    Dependency = Data.define(:name, :integration, :group, :version, :hash, :source, :metadata, :dependencies, :post_install, :rule) do # rubocop:disable Lint/DataDefineOverride
+      def initialize(name:, integration:, group:, version:, hash:, metadata:, source: nil, dependencies: [], post_install: nil, rule: nil)
+        super(name:, integration:, group:, version:, hash:, source:, metadata:, dependencies:, post_install:, rule:)
       end
 
       # Whether every re-lock must re-resolve this pin: it names a version

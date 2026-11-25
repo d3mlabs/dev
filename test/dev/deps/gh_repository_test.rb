@@ -317,6 +317,57 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     raises Dev::Deps::GhRepository::ApiError
   end
 
+  test "find reports a series tag as its series' head — the version tag cut at the commit it points at — and as a version" do
+    Given "a repo deploying heads: v1 at 1.3.0's commit while 1.4.0 is the greatest tag; no v2 yet for the 2.0.0 release"
+    repo = Dev::Deps::GhRepository.new
+    stub_universe(repo,
+      releases: [
+        { "tag_name" => "2.0.0", "draft" => false, "assets" => [] },
+        { "tag_name" => "1.4.0", "draft" => false, "assets" => [] },
+        { "tag_name" => "1.3.0", "draft" => false, "assets" => [] },
+      ],
+      tags: [tag_json("v1", "sha13"), tag_json("2.0.0", "sha20"), tag_json("1.4.0", "sha14"), tag_json("1.3.0", "sha13")])
+
+    When "finding"
+    package = repo.find(prebuilt_id)
+
+    Then "one head, v1 → 1.3.0; every tag is a version, the series tag included, so `tag: \"v1\"` still names it"
+    package.heads == [Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0")]
+    package.versions.map(&:version).sort == ["1.3.0", "1.4.0", "2.0.0", "v1"]
+    package.version("v1").source == "sha13"
+  end
+
+  test "find reads a head's version through the release-tag prefix, and the greatest when several of the series sit at the commit" do
+    Given "v1 at a commit carrying v1.3.0 and a re-tag v1.3.1 of the same tree, beside a tag of another series and a word"
+    repo = Dev::Deps::GhRepository.new
+    stub_universe(repo,
+      tags: [tag_json("v1", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.3.1", "sha13"), tag_json("v2.0.0", "sha13"), tag_json("stable", "sha13")])
+
+    When "finding"
+    package = repo.find(prebuilt_id)
+
+    Then
+    package.heads.map(&:to_s) == ["v1 → v1.3.1"]
+  end
+
+  test "find reports no head for a series tag at a commit no release of its series was cut at" do
+    Given "v1 pointing at a commit with no version tag, v2 pointing at a commit of series 1, and a repo with no series tags at all"
+    repo = Dev::Deps::GhRepository.new
+    stub_universe(repo,
+      tags: [tag_json("v1", "shaX"), tag_json("v2", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")])
+    bare = Dev::Deps::GhRepository.new
+    stub_universe(bare, tags: [tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")])
+
+    When "finding both"
+    pointed = repo.find(prebuilt_id)
+    derived = bare.find(prebuilt_id)
+
+    Then "neither pointer names a version of the universe; the bare repo keeps no heads, so its channel is derived"
+    pointed.heads.empty?
+    pointed.versions.map(&:version).sort == ["v1", "v1.3.0", "v1.4.0", "v2"]
+    derived.heads.empty?
+  end
+
   test "at lifts a commit SHA purely — no gh call, the SHA is the version" do
     Given "a commit address"
     repo = Dev::Deps::GhRepository.new

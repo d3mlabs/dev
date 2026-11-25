@@ -4,6 +4,7 @@
 require "test_helper"
 require "dev/environment_image"
 require "dev/cli/builtins/update_deps_command"
+require "dev/deps/gh_repository"
 require "dev/deps/oci_repository"
 require "dev/deps/package"
 require "dev/deps/package_id"
@@ -12,6 +13,7 @@ require "dev/deps/repository"
 require "support/recording_ui"
 require "digest"
 require "fileutils"
+require "json"
 require "pathname"
 require "stringio"
 require "tmpdir"
@@ -457,6 +459,37 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
+  test "call resolves a series-shaped gh requirement through the series head and says which rule chose each pin" do
+    Given "a gh repo with tags 1.3.0 and 1.4.0 and v1 → 1.3.0 (the rollback), a lock on 1.4.0, and a lower-bounded sibling declaration"
+    root = Pathname.new(Dir.mktmpdir("update-deps-series-head-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define do
+        gh "ai-flow", "~> 1", github: "d3mlabs/ai-flow", assets: "*.zip"
+        gh "ai-flow-newest", ">= 1.4", github: "d3mlabs/ai-flow", assets: "*.zip"
+      end
+    RUBY
+    Dev::Deps::Lockfile.new(dir: root).lock([gh_pin("ai-flow", "1.4.0", "b" * 40)])
+    Dev::Deps::Registry.expects(:repositories).returns({ gh: ai_flow_repository })
+    Dev::Deps::Registry.stubs(:lockers).returns({})
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update"
+    command.call(args: no_args, context: build_context(root))
+
+    Then "~> 1 follows v1 back to 1.3.0 at its commit; >= 1.4 is the greatest tag; the report says which rule chose each"
+    pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
+    pins == { "ai-flow" => ["1.3.0", "a" * 40], "ai-flow-newest" => ["1.4.0", "b" * 40] }
+    $stdout.string.include?("dev: moved ai-flow 1.4.0 → 1.3.0 (series head v1 → 1.3.0)\n")
+    $stdout.string.include?("dev: added ai-flow-newest 1.4.0 (greatest satisfying)\n")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
   test "call <name> finishes on a host that can reach only the named declaration's registry, keeping the floor it would carry anyway" do
     Given "dev#373: a lock with an image floor and a pip pin, a token GHCR refuses, and a pip index that answers"
     root = Pathname.new(Dir.mktmpdir("update-deps-floor-denied-"))
@@ -667,6 +700,33 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     repository = Dev::Deps::OciRepository.new(auth:)
     repository.stubs(:get).returns(Dev::Deps::OciRepository::Response.new(code: 403, headers: {}, body: "denied"))
     repository
+  end
+
+  # d3mlabs/ai-flow as the gh CLI lists it: releases 1.3.0 and 1.4.0, the
+  # series tag v1 at 1.3.0's commit — a deploy rolled back below the
+  # greatest tag.
+  def ai_flow_repository
+    repository = Dev::Deps::GhRepository.new
+    repository.stubs(:run_gh_api).with("repos/d3mlabs/ai-flow/releases?per_page=100&page=1").returns([
+      JSON.generate([
+        { "tag_name" => "1.4.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.4.0.zip", "size" => 1, "digest" => "sha256:b4" }] },
+        { "tag_name" => "1.3.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.3.0.zip", "size" => 1, "digest" => "sha256:a3" }] },
+      ]), "", stub(success?: true)
+    ])
+    repository.stubs(:run_gh_api).with("repos/d3mlabs/ai-flow/tags?per_page=100&page=1").returns([
+      JSON.generate([
+        { "name" => "v1", "commit" => { "sha" => "a" * 40 } },
+        { "name" => "1.4.0", "commit" => { "sha" => "b" * 40 } },
+        { "name" => "1.3.0", "commit" => { "sha" => "a" * 40 } },
+      ]), "", stub(success?: true)
+    ])
+    repository
+  end
+
+  # A gh pin as the Resolver mints it: its source is the tag's commit.
+  def gh_pin(name, version, sha)
+    Dev::Deps::Dependency.new(name:, integration: :gh, group: :app, version:, hash: nil, source: sha,
+      metadata: { "repo" => "d3mlabs/ai-flow", "commit" => sha, "asset_pattern" => "*.zip" })
   end
 
   # A pip index offering clang-format at one version.

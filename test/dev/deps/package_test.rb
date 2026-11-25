@@ -5,6 +5,8 @@ require "test_helper"
 require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
+require "dev/deps/series_head"
+require "dev/lifecycle/series"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::PackageTest < Minitest::Test
@@ -29,6 +31,18 @@ class Dev::Deps::PackageTest < Minitest::Test
 
     Expect
     package.versions.frozen?
+  end
+
+  test "a package keeps no heads unless its repository reports some, and keeps them frozen" do
+    Given "a package of a store with no pointers, and one whose store points v1 at 1.3.0"
+    bare = Dev::Deps::Package.new(id: id, versions: [Dev::Deps::PackageVersion.new(version: "1.3.0")])
+    head = Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0")
+    pointed = Dev::Deps::Package.new(id: id, versions: [Dev::Deps::PackageVersion.new(version: "1.3.0")], heads: [head])
+
+    Expect
+    bare.heads == []
+    pointed.heads == [head]
+    pointed.heads.frozen?
   end
 
   test "looks up a version by exact string" do

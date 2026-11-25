@@ -13,12 +13,15 @@ module Dev
     # computed by. A pointed channel's head is read from its pointer by its
     # publisher, and dev computes nothing.
     #
-    # A head is not the resolver's greatest-satisfying version, and the two
-    # must be allowed to diverge: a lock wants the greatest version that
-    # satisfies a requirement, a follower wants what is deployed, and after
-    # a rollback the deployed version is lower than the greatest tag. So
+    # A lock and a follower read the same head. A series-shaped
+    # requirement (`~> 1`) on a pointed channel resolves to what the
+    # series' pointer names (Deps::Resolver, through the universe's
+    # Deps::SeriesHead facts), so after a rollback the lock and the `@v1`
+    # follower both sit below the greatest tag; on a derived channel the
+    # head and the greatest satisfying version are one rule. Still,
     # nothing here reads a Requirement or a VersionScheme — the head's
-    # vocabulary is a series (`v1`) and the store's own version words.
+    # vocabulary is a series (`v1`) and the store's own version words, and
+    # which requirements reach a head is the resolver's to say.
     module Head
       # Nothing in the store is a non-prerelease version (of the series):
       # the channel has no head for a follower to install.

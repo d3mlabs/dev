@@ -1,7 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/lifecycle/series"
 require_relative "range_scheme"
+require_relative "series_span"
 
 module Dev
   module Deps
@@ -11,6 +13,8 @@ module Dev
     # that are versions — a leading `v` dropped (`v3.11.3` is 3.11.3) and
     # Gem::Version's tolerant ordering over the rest — and the tags that
     # are not (`latest`, `toolchain-2`) are simply not candidates for it.
+    # A range whose bounds are series boundaries (`~> 1`, `>= 1, < 2`,
+    # `>= 1`) is series-shaped, and says which series it covers.
     class TagScheme < RangeScheme
       extend T::Sig
 
@@ -44,6 +48,32 @@ module Dev
         unordered + ordered.sort_by { |version| T.must(version_key(version)) }
       end
 
+      # The whole series a requirement covers: one `>=` at a series floor
+      # (`1`, `1.0`, `1.0.0` — a major and nothing finer), at most one `<`
+      # at a floor above it, and no other term. `Any` covers every series.
+      # An exact ask, or any bound inside a series (`>= 1.4`, `~> 1.2`,
+      # `!= 1.1`), names versions and has no span.
+      #
+      # @param requirement [Requirement]
+      # @return [SeriesSpan, nil]
+      # @raise [InvalidRequirementError] if a bound's version is no version tag
+      sig { override.params(requirement: Requirement).returns(T.nilable(SeriesSpan)) }
+      def series_span(requirement)
+        return SeriesSpan.new(from: Lifecycle::Series.new(0)) if requirement.any?
+        return nil if requirement.is_a?(Requirement::Exact)
+
+        bounds = requirement.bounds
+        lower = bounds.select { |bound| bound.operator == ">=" }
+        upper = bounds.select { |bound| bound.operator == "<" }
+        return nil unless lower.size == 1 && upper.size <= 1 && lower.size + upper.size == bounds.size
+
+        from = series_floor(T.must(lower.first))
+        to = upper.first&.then { |bound| series_floor(bound) }
+        return nil if from.nil? || (upper.any? && to.nil?) || (to && to.major <= from.major)
+
+        SeriesSpan.new(from:, to:)
+      end
+
       protected
 
       # @param coordinate [String] a tag
@@ -61,6 +91,23 @@ module Dev
       end
 
       private
+
+      # The series whose floor a bound sits on: its version is a major and
+      # nothing finer (`1`, `1.0.0`), not a pre-release.
+      #
+      # @param bound [Requirement::Bound]
+      # @return [Lifecycle::Series, nil] nil when the bound is inside a series
+      # @raise [InvalidRequirementError] if the bound's version is no version tag
+      sig { params(bound: Requirement::Bound).returns(T.nilable(Lifecycle::Series)) }
+      def series_floor(bound)
+        key = T.let(bound_key(bound), Gem::Version)
+        return nil if key.prerelease?
+
+        segments = key.canonical_segments
+        return nil unless segments.size == 1
+
+        Lifecycle::Series.new(T.cast(segments.fetch(0), Integer))
+      end
 
       # @param version [PackageVersion]
       # @return [Gem::Version, nil] the tag's key, or nil when the tag is no version

@@ -41,4 +41,14 @@ class Dev::Deps::VersionSchemeTest < Minitest::Test
     scheme.refusal(name: "x", requirement: Requirement.parse("~> 1"), versions: [version]).nil?
     scheme.unsatisfied(name: "x", requirement: Requirement.parse("~> 1"), versions: [version]).nil?
   end
+
+  test "by default no requirement is series-shaped" do
+    Given
+    scheme = Dev::Deps::VersionScheme.new
+
+    Expect
+    scheme.series_span(Requirement::Any.new).nil?
+    scheme.series_span(Requirement.parse("~> 1")).nil?
+    scheme.series_span(Requirement.parse(">= 1")).nil?
+  end
 end

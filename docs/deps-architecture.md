@@ -13,7 +13,7 @@ two roles.
 | Concept | Class | What it is |
 | --- | --- | --- |
 | Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-addressed deps (a git URL, an `owner/repo` slug, a tap, a Steam app id). Value object, works as a Hash key. Version is deliberately not identity: two versions of one package are related candidates in one universe, never two packages — keeping selection (semver, ranges) possible over them. If a legitimate same-package-twice case ever appears, the fix is per-context resolution in the solver, not versioned identity. |
-| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (the published bytes per platform — fetched by dev, or by the tool with dev recording them), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts). Facts are unconditional: nothing in a universe depends on who asked. |
+| Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (the published bytes per platform — fetched by dev, or by the tool with dev recording them), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts) — and the package's `heads` (`SeriesHead`: per series, the version the store's pointer names) where the store keeps pointers. Facts are unconditional: nothing in a universe depends on who asked. |
 | Declaration | `Declaration` | The shared atom: name + integration + `requirement` + `options` + optional `source` coordinate + optional `revision` address. The requirement is a `Requirement` — what is asked of the package's versions, in dev's one language (`Any` when nothing is asked); the options are the integration's own vocabulary beside it (a gem's `require:`, a pip `host:`). A revision is a direct address into an ecosystem's continuous space (a git commit SHA, an exact Xcode version) that forgoes resolution entirely — declaring one beside a requirement or options is a loud error. Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
 | Requirement | `Requirement` | The one language every declaration speaks: `Any`, `Exact(v)`, `Pessimistic(v)` or `Bounds([op, v]…)`, parsed from rubygems' requirement syntax (`"4.0.1"`, `"~> 18.0"`, `">= 2, < 3"`). `~> v` means `>= v, < bump(v)` with rubygems' bump, once, for every channel. The version inside is kept as written; what it means is the channel's. |
 | Scoped declaration | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
@@ -156,7 +156,16 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      fact), treating scheme-unparseable universe versions as
      non-candidates, and drops versions that don't publish every
      explicitly requested platform;
-   - picks the highest satisfying version (`sort`), mints the
+   - lets the `SelectionRule` for this ask against this universe pick:
+     the highest satisfying version (`sort`) — or, where the universe
+     reports series heads (`Package#heads`: a gh repo's `v1` tag at a
+     release's commit) and the requirement is series-shaped
+     (`VersionScheme#series_span`: `~> 1`, `>= 1, < 2`, `>= 1`), the
+     head of the newest covered series among the candidates, so a lock
+     and a follower on `@v1` read one pointer; the rule rides the pin as
+     its `rule` and accounts for itself in the lock report
+     (`explanation`: a head always, the greatest only beside heads the
+     ask did not cover), never in the lock — mints the
      `Dependency` from that version's facts merged with the declaration's
      `materialization` (install instructions meet version facts exactly
      here — a url dep's `version_label` is promoted into the pin's
@@ -369,7 +378,11 @@ does with the requirement is one of three things.
   writes that into the Gemfile.
 - **Evaluate** — dev picks. The scheme reads `Requirement#bounds` (the
   comparator terms, `~>` expanded to `>= v, < bump(v)`) against its own
-  ordering of the universe's versions, and the Resolver takes the max.
+  ordering of the universe's versions, and the Resolver takes the max —
+  or the series head, where the universe keeps one for a series-shaped
+  requirement ([dependencies.md](dependencies.md#series-heads)); which
+  requirements are series-shaped is the scheme's `series_span`, answered
+  by `TagScheme` and nil elsewhere.
   `RangeScheme` is this once; a subclass supplies the ordering alone.
 - **Refuse** — the channel has nothing to range over. `supports?` names
   the forms it takes, and the Resolver refuses the rest at declaration,
