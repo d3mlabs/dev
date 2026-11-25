@@ -59,7 +59,8 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
 - [architecture/per-side-project-state] Anything dev generates into the
  bind-mounted project tree that binds an interpreter or OS/arch (lisps,
  the venv) gets one path per side of the build container, decided from
- `ContainerContext.inside?` in one place.
+ `ContainerContext.inside?` in one place, and a `GITIGNORE_FOOTPRINT`
+ enrolled in `Dev::Footprint::MANAGED_PATHS`.
  → .cursor/skills/learnings/per-side-project-state/
 - [architecture/installed-state-in-the-store] Anything dev installs lives
  in the store under an identity key (per-project state under dev.yml
