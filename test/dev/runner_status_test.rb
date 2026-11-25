@@ -430,6 +430,54 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui.rows.none? { |_kind, text, _depth| text.include?("job identity ai-agent") }
   end
 
+  # --- a lane in a role referenced from another project (dev#701) ------------
+
+  # ai-flow's agent role as cellbound-3d's reference reads it: labels and
+  # job identity at repo scope — the shape of the repo's own lane.
+  REFERENCED_AGENT = Dev::RunnerRole::Declaration.new(
+    name: "agent", labels: AGENT_LABELS, group: "ai-flow", workflows: [".github/workflows/ai-commands.yml"], job_identity: "ai-agent",
+  ).as_referenced
+
+  test "a repo-scoped slot of a referenced role is reported under that role, held against the referenced shape, with its job identity's facts" do
+    Given "cellbound-3d's agent lane on this host, status run from the referencing checkout"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs/cellbound-3d", name: "box-agent")
+    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
+    executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "ai-agent"] => true }, capture_results: cooperative_work_trees(home, "actions-runner-agent"))
+    status = build_status(ui: ui, home: home, registry: registry, roles: { "agent" => REFERENCED_AGENT }, executor: executor, repo: "d3mlabs/cellbound-3d")
+
+    When
+    status.report
+
+    Then "the frame is the role's at the repo; the reach is the repo registration's, ok; the identity's facts are in the host frame"
+    rows_from(ui, "agent · 1 slot · d3mlabs/cellbound-3d").take(5) == [
+      [:frame, "agent · 1 slot · d3mlabs/cellbound-3d", 0],
+      [:note, "{{v}} reach: jobs from {{bold:d3mlabs/cellbound-3d}}", 1],
+      [:note, "#{INDENT}via any workflow", 1],
+      [:note, "#{INDENT}runs-on #{AGENT_LABELS.join(" | ")}", 1],
+      [:note, "{{v}} box-agent — online · service installed · runs as #{ME} · _work shared with group dev", 1],
+    ]
+    ui.rows.include?([:note, "{{v}} job identity ai-agent exists", 1])
+  end
+
+  test "a referenced lane whose labels drifted names the referencing checkout as where to re-register: the lane is that repo's" do
+    Given "the slot advertising one agent label short"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs/cellbound-3d", name: "box-agent")
+    stale = AGENT_LABELS.take(AGENT_LABELS.length - 1)
+    registry = CannedRegistry.new(repos: ["d3mlabs/cellbound-3d"]) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: stale, status: "online") }
+    status = build_status(ui: ui, home: home, registry: registry, roles: { "agent" => REFERENCED_AGENT }, repo: "d3mlabs/cellbound-3d")
+
+    When
+    status.report
+
+    Then
+    ui.rows.any? { |_kind, text, _depth| text.include?("re-run `dev runner register --role agent` from the checkout whose dev.yml references agent") }
+    ui.rows.none? { |_kind, text, _depth| text.include?("whose dev.yml declares agent") }
+  end
+
   # --- the job-started hook dev 0.9.x left (dev#700) -------------------------
 
   test "a slot still carrying the retired job-started hook is a finding — the hook's keys in .env or its script — #{what}" do

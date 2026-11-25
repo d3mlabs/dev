@@ -31,12 +31,14 @@ runner status` reads both back.
 A registration declares the **role** its runners play. The labels, the
 runner group, the user the jobs run as, the scope, the runner name and the
 directory all derive from it. The build host is the one builtin role;
-every other role is declared by a project's `dev.yml`.
+every other role is declared by a project's `dev.yml` — or referenced
+there from the project that declares it.
 
 | Role | Labels | Group | Jobs run as | Jobs run | Scope |
 |---|---|---|---|---|---|
 | build host (bare `register`, or `--labels`) | the repo's name, or the `--labels` set | none, or `--group` | the enrolling user | the checkout | repo; `--org` with `--labels` makes an org pool |
 | a dev.yml role (`--role <name>`) | as declared | `group:` when declared, pinned to the project's `workflows:` | `job_identity:` when declared, else the enrolling user | the checkout | repo; `--org` when the role declares a group |
+| a referenced role (`--role <name>`, `from:` in dev.yml) | as the declaring project declares them | none | the declaring project's `job_identity:`, else the enrolling user | the checkout (whose lock installs the tool) | repo only |
 
 A repo declares its roles in `dev.yml`:
 
@@ -61,6 +63,37 @@ runner_roles:
 `--role x` that nothing declares is refused, as is `--role x --labels y`
 (the role's labels are its declaration) and `--org` with a role that
 declares no group (org scope needs a group to fix the slots' reach).
+
+#### Referenced roles
+
+A repo whose jobs run on another project's role — cellbound-3d's editor
+lane runs ai-flow's `agent` role — declares the lane as its own, by
+reference:
+
+```yaml
+runner_roles:
+  agent:
+    from: d3mlabs/ai-flow    # ai-flow's agent role, as this repo's lane
+```
+
+`from:` is the declaring project's `owner/repo`, and stands alone: a key
+beside it (`labels`, `group`, `workflows`, `job_identity`) is refused
+naming the key, since a reference borrows the role's shape as declared.
+The repo must depend on the declaring project — a `gh` pin in its lock —
+and the declaration is read from that repo's `dev.yml` at the pinned
+version, so the role the lane plays and the tool its jobs run agree; a
+checkout whose lock pins nothing from the declaring repo is refused with
+the reason. A reference to a project that references the role in its turn
+is refused: a reference names the project that declares the role.
+
+`dev runner register --role agent` from the referencing checkout enrolls
+the lane at the repo: the referenced labels and `job_identity` (converged
+on the host like a declared role's), no runner group, the slot named
+`<host>-agent`, its jobs running the checkout. `--org` with a referenced
+role is refused: an org pool is declared and registered by its owner, from
+the declaring checkout. `dev runner status` from the referencing checkout
+reports the lane under the referenced role, read the same way; `--check`
+leaves referenced roles out, since it asks GitHub nothing.
 
 ### What a slot runs
 
@@ -140,7 +173,10 @@ supply them. Three vocabularies:
   uses it; `--repo a/b` moves it. With `--role`, `--repo a/b` enrolls the
   checkout's declared role for `a/b` — the role's labels and identity
   stay the declaring project's, the scope is `a/b`, and no runner
-  group: a repo has none (ai-flow's `agent` as cellbound-3d's editor lane).
+  group: a repo has none. A repo that runs on another project's role
+  declares the lane itself instead, as a [referenced role](#referenced-roles),
+  and registers from its own checkout; `--repo` is for a repo that
+  declares nothing.
 - **Custom labels** through `--labels`, for special fleets (`ue-engine`).
 - **A role's labels**: what its `dev.yml` declaration lists. ai-flow's
   `agent` role carries `ai-ask ai-edit ai-split ai-build ai-learn`, one
@@ -383,11 +419,14 @@ brew locks, engine) — the WSL keepalive and systemd facts inside a distro,
 and host tooling against the org Brewfile.
 
 Roles are held against their declarations. In a checkout, the roles its
-`dev.yml` declares are bound to the checkout's repo and series; a slot of
-a role declared elsewhere is known by its runner group alone: its frame
-is titled by the group, its reach reads `?` with the clauses as GitHub
-has them, and the line names the fix — run `dev runner status` from the
-checkout whose `dev.yml` declares it.
+`dev.yml` declares are bound to the checkout's repo and series, and the
+roles it [references](#referenced-roles) are read from their declaring
+repos at the versions its lock pins, so the repo's lane is held against
+the referenced shape; a slot of a role declared elsewhere and referenced
+nowhere is known by its runner group alone: its frame is titled by the
+group, its reach reads `?` with the clauses as GitHub has them, and the
+line names the fix — run `dev runner status` from the checkout whose
+`dev.yml` declares it.
 
 Each family frame opens with its **reach** — what GitHub lets this
 family's slots run, compared with what the role expects — as one fact in
@@ -449,7 +488,9 @@ labels, the runner group — need the org token and stay the human's `dev
 runner status`. Which roles are enrolled is read from each enrollment's
 own `.runner` record (its runner group), as for a slot GitHub has lost; a
 repo-scoped family records no group, so a job identity's user existing
-on the host is what brings its facts in there. Run
+on the host is what brings its facts in there. A role the checkout
+references is read from its declaring repo, so `--check` leaves it out:
+its lane's slots are held like any repo-scoped family's. Run
 as the job's own identity, facts that identity cannot probe read `?`, not
 `✗` — the runner user's gh login from a job that cannot sudo, the
 keepalive from a service without interop — and only a `✗` fails the

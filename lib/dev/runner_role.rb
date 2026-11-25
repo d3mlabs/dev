@@ -2,6 +2,8 @@
 # frozen_string_literal: true
 
 require "set"
+require "dev/deps/dependency"
+require "dev/enrolled_runner"
 require "dev/lifecycle/project_version"
 require "dev/reach"
 require "dev/runner_group_contract"
@@ -23,6 +25,13 @@ module Dev
   # and is bound to the project's repo and version at register
   # (Declaration#bind). Which project declares which roles is that
   # project's business: dev knows none by name.
+  #
+  # A project may instead **reference** a role another project declares
+  # (`runner_roles: agent: { from: d3mlabs/ai-flow }`, Reference): a lane
+  # belongs to the project whose jobs run on it, and the shape it borrows
+  # — labels, job identity — is read from the declaring project's dev.yml
+  # at the version the referencing project's lock pins, never retyped. A
+  # referenced role binds at repo scope only (Declaration#as_referenced).
   #
   # A role says nothing about what its jobs run: every slot's jobs run
   # the checkout they are given, and what that checkout needs — a
@@ -64,11 +73,13 @@ module Dev
     WORKFLOWS_DIR = ".github/workflows/"
 
     # How a role came to be: the builtin build host, a dev.yml declaration,
-    # or an enrollment known by its pool alone.
+    # a dev.yml reference to another project's declaration, or an
+    # enrollment known by its pool alone.
     class Kind < T::Enum
       enums do
         BuildHost = new("build-host")
         Declared = new("declared")
+        Referenced = new("referenced")
         Pooled = new("pooled")
       end
     end
@@ -144,6 +155,20 @@ module Dev
         RunnerRole.declared(name: name, labels: labels, group: contract, job_identity: job_identity)
       end
 
+      # The role as another project's reference binds it (Reference): the
+      # shape a lane borrows — this role's labels and job identity — at
+      # repo scope. No runner group, since a repo has none and the group is
+      # the declaring project's org pool, registered by its owner. Nothing
+      # of the declaring project's repo or version enters the role: the
+      # version only chose which declaration was read; the lane's jobs run
+      # the referencing checkout, whose lock installs the tool.
+      #
+      # @return [Dev::RunnerRole]
+      sig { returns(RunnerRole) }
+      def as_referenced
+        RunnerRole.new(name: name, labels: labels, group: nil, job_identity: job_identity, kind: Kind::Referenced)
+      end
+
       # @return [Array] the members that constitute identity
       sig { override.returns(T::Array[T.anything]) }
       def equality_members
@@ -184,6 +209,83 @@ module Dev
         raise DeclarationError, "runner role '#{name}' pins its workflows at the project's series, but #{e.message}"
       end
     end
+
+    # A role as dev.yml references it: another project's declaration of
+    # the same name, named by that project's repo —
+    #
+    #   runner_roles:
+    #     agent:
+    #       from: d3mlabs/ai-flow
+    #
+    # The referencing project depends on the declaring one (a gh pin in its
+    # lock), and the declaration is read from the declaring repo's dev.yml
+    # at the version that pin holds (#pin), so the role a lane plays and
+    # the tool its jobs run agree. What is borrowed is the declaration's
+    # shape at repo scope (Declaration#as_referenced); an org pool is
+    # declared and registered by its owner, never through a reference.
+    class Reference
+      extend T::Sig
+      include Dev::ValueEquality::Derived
+
+      # The referencing checkout's lock pins nothing from the declaring
+      # repo: there is no version to read the declaration at.
+      class NotDependedOnError < RuntimeError; end
+
+      # The integration of the pin a reference is read through: the
+      # declaring project installed as a gh tree.
+      PIN_INTEGRATION = :gh
+
+      # The pin metadata key naming the gh repo it came from.
+      PIN_REPO_KEY = "repo"
+
+      sig { returns(String) }
+      attr_reader :name
+
+      # The declaring project's repo, "owner/repo".
+      sig { returns(String) }
+      attr_reader :declaring_repo
+
+      # @param name [String] the role's name, in both projects' dev.yml
+      # @param declaring_repo [String] the declaring project's "owner/repo"
+      # @raise [Dev::EnrolledRunner::MalformedRepoError] when the repo is not an owner and a name
+      sig { params(name: String, declaring_repo: String).void }
+      def initialize(name:, declaring_repo:)
+        # The one owner/repo check dev has; the enrolled runner it derives
+        # is not wanted, the refusal is.
+        EnrolledRunner.for(declaring_repo)
+        @name = name
+        @declaring_repo = declaring_repo
+      end
+
+      # The pin the referencing checkout's lock holds for the declaring
+      # project: whose version the declaration is read at.
+      #
+      # @param pins [Array<Dev::Deps::Dependency>] the referencing checkout's lock
+      # @return [Dev::Deps::Dependency]
+      # @raise [NotDependedOnError] when the lock pins nothing from the declaring repo
+      sig { params(pins: T::Array[Deps::Dependency]).returns(Deps::Dependency) }
+      def pin(pins)
+        found = pins.find do |pin|
+          pin.integration == PIN_INTEGRATION && pin.metadata[PIN_REPO_KEY].to_s.casecmp?(@declaring_repo)
+        end
+        return found if found
+
+        raise NotDependedOnError,
+          "runner role '#{@name}' is referenced from #{@declaring_repo}, but this checkout's lock pins nothing from it — " \
+            "a referenced role is read at the version its project is installed at, so the role and the tool agree: " \
+            "declare the dependency (`gh \"#{@declaring_repo}\", \"^1\"` in dependencies.rb) and run `dev deps update`"
+      end
+
+      # @return [Array] the members that constitute identity
+      sig { override.returns(T::Array[T.anything]) }
+      def equality_members
+        [@name, @declaring_repo]
+      end
+    end
+
+    # What a `runner_roles:` entry is: a role declared here, or a reference
+    # to one declared by another project.
+    Entry = T.type_alias { T.any(Declaration, Reference) }
 
     sig { returns(String) }
     attr_reader :name
@@ -301,6 +403,14 @@ module Dev
     sig { returns(T::Boolean) }
     def declared?
       @kind == Kind::Declared
+    end
+
+    # Whether the role was bound through a reference to another project's
+    # declaration (Declaration#as_referenced): the checkout to re-register
+    # it from is the one that references it.
+    sig { returns(T::Boolean) }
+    def referenced?
+      @kind == Kind::Referenced
     end
 
     sig { returns(T::Boolean) }

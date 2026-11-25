@@ -4,7 +4,6 @@
 require "pathname"
 require "yaml"
 require "dev/engine_resources"
-require "dev/runner_role"
 require "dev/environment_ref"
 require "dev/lifecycle"
 require_relative "channel_parser"
@@ -12,6 +11,7 @@ require_relative "command_parser"
 require_relative "lifecycle_fault"
 require_relative "project_manifest"
 require_relative "release_parser"
+require_relative "runner_role_parser"
 require_relative "target_parser"
 
 module Dev
@@ -114,12 +114,6 @@ module Dev
       # level: there is no build for a release to contain.
       class ReleaseWithoutTargetsError < RuntimeError; end
 
-      # `runner_roles:` declares a role that cannot be (RunnerRole.declared's
-      # rules), or not in the declaration's shape: a `labels:` list, an
-      # optional `group:` (a name, or `{ name:, visibility: }`) pinned to the
-      # project's own `workflows:`, an optional `job_identity:` user.
-      class RunnerRoleError < RuntimeError; end
-
       # The verbs `targets:` derives; a project may not declare them.
       DERIVED_COMMANDS = T.let(["build", "package"].freeze, T::Array[String])
 
@@ -157,14 +151,16 @@ module Dev
           target_parser: TargetParser,
           channel_parser: ChannelParser,
           release_parser: ReleaseParser,
+          runner_role_parser: RunnerRoleParser,
         ).void
       end
       def initialize(command_parser: CommandParser.new, target_parser: TargetParser.new, channel_parser: ChannelParser.new,
-                     release_parser: ReleaseParser.new)
+                     release_parser: ReleaseParser.new, runner_role_parser: RunnerRoleParser.new)
         @command_parser = command_parser
         @target_parser = target_parser
         @channel_parser = channel_parser
         @release_parser = release_parser
+        @runner_role_parser = runner_role_parser
       end
 
       # Parse dev.yml into a manifest.
@@ -209,7 +205,7 @@ module Dev
           release: lifecycle.release,
           lifecycle_fault: lifecycle.fault,
           engine: parse_resources(yaml["engine"]),
-          runner_roles: parse_runner_roles(yaml["runner_roles"]),
+          runner_roles: @runner_role_parser.parse_all(yaml["runner_roles"]),
         )
       end
 
@@ -480,148 +476,6 @@ module Dev
 
         $stderr.puts "dev: dev.yml `runner:` is retired and ignored — the repo runner label now derives " \
                      "from the repo name (`dev runner register`); delete the block."
-      end
-
-      # The declared runner roles, the top-level `runner_roles:` block —
-      # one declaration per key:
-      #
-      #   agent:
-      #     labels: [ai-ask, ai-build]
-      #     group: ai-flow                        # or { name: ai-flow, visibility: all }
-      #     workflows: [.github/workflows/ai-commands.yml]
-      #     job_identity: ai-agent
-      #
-      # Coerced at the boundary: the labels a list of strings, the group a
-      # name or a `{ name:, visibility: }` mapping, the workflows paths under
-      # `.github/workflows/`, the job identity a user name. A group without
-      # workflows, or workflows without a group, is refused here — only a
-      # group carries a pin, and a declared role's group is pinned. The
-      # pins' repo and series are the project's, bound at register
-      # (RunnerRole::Declaration#bind); the declaration itself is checked
-      # against RunnerRole.declared's rules once, with a stand-in binding,
-      # so a bad name or an empty label list is refused at parse time.
-      #
-      # @param raw [Object, nil] the block as YAML gave it
-      # @return [Hash{String => Dev::RunnerRole::Declaration}]
-      # @raise [RunnerRoleError]
-      sig { params(raw: T.untyped).returns(T::Hash[String, Dev::RunnerRole::Declaration]) }
-      def parse_runner_roles(raw)
-        return {} unless raw.is_a?(Hash)
-
-        raw.to_h do |name, body|
-          raise RunnerRoleError, "dev.yml runner_roles: `#{name}` needs a mapping — `#{name}: { labels: [ue, gpu] }`" unless body.is_a?(Hash)
-
-          declaration = Dev::RunnerRole::Declaration.new(
-            name: name.to_s,
-            labels: runner_role_labels(name, body["labels"]),
-            group: runner_role_group_name(name, body["group"]),
-            visibility: runner_role_visibility(name, body["group"]),
-            workflows: runner_role_workflows(name, body["workflows"]),
-            job_identity: runner_role_job_identity(name, body["job_identity"]),
-          )
-          validate_runner_role!(declaration)
-          [name.to_s, declaration]
-        end
-      end
-
-      # @param name [Object] the role's key
-      # @param raw [Object] the `labels:` value
-      # @return [Array<String>]
-      # @raise [RunnerRoleError]
-      sig { params(name: T.untyped, raw: T.untyped).returns(T::Array[String]) }
-      def runner_role_labels(name, raw)
-        return raw if raw.is_a?(Array) && raw.all?(String)
-
-        raise RunnerRoleError, "dev.yml runner_roles: `#{name}` needs a `labels:` list — `#{name}: { labels: [ue, gpu] }`"
-      end
-
-      # @param name [Object] the role's key
-      # @param raw [Object] the `group:` value: nil, a name, or `{ name:, visibility: }`
-      # @return [String, nil]
-      # @raise [RunnerRoleError]
-      sig { params(name: T.untyped, raw: T.untyped).returns(T.nilable(String)) }
-      def runner_role_group_name(name, raw)
-        return nil if raw.nil?
-        return raw if raw.is_a?(String) && !raw.empty?
-        return raw["name"] if raw.is_a?(Hash) && raw["name"].is_a?(String) && !raw["name"].empty?
-
-        raise RunnerRoleError,
-          "dev.yml runner_roles: `#{name}` has a `group:` that is neither a name nor `{ name: <group>, visibility: selected | all }`"
-      end
-
-      # @param name [Object] the role's key
-      # @param raw [Object] the `group:` value
-      # @return [String] GitHub's visibility; `selected` unless the mapping says `all`
-      # @raise [RunnerRoleError]
-      sig { params(name: T.untyped, raw: T.untyped).returns(String) }
-      def runner_role_visibility(name, raw)
-        return Dev::RunnerGroupContract::SELECTED unless raw.is_a?(Hash) && raw.key?("visibility")
-
-        visibility = raw["visibility"]
-        return visibility if Dev::RunnerGroupContract::VISIBILITIES.include?(visibility)
-
-        raise RunnerRoleError,
-          "dev.yml runner_roles: `#{name}` group visibility is #{visibility.inspect} — " \
-            "one of #{Dev::RunnerGroupContract::VISIBILITIES.join(" | ")}"
-      end
-
-      # @param name [Object] the role's key
-      # @param raw [Object] the `workflows:` value: nil or a list of paths in the project
-      # @return [Array<String>]
-      # @raise [RunnerRoleError]
-      sig { params(name: T.untyped, raw: T.untyped).returns(T::Array[String]) }
-      def runner_role_workflows(name, raw)
-        return [] if raw.nil?
-        unless raw.is_a?(Array) && raw.all?(String) && !raw.empty?
-          raise RunnerRoleError,
-            "dev.yml runner_roles: `#{name}` needs `workflows:` as a list of this project's workflow paths " \
-              "(#{Dev::RunnerRole::WORKFLOWS_DIR}<file>.yml)"
-        end
-
-        outside = raw.reject { |path| path.start_with?(Dev::RunnerRole::WORKFLOWS_DIR) }
-        return raw if outside.empty?
-
-        raise RunnerRoleError,
-          "dev.yml runner_roles: `#{name}` pins #{outside.join(", ")} — a pinned workflow is one of this project's own, " \
-            "under #{Dev::RunnerRole::WORKFLOWS_DIR}"
-      end
-
-      # @param name [Object] the role's key
-      # @param raw [Object] the `job_identity:` value: nil or a user name
-      # @return [String, nil]
-      # @raise [RunnerRoleError]
-      sig { params(name: T.untyped, raw: T.untyped).returns(T.nilable(String)) }
-      def runner_role_job_identity(name, raw)
-        return nil if raw.nil?
-        return raw if raw.is_a?(String) && !raw.empty?
-
-        raise RunnerRoleError, "dev.yml runner_roles: `#{name}` has a `job_identity:` that is not a user name"
-      end
-
-      # The rules a declaration must satisfy regardless of the project it
-      # binds to: its name and labels (RunnerRole.declared), and that a
-      # group and its pins come together.
-      #
-      # @param declaration [Dev::RunnerRole::Declaration]
-      # @return [void]
-      # @raise [RunnerRoleError]
-      sig { params(declaration: Dev::RunnerRole::Declaration).void }
-      def validate_runner_role!(declaration)
-        if declaration.group.nil? && !declaration.workflows.empty?
-          raise RunnerRoleError,
-            "dev.yml runner_roles: `#{declaration.name}` pins workflows but names no `group:` — only a runner group carries a pin"
-        end
-        if declaration.group && declaration.workflows.empty?
-          raise RunnerRoleError,
-            "dev.yml runner_roles: `#{declaration.name}` names group '#{declaration.group}' but pins no `workflows:` — a declared " \
-              "role's group is pinned to this project's own workflows; a human's group is a build host's (--group)"
-        end
-
-        # A stand-in repo and version: the pins' spelling is register's
-        # business, the name and label rules are checked here.
-        declaration.bind(repo: "owner/repo", version: "0.0.0")
-      rescue Dev::RunnerRole::DeclarationError => e
-        raise RunnerRoleError, "dev.yml runner_roles: #{e.message}"
       end
 
       # The engine floor, the top-level `engine:` block, coerced to integers

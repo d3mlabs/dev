@@ -131,6 +131,16 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   # A dev.yml role of a checkout's own, with a job identity but no group:
   # repo-scoped, its jobs run as `ue-builder`.
   FARM = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], job_identity: "ue-builder")
+  # A checkout's reference to ai-flow's agent role (dev#701), the lock pin
+  # it is read at, and the role as the declaring repo's dev.yml at that
+  # version gives it, at repo scope.
+  AGENT_REFERENCE = Dev::RunnerRole::Reference.new(name: "agent", declaring_repo: "d3mlabs/ai-flow")
+  AI_FLOW_PIN = Dev::Deps::Dependency.new(
+    name: "ai-flow", integration: :gh, group: :app, version: "2.4.1", hash: nil, metadata: { "repo" => "d3mlabs/ai-flow" },
+  )
+  REFERENCED_AGENT = Dev::RunnerRole::Declaration.new(
+    name: "agent", labels: AGENT_LABELS, group: "ai-flow", workflows: [".github/workflows/ai-commands.yml"], job_identity: "ai-agent",
+  ).as_referenced
 
   # Class methods, defined ahead of the tests: Where tables are evaluated
   # in class scope as the file loads.
@@ -1222,6 +1232,86 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.events == [[:converge], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
   end
 
+  # --- a role referenced from another project (dev#701) -------------------------
+
+  test "--role <referenced> from the referencing checkout enrolls this repo's lane: the role read from the declaring repo at the lock's version, repo-scoped, no group, its identity converged" do
+    Given "cellbound-3d references ai-flow's agent role and pins ai-flow at 2.4.1; the org probe would be refused if made"
+    registry = FakeRegistry.new(refused: ["d3mlabs"])
+    loader = FakeReferencedRoleLoader.new(AGENT_REFERENCE => REFERENCED_AGENT)
+    harness = build_harness(registry: registry, scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d", pins: [AI_FLOW_PIN], referenced_role_loader: loader)
+    root = declaring_checkout(version: "0.1.0")
+    context = harness.build_context(name: "Cellbound3D", root: root, runner_roles: { "agent" => AGENT_REFERENCE })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent"]), context: context)
+
+    Then "the reference was read against this checkout's lock; the slot is this repo's, in the referenced shape (no group converged); the retired hook is cleaned as for any role; the declaring project's job identity is converged here"
+    loader.loads == [[AGENT_REFERENCE, [AI_FLOW_PIN]]]
+    config, _repo, org, _as, _ui = harness.wirings.last
+    org == false
+    config.role == REFERENCED_AGENT
+    config.role.group.nil?
+    registry.group_writes == []
+    harness.hook_removals == ["/tmp/runner-dir"]
+    harness.identities == [["ai-agent", nil, harness.ui]]
+    harness.events == [[:converge], [:run], [:after_enroll, "/tmp/runner-dir", 1]]
+  end
+
+  test "a referenced role's slots are named from the role, <host>-agent then -<n>, as a declared one's are" do
+    Given
+    loader = FakeReferencedRoleLoader.new(AGENT_REFERENCE => REFERENCED_AGENT)
+    harness = build_harness(pins: [AI_FLOW_PIN], referenced_role_loader: loader, hostname: "mac1")
+    context = harness.build_context(name: "Cellbound3D", runner_roles: { "agent" => AGENT_REFERENCE })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent", "--slots", "2"]), context: context)
+
+    Then
+    harness.wirings.drop(1).map(&:first) == [
+      Dev::RunnerSetupConfig.new(role: REFERENCED_AGENT, dir: "/tmp/runner-dir", name: "mac1-agent"),
+      Dev::RunnerSetupConfig.new(role: REFERENCED_AGENT, dir: "/tmp/runner-dir-2", name: "mac1-agent-2"),
+    ]
+  end
+
+  test "--org with a referenced role is refused before anything is read or enrolled: an org pool is declared and registered by its owner" do
+    Given
+    loader = FakeReferencedRoleLoader.new(AGENT_REFERENCE => REFERENCED_AGENT)
+    harness = build_harness(scope: "d3mlabs", pins: [AI_FLOW_PIN], referenced_role_loader: loader)
+    context = harness.build_context(name: "Cellbound3D", runner_roles: { "agent" => AGENT_REFERENCE })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--org", "--role", "agent"]), context: context)
+
+    Then
+    error = raises ArgumentError
+    error.message.include?("runner role 'agent' is referenced from d3mlabs/ai-flow")
+    error.message.include?("an org pool is declared and registered by its owner")
+    error.message.include?("dev runner register --org --role agent` from a d3mlabs/ai-flow checkout")
+    error.message.include?("drop --org")
+    loader.loads == []
+    harness.events == []
+  end
+
+  test "a referenced role in a checkout whose lock pins nothing from the declaring repo is refused with the reason, nothing enrolled" do
+    Given "the real loader over a gh that must not be asked, and a lock without ai-flow"
+    gh = Class.new do
+      def capture(*argv, chdir: nil, stdin: nil)
+        raise "gh asked: #{argv.inspect}"
+      end
+    end.new
+    loader = Dev::Cli::ReferencedRoleLoader.new(executor: gh, parser: Dev::Cli::RunnerRoleParser.new)
+    harness = build_harness(pins: [], referenced_role_loader: loader)
+    context = harness.build_context(name: "Cellbound3D", runner_roles: { "agent" => AGENT_REFERENCE })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "agent"]), context: context)
+
+    Then
+    error = raises Dev::RunnerRole::Reference::NotDependedOnError
+    error.message.include?("this checkout's lock pins nothing from it")
+    harness.events == []
+  end
+
   test "a pinned role at a public repo at repo scope is refused like a build host, and the refusal names the scope rules" do
     Given
     dev = Dev::RunnerRegistry::Repository.new(id: 100, full_name: "d3mlabs/dev", visibility: "public")
@@ -2046,7 +2136,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   private
 
   Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :factory_uis, :reach_roots, :identities,
-    :hook_removals, :hook_users, keyword_init: true) do
+    :hook_removals, :hook_users, :references, keyword_init: true) do
     # A project context carrying this harness's Ui — the terminal the
     # command asks at — and the runner roles its dev.yml declares.
     def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {})
@@ -2080,7 +2170,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   def build_harness(home: Dir.mktmpdir, registry: FakeRegistry.new,
                     scope: "d3mlabs/cellbound-3d", repo: "d3mlabs/cellbound-3d",
                     repo_resolver: nil, runner_user: nil, data_root_provisioner: nil, wsl_runner_host: nil, reach: nil,
-                    pins: [], hostname: "mac1", refresher: ->(_scope) { raise "no refresh expected" })
+                    pins: [], hostname: "mac1", refresher: ->(_scope) { raise "no refresh expected" },
+                    referenced_role_loader: FakeReferencedRoleLoader.new({}))
     wirings = []
     events = []
     torn_down = []
@@ -2153,10 +2244,31 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
         hook.stubs(:remove!).with { |runner_dir:| hook_removals << runner_dir || true }
         hook
       },
+      # What a referenced role (dev#701) resolves to; the default answers
+      # nothing, so a test about a reference says what it reads.
+      referenced_role_loader: referenced_role_loader,
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
       torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots, identities: identities,
-      hook_removals: hook_removals, hook_users: hook_users)
+      hook_removals: hook_removals, hook_users: hook_users, references: referenced_role_loader)
+  end
+
+  # The referenced-role loader's seam: answers each reference with the
+  # role a test canned for it and records what it was asked — the
+  # reference and the lock it was handed. gh is never reached.
+  class FakeReferencedRoleLoader < Dev::Cli::ReferencedRoleLoader
+    attr_reader :loads
+
+    def initialize(answers)
+      super(executor: nil)
+      @answers = answers
+      @loads = []
+    end
+
+    def load(reference, pins)
+      @loads << [reference, pins]
+      @answers.fetch(reference)
+    end
   end
 
   # A job identity recording the lifecycle a register run drives into

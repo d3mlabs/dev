@@ -14,6 +14,7 @@ require "dev/lifecycle/project_version"
 require "dev/linux_data_root_provisioner"
 require "dev/operator_access"
 require "dev/cli/project_manifest"
+require "dev/cli/referenced_role_loader"
 require "dev/runner_discovery"
 require "dev/runner_slots"
 require "dev/runner_group_contract"
@@ -42,12 +43,16 @@ module Dev
       #   dev runner register --labels ue-engine # a build host with custom capabilities
       #   dev runner register --role ue-farm     # a role dev.yml declares under runner_roles:
       #   dev runner register --org --role agent # a declared role with a group, at the org
+      #   dev runner register --role agent       # a role dev.yml references (from: another project), this repo's lane
       #
       # Scope is the checkout's: a registration is the repo's unless
       # `--org` puts it at the repo's org, where a declared role with a
       # group joins it — pinned to the project's own workflows at its
-      # series. A repo owned by a user account has no org and `--org` is
-      # refused there. Any role at a public repo at repo scope is refused
+      # series. A referenced role is always the repo's: its declaration is
+      # read from the declaring repo at the version this checkout's lock
+      # pins (ReferencedRoleLoader), and the org pool it may name there is
+      # its owner's to register. A repo owned by a user account has no org
+      # and `--org` is refused there. Any role at a public repo at repo scope is refused
       # (Reach::ExposedError). `--slots N` enrolls N runners with the same
       # labels; re-running keeps the count it finds, a smaller N retires the
       # surplus after asking. A family is `(scope, host, role)`, and
@@ -173,6 +178,7 @@ module Dev
             groups: T.nilable(Dev::RunnerGroups),
             refresher: Dev::OperatorAccess::Refresher,
             retired_hook_factory: RetiredHookFactory,
+            referenced_role_loader: ReferencedRoleLoader,
           ).void
         end
         def initialize(
@@ -202,7 +208,10 @@ module Dev
           groups: nil,
           # How the operator's login is widened when the pre-flight offers it.
           refresher: Dev::OperatorAccess::DEFAULT_REFRESHER,
-          retired_hook_factory: ->(runner_user, ui) { Dev::RetiredJobHook.new(as_user: runner_user&.name, ui: ui) }
+          retired_hook_factory: ->(runner_user, ui) { Dev::RetiredJobHook.new(as_user: runner_user&.name, ui: ui) },
+          # Reads a referenced role's declaration from the declaring repo at
+          # the version this checkout's lock pins.
+          referenced_role_loader: ReferencedRoleLoader.new
         )
           super()
           @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
@@ -224,6 +233,7 @@ module Dev
           @pins_reader = pins_reader
           @reach_factory = reach_factory
           @retired_hook_factory = retired_hook_factory
+          @referenced_role_loader = referenced_role_loader
         end
 
         # The summary line, then what the operator needs at the prompt: who
@@ -253,6 +263,16 @@ module Dev
                             to this project's own `workflows:` at the project's series
                             (v<major>, read from VERSION — never typed), and a
                             `job_identity:` — the OS user its jobs run as.
+              <reference>   a role this repo's runner_roles: references from another
+                            project (`agent: { from: d3mlabs/ai-flow }`), enrolled with
+                            --role <name> as this repo's own lane. The labels and
+                            job_identity are read from the declaring repo's dev.yml at
+                            the version this checkout's lock pins for it (a gh pin), so
+                            the role and the tool the jobs run agree; a checkout whose
+                            lock pins nothing from that repo is refused. No group — a
+                            repo has none, and the org pool the declaration may name
+                            is its owner's: --org with a referenced role is refused.
+                            The slots run this checkout, which installs the tool.
 
             A slot's jobs run the checkout they are given, whatever the role; a tool
             the checkout depends on (a `gh` pin in its dependencies.rb) is installed
@@ -268,8 +288,11 @@ module Dev
             jobs through any of its workflows, no runner group — for every role, a
             grouped one included (its group is its org-scope reach; a repo has no
             runner groups). --repo a/b enrolls for that repo instead: a declared role
-            keeps its own project's pins (ai-flow's agent for a repo's editor lane,
-            say); the slots are a/b's. --org
+            keeps its own project's pins; the slots are a/b's. A repo's own lane in
+            another project's role is that repo's to declare, as a reference in its
+            dev.yml (`agent: { from: d3mlabs/ai-flow }`), and to register from its own
+            checkout with --role; --repo is the fallback for a repo that declares
+            nothing. --org
             puts them at the repo's org: a declared role with a group joins it (the group
             carries the workflow pin), --labels makes a custom set an org pool in a
             human's --group. A declared role without a group is always its repo's. A
@@ -399,6 +422,7 @@ module Dev
               dev runner register                      # this repo's build host: repo scope, label = the repo name, named <hostname>
               dev runner register --labels ue-engine   # a build host with custom capabilities
               dev runner register --role ue-farm       # a role this repo's dev.yml declares (runner_roles:)
+              dev runner register --role agent         # a role this repo's dev.yml references (agent: { from: d3mlabs/ai-flow }): this repo's lane
               dev runner register --org --role agent   # a declared role with a group, at the org, named <hostname>-agent
               dev runner register --org --role agent --slots 3 # three jobs at once; this repo may use them
               dev runner register --role agent --slots 2       # this repo's own slots of the role, no group
@@ -415,7 +439,7 @@ module Dev
         def flags
           [
             Cli::Flag.new(ORG_FLAG, desc: "enroll at the repo's org (needs admin:org): a declared role with a group joins it there; with --labels, an org pool instead of this repo's runner. Without it the slots are this repo's"),
-            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: a role this checkout's dev.yml declares under runner_roles: (named <host>-<role>); default: this repo's build host"),
+            Cli::Flag.new(ROLE_FLAG, takes_value: true, desc: "what the slots are for: a role this checkout's dev.yml declares or references (from: another project) under runner_roles: (named <host>-<role>); default: this repo's build host"),
             Cli::Flag.new(LABELS_FLAG, takes_value: true, desc: "comma-separated labels for a build host; default: the repo's name"),
             Cli::Flag.new(AI_FLOW_FLAG, desc: "one release's alias for --role #{RunnerRoleAliases::AGENT.name} from an ai-flow checkout (warns)"),
             Cli::Flag.new(SLOTS_FLAG, takes_value: true, desc: "how many jobs this host runs at once at this scope: N runners, <name>, <name>-2 .. <name>-N; default: what is enrolled, else 1"),
@@ -1146,12 +1170,18 @@ module Dev
           role
         end
 
-        # The role `--role` names: the checkout's dev.yml declaration, bound
-        # to the declaring checkout's own repo and series — its workflow
-        # pins are the project's, whichever repo the registration serves
-        # (`--repo` enrolls this project's role for another repo's lane).
-        # A declared role without a group is its repo's — org scope needs a
-        # group to fix the slots' reach — and `--org` is refused for it.
+        # The role `--role` names, as the checkout's dev.yml states it. A
+        # declaration is bound to the declaring checkout's own repo and
+        # series — its workflow pins are the project's, whichever repo the
+        # registration serves (`--repo` enrolls this project's role for
+        # another repo's lane). A declared role without a group is its
+        # repo's — org scope needs a group to fix the slots' reach — and
+        # `--org` is refused for it.
+        #
+        # A reference is read from the declaring repo at the version this
+        # checkout's lock pins for it (ReferencedRoleLoader), as this repo's
+        # own lane: `--org` is refused, since the org pool the declaration
+        # may name is its owner's to register from its checkout.
         #
         # @param name [String]
         # @param context [Dev::Cli::ExecutionContext]
@@ -1160,17 +1190,22 @@ module Dev
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError]
         # @raise [Dev::RunnerRole::DeclarationError]
+        # @raise [Dev::RunnerRole::Reference::NotDependedOnError] a reference whose declaring repo the lock does not pin
+        # @raise [ReferencedRoleLoader::QueryError] a reference whose declaration cannot be read
+        # @raise [ReferencedRoleLoader::NotDeclaredError] a reference the declaring project does not declare
         sig { params(name: String, context: ExecutionContext, org: T::Boolean, declaring_repo: T.proc.returns(String)).returns(RunnerRole) }
         def declared_role(name, context, org, declaring_repo)
           project = context.project
-          declaration = project&.runner_roles&.fetch(name, nil)
-          unless declaration
+          entry = project&.runner_roles&.fetch(name, nil)
+          unless entry
             raise ArgumentError,
               "runner role '#{name}' is not declared in #{project ? "this checkout's" : "a"} dev.yml — declare it once: " \
                 "runner_roles: { #{name}: { labels: [...] } }"
           end
 
-          role = declaration.bind(repo: declaring_repo.call, version: Lifecycle::ProjectVersion.declared(T.must(project).root))
+          return referenced_role(entry, T.must(project), org) if entry.is_a?(RunnerRole::Reference)
+
+          role = entry.bind(repo: declaring_repo.call, version: Lifecycle::ProjectVersion.declared(T.must(project).root))
           if org && !role.org_scoped?
             raise ArgumentError,
               "runner role '#{name}' is this repo's — a role enrolls at the org only in a group pinned to this project's " \
@@ -1178,6 +1213,31 @@ module Dev
           end
 
           role
+        end
+
+        # The role a reference names, read from the declaring repo at the
+        # version this checkout's lock pins (ReferencedRoleLoader), at repo
+        # scope. `--org` is refused first: an org pool is declared and
+        # registered by its owner.
+        #
+        # @param reference [Dev::RunnerRole::Reference]
+        # @param project [Dev::Cli::ProjectContext] the referencing checkout
+        # @param org [Boolean] `--org`
+        # @return [Dev::RunnerRole]
+        # @raise [ArgumentError] `--org`
+        # @raise [Dev::RunnerRole::Reference::NotDependedOnError]
+        # @raise [ReferencedRoleLoader::QueryError]
+        # @raise [ReferencedRoleLoader::NotDeclaredError]
+        sig { params(reference: RunnerRole::Reference, project: ProjectContext, org: T::Boolean).returns(RunnerRole) }
+        def referenced_role(reference, project, org)
+          if org
+            raise ArgumentError,
+              "runner role '#{reference.name}' is referenced from #{reference.declaring_repo} — an org pool is declared and " \
+                "registered by its owner (`dev runner register #{ORG_FLAG} #{ROLE_FLAG} #{reference.name}` from a " \
+                "#{reference.declaring_repo} checkout); a referenced role is this repo's own lane — drop #{ORG_FLAG}"
+          end
+
+          @referenced_role_loader.load(reference, @pins_reader.call(project.root))
         end
 
         # A thunk that computes once and answers the same thereafter.
