@@ -13,9 +13,10 @@ module Dev
   # and put it on the job's PATH. The head is read from the channel
   # (StreamHeadLookup) and installed as the gh tree its pin becomes
   # (StreamStore, Deps::GhIntegration) — the install is a no-op when the
-  # tree is already published, the common case, and otherwise the tool's
-  # full closure (its Ruby keg, its gems, its wrappers) lands before the
-  # job's first step; a head that moved mid-job is seen by the next one.
+  # tree is already published, the common case, and otherwise the tool
+  # lands self-contained (its Ruby keg, its vendored gems, its launchers)
+  # before the job's first step; a head that moved mid-job is seen by the
+  # next one.
   # The tree's `bin` is appended to `$GITHUB_PATH`, the file a hook
   # writes and the job's steps inherit, so `ai-flow` in a step is the
   # head's.

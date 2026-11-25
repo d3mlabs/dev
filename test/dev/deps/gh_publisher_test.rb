@@ -292,12 +292,12 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
       "it ships dependencies.rb without deps.lock — a self-contained tree carries its lock beside its manifest"
   end
 
-  test "every gap the closure reads is in the one refusal, the channel named first" do
+  test "every gap the tree reads is in the one refusal, the channel named first" do
     Given "a Gemfile with no Ruby pin, and a bin/ name an exe/ would take"
     tree = tool_tree(@workspace / "gaps", lock: FORMULA_LOCK)
     (tree / "bin").mkpath
     (tree / "bin/ai-flow").write("#!/bin/sh\n")
-    gaps = Dev::Deps::ToolClosure.new(tree:).gaps
+    gaps = Dev::Deps::SelfContainedTree.new(root: tree).gaps
 
     When
     publisher(FakeGh.new(root: @project)).accept!(tree, channel:)

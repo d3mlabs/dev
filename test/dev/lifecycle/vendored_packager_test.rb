@@ -36,7 +36,8 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
     end
   end
 
-  # A tool tree as a Ruby project's builder lays it, as the install.
+  # A self-contained tree as a Ruby project's builder lays it, as the
+  # install: manifest, lock, Gemfile and an executable.
   #
   # @param root [Pathname]
   # @return [Pathname] the install
@@ -97,7 +98,7 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "an install that is no tool tree is NoClosureError, naming the two files it lacks, before anything runs" do
+  test "an install that is not self-contained is NotSelfContainedError, naming the two files it lacks, before anything runs" do
     Given
     root = Pathname(Dir.mktmpdir("vendored-packager-"))
     install = root / "install"
@@ -111,7 +112,7 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
     packager.package(build("cellbound-3d-win64-release"), install, root / "store/cellbound-3d-win64-release")
 
     Then
-    error = raises(Dev::Lifecycle::VendoredPackager::NoClosureError)
+    error = raises(Dev::Lifecycle::VendoredPackager::NotSelfContainedError)
     error.message.include?(install.to_s)
     error.message.include?("dependencies.rb and deps.lock")
     exec.calls.empty?
@@ -121,7 +122,7 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "a bundle that fails is the closure's VendorError and nothing is archived" do
+  test "a bundle that fails is the gem bundle's VendorError and nothing is archived" do
     Given
     root = Pathname(Dir.mktmpdir("vendored-packager-"))
     install = tool_install(root)
@@ -132,7 +133,7 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
     packager.package(build("rspock"), install, root / "store/ai-flow")
 
     Then
-    raises(Dev::Deps::ToolClosure::VendorError)
+    raises(Dev::Deps::SelfContainedTree::GemBundle::VendorError)
     archiver.packaged.empty?
 
     Cleanup

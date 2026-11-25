@@ -268,8 +268,8 @@ module Dev
             (.env: #{Dev::StreamHook::STREAM_ENV}) and installs the runner's job-started hook there
             (#{Dev::StreamHook::HOOK_ENV} → #{Dev::StreamHook::SCRIPT}), which runs
             `dev runner follow <dir>` before every job: it installs the series' head
-            (the release `v<major>` points at, as the gh tree ~/.dev/gh/<repo>/<tag>
-            with its closure) when it moved, and exports the tree's bin to the job's
+            (the release `v<major>` points at, as the gh tree ~/.dev/gh/<repo>/<tag>,
+            installed self-contained) when it moved, and exports the tree's bin to the job's
             PATH. The service is bounced once when the hook changes. A role that
             follows no stream has no hook; re-running register removes a stale one.
 

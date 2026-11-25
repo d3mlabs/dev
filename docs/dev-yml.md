@@ -204,8 +204,8 @@ takes these:
 `{ archive: { format: tar, split: 2GiB } }`.
 
 `vendor: true` runs the `bundle install` under the project's Ruby, so the
-asset ships the tool's gems and the install writes wrappers only (see [A
-tool's closure](dependencies.md#a-tools-closure-at-install-or-at-release)).
+asset ships the tool's gems and the install writes launchers only (see
+[Self-contained trees](dependencies.md#self-contained-trees)).
 
 `files:` archives only the install's files the list selects, at their
 install paths — nothing is rerooted: `{ archive: { files: [/bin, /lib,

@@ -15,7 +15,7 @@ require "dev/lifecycle/series"
 require "dev/lifecycle/shipment"
 require "dev/lifecycle/track"
 require_relative "../value_equality"
-require_relative "tool_closure"
+require_relative "self_contained_tree"
 
 module Dev
   module Deps
@@ -48,7 +48,7 @@ module Dev
     #
     # A tree this channel receives that ships its `dependencies.rb` and
     # `deps.lock` is installed self-contained by every follower
-    # (ToolClosure): dev converges its dependencies into the tree and
+    # (SelfContainedTree): dev converges its dependencies into the tree and
     # writes a launcher per `exe/`. Whether the tree is complete for that
     # is this publisher's to say at `dev package` (#accept!), each refusal
     # naming the gap — once released, the tree is immutable and the
@@ -70,7 +70,7 @@ module Dev
         extend T::Sig
 
         # @param channel [Lifecycle::Channel] the channel refusing
-        # @param gaps [Array<String>] what the tree lacks, as ToolClosure names it
+        # @param gaps [Array<String>] what the tree lacks, as SelfContainedTree names it
         sig { params(channel: Lifecycle::Channel, gaps: T::Array[String]).void }
         def initialize(channel:, gaps:)
           super("channel '#{channel}' refuses the tree as it would ship: it #{gaps.join("; it ")}")
@@ -210,7 +210,7 @@ module Dev
       end
 
       # A tree shipping a self-contained tree's markers must be complete
-      # for the install every follower runs (ToolClosure#gaps); a plain
+      # for the install every follower runs (SelfContainedTree#gaps); a plain
       # asset is accepted as it is.
       #
       # @param tree [Pathname] the tree as it will ship
@@ -219,7 +219,7 @@ module Dev
       # @raise [IncompleteTreeError] naming the channel and every gap
       sig { override.params(tree: Pathname, channel: Lifecycle::Channel).void }
       def accept!(tree, channel:)
-        gaps = ToolClosure.new(tree:).gaps
+        gaps = SelfContainedTree.new(root: tree).gaps
         raise IncompleteTreeError.new(channel:, gaps:) unless gaps.empty?
       end
 

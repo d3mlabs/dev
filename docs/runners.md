@@ -87,9 +87,9 @@ directory as the runner's **job-started hook**: `.env` gets
 1. the head is read (`v<major>` → its commit → the `v<major>.x.y` release
    tag at that commit);
 2. the head is installed when it is not yet — as the gh tree every gh pin
-   becomes, `~/.dev/gh/<owner>/<repo>/<tag>` in the artifact store, with
-   its closure (Ruby keg, gems, `bin/` wrappers) materialised inside — a
-   no-op when it is;
+   becomes, `~/.dev/gh/<owner>/<repo>/<tag>` in the artifact store,
+   installed self-contained (Ruby keg, vendored gems, `bin/` launchers) —
+   a no-op when it is;
 3. the tree's `bin` is appended to the job's `$GITHUB_PATH`, so the tool
    in every step of the job is the head's.
 

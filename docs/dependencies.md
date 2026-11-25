@@ -101,7 +101,7 @@ takes none or that version.
 | `gem "name" [, "req"]` | A gem. The requirement is written into the generated `Gemfile` as is; dev generates `Gemfile.lock`. A group becomes a bundler group. Other keywords (`require:`, `git:`) are gem options. | `bundle install` |
 | `brew "name" [, "req"] [, version:]` | A formula, chosen among the versions brew publishes for it and its `name@N` siblings. `brew "llvm", "~> 18.0"`, `brew "llvm", version: "18"` and `brew "llvm@18"` are the same declaration. `cask: true` declares a cask by its whole name (`brew "temurin@21", cask: true`), which takes no requirement. | `brew install` at the locked version |
 | `tap "owner/repo" [, url:]` | A tap formulae may come from. | `brew tap` |
-| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is a tool and runs under its own closure ([below](#a-tools-closure-at-install-or-at-release)). | download into the store |
+| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is installed self-contained ([below](#self-contained-trees)). | download into the store |
 | `cmake "name" [, "req"], github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. `tag:` and `branch:` name a ref; a requirement ranges over the repo's version tags; `commit:` is a full 40-hex SHA. | checkout into the store |
 | `luarocks "name" [, "req"]` | A rock. Transitive deps resolved by luarocks at install. | `luarocks install` |
 | `pip "name" [, "req"]` | A package in the project venv; `~>` reads as pip's `~=`. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
@@ -355,19 +355,42 @@ or, for `cmake`, the `build/_deps/<name>-src` link `dev up` maintains. A
 `gh` tree that ships a `bin/` is also put on the project `PATH` through
 `.shadowenv.d/515_gh.lisp`.
 
-#### A tool's closure: at install or at release
+#### Self-contained trees
 
-A `gh` tree that carries its own `dependencies.rb` and `deps.lock` is a
-tool written in Ruby (ai-flow, say) and runs under its own closure, not
-the project's. Before the tree publishes, `dev up` reads the tree's lock,
-installs the Ruby it pins through brew (the keg alone is shared with the
-project; nothing is exported into the project's environment), runs a
-frozen `bundle install` into the tree's own `vendor/bundle` under that
-keg's bundler, and writes one `bin/<name>` wrapper per `exe/<name>`. The
-closure lives and is collected with the tree; no project gem home is
-touched.
+A target that ships its manifest and lock — `dependencies.rb` and
+`deps.lock` in the released tree — is installed **self-contained**: dev
+converges the tree's dependencies into the tree and writes one
+`bin/<name>` launcher per `exe/<name>`; the tree exports nothing. A
+target that ships neither is a plain asset: dev downloads and extracts
+it, and a `bin/` it carries goes on the project `PATH` as above.
 
-The wrapper is `bin/dev`'s sh half and nothing more: it unsets the
+Self-contained means nothing of the caller's project — no gems, no lisp,
+no environment — is needed to run the tree's executables, and nothing of
+the tree enters the project's lock, gem home or environment; the
+consumer records one pin and gets the tree's `bin/` on `PATH`. A
+toolchain keg the tree's lock pins is the one thing shared, and brew owns
+it, host-level, as for every project.
+
+The property is of the tree's content, decided per target by what its
+`files:` ship, not of the project that releases it. dev's own targets
+and the one it is written for:
+
+| target | ships `dependencies.rb` + `deps.lock` | installed as |
+|---|---|---|
+| ai-flow | yes | self-contained: its pinned Ruby through brew, its gems vendored into the tree, a launcher per `exe/` |
+| `dev-core` | no — the manifest and locks stay out by design | a plain tree; the `dev-core` formula owns its runtime, so the tree is framework-dependent |
+| `dev` (the d3mlabs deployment) | no — it ships no program, only `config.yml` and the `Brewfile` | a plain asset the `dev` formula installs by name |
+
+Converging the dependencies is each ecosystem's work. For a Ruby tree —
+the one ecosystem today — it is the gem integration's steps, in bundler's
+words. Before the tree publishes, `dev up` reads the tree's lock, installs
+the Ruby it **pins** through brew, runs a frozen `bundle install` so the
+gems are **vendored** into the tree's own `vendor/bundle` under that
+keg's bundler, and writes a **binstub**-shaped launcher per executable.
+The vendored gems live and are collected with the tree; no project gem
+home is touched.
+
+The launcher is `bin/dev`'s sh half and nothing more: it unsets the
 harness activation (`RUBYOPT`, `RUBYLIB`, `BUNDLE_*`, `BUNDLER_*` — the
 same list `bin/dev` unsets) and execs the keg's Ruby on `exe/<name>`. It
 exports nothing, and `GEM_HOME`/`GEM_PATH` pass through untouched: they
@@ -389,20 +412,20 @@ Gem.use_paths(tree_gems, [tree_gems, ruby_own_gems])
 ```
 
 `Gem.use_paths` touches no `ENV`, so the executable's gem selection is
-invisible to its children. With the wrapper's unset in front of it, the
+invisible to its children. With the launcher's unset in front of it, the
 tool works the same from any project — or from no project — under any
 caller's activation.
 
 The release side has the same shape. A target with `packager: { archive:
-{ vendor: true } }` vendors the bundle into the install before archiving
-it, so the asset ships the closure; installing such a tree asks brew for
-the Ruby and writes the wrappers only. Vendoring binds the asset to a
+{ vendor: true } }` vendors the bundle into the stage before archiving
+it, so the asset ships the gems; installing such a tree asks brew for the
+Ruby and writes the launchers only. Vendoring binds the asset to a
 platform when any gem compiles a native extension — pure-Ruby tools ship
 one asset for every machine.
 
-A gh tree is keyed by its version alone, so the materialised closure is
-the first installing machine's: a tree is per data root, and a data root
-is per machine or per side of a build container.
+A gh tree is keyed by its version alone, so the converged tree is the
+first installing machine's: a tree is per data root, and a data root is
+per machine or per side of a build container.
 
 Whether a tree is **complete** for that install — the lock beside the
 manifest, a Ruby pinned for the executables and gems to run under, an

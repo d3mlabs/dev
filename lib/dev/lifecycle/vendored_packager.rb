@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "dev/deps/tool_closure"
+require "dev/deps/self_contained_tree"
 require "dev/deps/toolchain_exec"
 require_relative "acceptance"
 require_relative "packager"
@@ -13,27 +13,27 @@ require_relative "packed_archive"
 
 module Dev
   module Lifecycle
-    # The `vendor: true` form of a packager: the install is a tool tree
-    # (Deps::ToolClosure), and its gems are vendored into it — a frozen
-    # `bundle install` under the project's Ruby — before the wrapped
-    # packager archives it. The asset then ships the closure, and dev's
-    # install of the tree writes wrappers only. Vendoring is
+    # The `vendor: true` form of a packager: the install is a self-contained
+    # tree (Deps::SelfContainedTree), and its gems are vendored into it — a
+    # frozen `bundle install` under the project's Ruby — before the wrapped
+    # packager archives it. The asset then ships the vendored gems, and
+    # dev's install of the tree writes launchers only. Vendoring is
     # redistribution and binds the asset to a platform unless every gem is
     # pure Ruby; the producer chose it.
     class VendoredPackager
       extend T::Sig
       include Packager
 
-      # The install carries no `dependencies.rb` and `deps.lock`: there is
-      # no closure to vendor, so `vendor: true` names nothing.
-      class NoClosureError < RuntimeError
+      # The install carries no `dependencies.rb` and `deps.lock`: it is not
+      # self-contained, so `vendor: true` names nothing to vendor.
+      class NotSelfContainedError < RuntimeError
         extend T::Sig
 
         # @param install [Pathname]
         sig { params(install: Pathname).void }
         def initialize(install:)
           super("vendor: #{install} carries no #{Deps::Integration::MANIFEST_FILE} and #{Deps::Lockfile::DEPS_LOCK_FILE} — " \
-            "a vendored archive is of a tool tree with its own lock")
+            "a vendored archive is of a self-contained tree with its own lock")
         end
       end
 
@@ -48,17 +48,17 @@ module Dev
       end
 
       # @param build [Build]
-      # @param install [Pathname] the tool tree the builder wrote
+      # @param install [Pathname] the self-contained tree the builder wrote
       # @param archive [Pathname] the path without extension
       # @param acceptance [Acceptance] handed to the wrapped packager, which presents the vendored tree
       # @return [PackedArchive]
-      # @raise [NoClosureError]
-      # @raise [Deps::ToolClosure::VendorError]
+      # @raise [NotSelfContainedError]
+      # @raise [Deps::SelfContainedTree::GemBundle::VendorError]
       sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
       def package(build, install, archive, acceptance: Acceptance.unconditional)
-        raise NoClosureError.new(install:) unless Deps::ToolClosure.carried_by?(install)
+        raise NotSelfContainedError.new(install:) unless Deps::SelfContainedTree.carried_by?(install)
 
-        Deps::ToolClosure.new(tree: install).vendor!(exec: @exec)
+        Deps::SelfContainedTree.new(root: install).gem_bundle.vendor!(exec: @exec)
         @packager.package(build, install, archive, acceptance:)
       end
 

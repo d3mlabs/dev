@@ -52,9 +52,9 @@ module Dev
       # (Lifecycle::Archive::Form): the zip, or the tar — whole or split.
       # `files:` (Lifecycle::FileSelection) names which of the install's
       # files ship; omitted, all of them. With `vendor: true`, the install
-      # is a tool tree whose closure (Deps::ToolClosure) is vendored into
-      # it before it is archived, so the asset ships its gems and install
-      # writes wrappers only.
+      # is a self-contained tree (Deps::SelfContainedTree) whose gems are
+      # vendored into it before it is archived, so the asset ships them and
+      # install writes launchers only.
       class Archive < T::Struct
         extend T::Sig
         include PackagerSpec
