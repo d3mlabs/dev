@@ -178,13 +178,13 @@ class Dev::Deps::ResolverTest < Minitest::Test
     When "resolving under TagScheme"
     pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask(requirement)).fetch(0)
 
-    Then "one series takes its head; a span of series takes the newest covered head; a bound inside a series takes the greatest tag"
+    Then "one series takes its head; a span of series takes the newest covered head; a bound inside a series takes the greatest tag, and says so beside the heads"
     pin.version == expected
     pin.source == source
-    pin.choice.to_s == choice
+    pin.rule.explanation == rule
 
     Where
-    requirement   | expected | source  | choice
+    requirement   | expected | source  | rule
     "~> 1"        | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
     ">= 1, < 2"   | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
     ">= 1"        | "2.0.0"  | "sha20" | "series head v2 → 2.0.0"
@@ -204,13 +204,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
     one_series = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
     spanning = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask(">= 1")).fetch(0)
 
-    Then "derived: 1.4.0 with no rule to report; v1 alone: its head, for the span too — the undeployed 2.0.0 is not a head"
+    Then "derived: 1.4.0 by the only rule there is, with nothing to report; v1 alone: its head, for the span too — the undeployed 2.0.0 is not a head"
     on_derived.version == "1.4.0"
-    on_derived.choice.nil?
+    on_derived.rule == Dev::Deps::SelectionRule::Greatest.new(beside: [])
+    on_derived.rule.explanation.nil?
     one_series.version == "1.3.0"
-    one_series.choice == Dev::Deps::Choice::Head.new(head: head(1, "1.3.0"))
+    one_series.rule == Dev::Deps::SelectionRule::Head.new(head: head(1, "1.3.0"))
     spanning.version == "1.3.0"
-    spanning.choice == Dev::Deps::Choice::Head.new(head: head(1, "1.3.0"))
+    spanning.rule == Dev::Deps::SelectionRule::Head.new(head: head(1, "1.3.0"))
   end
 
   test "a head that is not a candidate does not apply: the rule falls back to the greatest satisfying version" do
@@ -225,10 +226,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then
     pin.version == "1.1.0"
-    pin.choice == Dev::Deps::Choice::Greatest.new
+    pin.rule == Dev::Deps::SelectionRule::Greatest.new(beside: [head(1, "1.0.0-rc.1")])
   end
 
-  test "an addressed declaration reports no choice: the author chose" do
+  test "an addressed declaration has no rule: the author chose" do
     Given "a universe with heads and a sha-addressed declaration"
     repo = StubRepository.new(heads: { "json" => [head(1, "1.0.0")] }, addressed: { "9cca280a" => version("9cca280a", source: "9cca280a") })
 
@@ -238,7 +239,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then
     pin.version == "9cca280a"
-    pin.choice.nil?
+    pin.rule.nil?
     repo.finds.empty?
   end
 

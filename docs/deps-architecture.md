@@ -156,15 +156,16 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      fact), treating scheme-unparseable universe versions as
      non-candidates, and drops versions that don't publish every
      explicitly requested platform;
-   - picks the highest satisfying version (`sort`) — or, where the
-     universe reports series heads (`Package#heads`: a gh repo's `v1`
-     tag at a release's commit) and the requirement is series-shaped
+   - lets the `SelectionRule` for this ask against this universe pick:
+     the highest satisfying version (`sort`) — or, where the universe
+     reports series heads (`Package#heads`: a gh repo's `v1` tag at a
+     release's commit) and the requirement is series-shaped
      (`VersionScheme#series_span`: `~> 1`, `>= 1, < 2`, `>= 1`), the
      head of the newest covered series among the candidates, so a lock
-     and a follower on `@v1` read one pointer; the rule that chose rides
-     the pin as its `choice` (`Choice::Head` or `Choice::Greatest`, set
-     only on a universe with heads) for the lock report, never for the
-     lock — mints the
+     and a follower on `@v1` read one pointer; the rule rides the pin as
+     its `rule` and accounts for itself in the lock report
+     (`explanation`: a head always, the greatest only beside heads the
+     ask did not cover), never in the lock — mints the
      `Dependency` from that version's facts merged with the declaration's
      `materialization` (install instructions meet version facts exactly
      here — a url dep's `version_label` is promoted into the pin's

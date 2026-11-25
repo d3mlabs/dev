@@ -3,7 +3,7 @@
 
 require "sorbet-runtime"
 require_relative "brew_repository"
-require_relative "choice"
+require_relative "selection_rule"
 require_relative "dependency"
 require_relative "package_version"
 require_relative "resolver"
@@ -73,14 +73,14 @@ module Dev
 
       # A pin the lock takes from the resolution at another version than it
       # had (`from` nil when the lock had none), why it moved — nil when the
-      # bare verb asked for every pin to move — and, where the resolution
-      # had a rule to report, which rule chose the version it moved to.
+      # bare verb asked for every pin to move — and the rule that chose the
+      # version it moved to (nil for an addressed pin: the author chose).
       class Move < T::Struct
         const :name, String
         const :from, T.nilable(String)
         const :to, T.nilable(String)
         const :reason, T.nilable(String), default: nil
-        const :choice, T.nilable(Choice), default: nil
+        const :rule, T.nilable(SelectionRule), default: nil
       end
 
       # A pin the lock keeps for want of an answer: the declaration's
@@ -205,7 +205,7 @@ module Dev
         ).returns(Decision)
       end
       def decide(dep, prior, ask, floats:, unlock:)
-        return Decision.new(pin: dep, move: Move.new(name: dep.name, from: nil, to: dep.version, reason: "new", choice: dep.choice)) if prior.nil?
+        return Decision.new(pin: dep, move: Move.new(name: dep.name, from: nil, to: dep.version, reason: "new", rule: dep.rule)) if prior.nil?
         return re_resolved(dep, prior, reason: unlock.subset? ? "named" : nil) if floats
         return re_resolved(dep, prior, reason: "declaration changed") unless ask && declaration_unchanged?(prior, ask)
         return Decision.new(pin: carried(dep, prior), kept: true) if prior.source
@@ -253,7 +253,7 @@ module Dev
       sig { params(dep: Dependency, prior: Dependency, reason: T.nilable(String)).returns(Decision) }
       def re_resolved(dep, prior, reason:)
         pin = facts(dep) == facts(prior) ? with_provenance(dep, prior) : dep
-        move = dep.version == prior.version ? nil : Move.new(name: dep.name, from: prior.version, to: dep.version, reason:, choice: dep.choice)
+        move = dep.version == prior.version ? nil : Move.new(name: dep.name, from: prior.version, to: dep.version, reason:, rule: dep.rule)
         Decision.new(pin:, move:)
       end
 
@@ -285,7 +285,7 @@ module Dev
           hash: prior.hash,
           source: prior.source,
           metadata: prior.metadata.except(Dependency::NEEDED_BY).merge(dep.metadata.slice(Dependency::NEEDED_BY)),
-          choice: nil,
+          rule: nil,
         )
       end
 

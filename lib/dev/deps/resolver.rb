@@ -1,7 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
-require_relative "choice"
+require_relative "selection_rule"
 require_relative "declaration"
 require_relative "declarations"
 require_relative "dependency"
@@ -11,7 +11,6 @@ require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
 require_relative "requirement"
-require_relative "series_head"
 require_relative "version_scheme"
 
 module Dev
@@ -78,13 +77,11 @@ module Dev
       # it, or the declaration left unresolved.
       Verdict = T.type_alias { T.any(Dependency, Unresolved) }
 
-      # The version chosen for one declaration, and — on a universe that
-      # keeps series heads — the rule that chose it. An addressed
-      # declaration (a revision) and a universe without heads have no rule
-      # to report.
+      # The version chosen for one declaration and the rule that chose it.
+      # An addressed declaration (a revision) has no rule: the author chose.
       class Pick < T::Struct
         const :version, PackageVersion
-        const :choice, T.nilable(Choice), default: nil
+        const :rule, T.nilable(SelectionRule), default: nil
       end
 
       # What two declarations of one package must agree on to resolve once.
@@ -276,17 +273,13 @@ module Dev
         repository.at(package_id(decl), T.must(decl.revision))
       end
 
-      # Ask the declaration's repository for the package universe and pick
-      # among the versions that satisfy the requirement (per the
-      # integration's scheme) and publish every explicitly requested
-      # platform: the highest — or, where the universe keeps series heads
-      # and the requirement is series-shaped, the head of the newest series
-      # it covers (#series_head). A lock and a follower then read the same
-      # head: `~> 1` resolves to what `v1` points at, and a rollback that
-      # moves `v1` back reaches the next re-lock too. A universe with no
-      # head for the covered series — a derived channel, a series never
-      # deployed — takes the highest satisfying version as every other
-      # requirement does.
+      # Ask the declaration's repository for the package universe, keep the
+      # versions that satisfy the requirement (per the integration's
+      # scheme) and publish every explicitly requested platform, and let
+      # the SelectionRule for this ask against this universe pick among
+      # them: the head of the newest covered series where the universe
+      # keeps one and the requirement is series-shaped, the greatest
+      # satisfying version otherwise.
       #
       # The requirement is held to the scheme's contract first, before any
       # I/O: a form the channel does not support is the declaration being
@@ -342,44 +335,8 @@ module Dev
         by_version = T.let({}, T::Hash[String, PackageVersion])
         candidates.each { |version| by_version[version.version] ||= version }
 
-        greatest = T.must(sorted_versions(scheme, by_version.values).last)
-        return Pick.new(version: greatest) if package.heads.empty? || scheme.nil?
-
-        head = series_head(scheme, decl.requirement, package, by_version.keys)
-        return Pick.new(version: greatest, choice: Choice::Greatest.new) if head.nil?
-
-        Pick.new(version: by_version.fetch(head.version), choice: Choice::Head.new(head:))
-      end
-
-      # The head a series-shaped requirement resolves to: of the series it
-      # covers, the newest one the universe keeps a head for, provided that
-      # head is among the candidates (a head outside the requirement — a
-      # pre-release below the floor — or on a platform the declaration did
-      # not ask for is not a candidate, and the rule does not apply). On
-      # gh this is what the latest designation follows when the
-      # requirement reaches the newest deployed series.
-      #
-      # @param scheme [VersionScheme] the integration's semantics
-      # @param requirement [Requirement] the declaration's requirement
-      # @param package [Package] the universe, heads included
-      # @param candidates [Array<String>] the distinct satisfying version strings
-      # @return [SeriesHead, nil] nil when the requirement is not
-      #   series-shaped or no covered series has a candidate head
-      sig do
-        params(
-          scheme: VersionScheme,
-          requirement: Requirement,
-          package: Package,
-          candidates: T::Array[String],
-        ).returns(T.nilable(SeriesHead))
-      end
-      def series_head(scheme, requirement, package, candidates)
-        span = scheme.series_span(requirement)
-        return nil if span.nil?
-
-        package.heads
-          .select { |head| span.covers?(head.series) && candidates.include?(head.version) }
-          .max_by { |head| head.series.major }
+        rule = SelectionRule.for(requirement: decl.requirement, scheme:, heads: package.heads, candidates: by_version.keys)
+        Pick.new(version: rule.pick(by_version.values, scheme), rule:)
       end
 
       # Hold the declaration's ask to its channel's contract: a scheme-less
@@ -405,17 +362,6 @@ module Dev
 
         raise UnsupportedRequirementError,
           "#{decl.name}: #{decl.integration} cannot evaluate `#{decl.requirement}` — it takes #{scheme.supported}"
-      end
-
-      # Order distinct versions ascending: the scheme's total order, or the
-      # universe's reported order when no scheme exists.
-      #
-      # @param scheme [VersionScheme, nil] the integration's semantics, if any
-      # @param versions [Array<PackageVersion>] distinct versions
-      # @return [Array<PackageVersion>]
-      sig { params(scheme: T.nilable(VersionScheme), versions: T::Array[PackageVersion]).returns(T::Array[PackageVersion]) }
-      def sorted_versions(scheme, versions)
-        scheme ? scheme.sort(versions) : versions
       end
 
       # Requirement satisfaction, treating versions the scheme cannot parse
@@ -494,7 +440,7 @@ module Dev
           hash: hash,
           source: chosen.source,
           metadata: metadata,
-          choice: picked.choice,
+          rule: picked.rule,
         )
         dependency = dependency.with(post_install: decl.post_install) if decl.post_install
         attach_install_scoping(dependency, decl)

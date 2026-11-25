@@ -197,10 +197,11 @@ module Dev
         # update moves whatever is newer; a subset re-lock says why each
         # move it made beyond the names given (a changed declaration, a pin
         # the lock could not keep), so a move the author did not name is
-        # visible with its cause. A move on a channel that keeps series
-        # heads says which rule chose the version — the series head
-        # (`v1 → v1.3.0`) or the greatest satisfying tag — so a pin that
-        # followed a rolled-back head reads as what it is. A pin kept
+        # visible with its cause. A move says which rule chose the version
+        # where another rule could have — the series head (`v1 → v1.3.0`)
+        # or, beside heads the ask did not cover, the greatest satisfying
+        # tag — so a pin that followed a rolled-back head reads as what it
+        # is; the rule accounts for itself (SelectionRule#explanation). A pin kept
         # because its registry did not answer is named with the registry's
         # refusal: the lock is right, but the next re-lock that needs that
         # registry will want what the message asks for.
@@ -210,7 +211,7 @@ module Dev
         sig { params(outcome: Dev::Deps::PinCarryover::Outcome).void }
         def report_moves(outcome)
           outcome.moved.each do |move|
-            explained = [move.from.nil? ? nil : move.reason, move.choice&.to_s].compact
+            explained = [move.from.nil? ? nil : move.reason, move.rule&.explanation].compact
             detail = explained.empty? ? "" : " (#{explained.join("; ")})"
             if move.from.nil?
               puts "dev: added #{move.name} #{move.to}#{detail}"

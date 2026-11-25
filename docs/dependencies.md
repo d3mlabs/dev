@@ -234,7 +234,9 @@ beyond the names given carries its cause (`declaration changed`, or that
 the lock records no source for the old pin). A move on a channel that
 keeps series heads says which rule chose the version — `series head v1 →
 1.3.0` (the version as the repo's tags spell it), or `greatest
-satisfying` ([Series heads](#series-heads)). It
+satisfying` where the ask passed the heads over ([Series
+heads](#series-heads)); on a channel with no heads there is one rule and
+nothing to say. It
 also warns per brew formula the image build would compile from source
 because its tap ships no `x86_64_linux` bottle. When `brew update` fails
 (offline, a prefix this user cannot write) the update warns and resolves
