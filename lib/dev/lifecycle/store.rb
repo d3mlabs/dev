@@ -13,7 +13,7 @@ require_relative "target"
 module Dev
   module Lifecycle
     # The artifact store of one project: `<data root>/artifacts/<project>/
-    # <build>/{<archive>, build-id.json, install/}`, one directory per
+    # <build>/{<archive>, build-id.json, stage/}`, one directory per
     # build, overwritten in place, the manifest authoritative. Under the
     # data root rather than the checkout, so one host serves several
     # checkouts of a project. Keyed by the project's dev.yml `name`.
@@ -33,7 +33,7 @@ module Dev
       extend T::Sig
 
       ARTIFACTS_DIR = "artifacts"
-      INSTALL_DIR = "install"
+      STAGE_DIR = "stage"
       SCRATCH_PREFIX = "."
       RELEASES_DIR = "releases"
 
@@ -63,15 +63,16 @@ module Dev
         @root / build.name
       end
 
-      # Where a build's install goes: the directory the builder writes
-      # (`DEV_INSTALL`) and the packager reads, inside the artifact
-      # directory so one build's state is reclaimed as one.
+      # Where a build's stage goes: the directory the builder writes
+      # (`DEV_STAGE`) and the packager reads, inside the artifact directory
+      # so one build's state is reclaimed as one. A store an earlier dev
+      # wrote has it at `install/`, which nothing reads now.
       #
       # @param build [Build]
       # @return [Pathname]
       sig { params(build: Build).returns(Pathname) }
-      def install_dir(build)
-        dir(build) / INSTALL_DIR
+      def stage_dir(build)
+        dir(build) / STAGE_DIR
       end
 
       # The archive's path without its extension — what the packager is

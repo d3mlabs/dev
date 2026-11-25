@@ -49,8 +49,8 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     (@project / "build.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_INSTALL/built.txt"
-      echo "$DEV_INSTALL" >> "$DEV_INSTALL/built.txt"
+      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_STAGE/built.txt"
+      echo "$DEV_STAGE" >> "$DEV_STAGE/built.txt"
     SH
     @out = StringIO.new
     @ui = typed_mock(Dev::Ui)
@@ -130,17 +130,17 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     Dev::Cli::LifecycleExecutor.new.execute(verb, args: parsed_args(verb, words), context: context)
   end
 
-  test "bare `dev build` builds the first declared target's default build into the store's install dir, env from the build" do
+  test "bare `dev build` builds the first declared target's default build into the store's stage, env from the build" do
     Given
     verb = command
 
     When
     execute(verb)
 
-    Then "the script ran with the build's axes and wrote into DEV_INSTALL; the verb reports the install"
-    install = store.install_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets))
-    (install / "built.txt").read == "cellbound-3d linux64 dev\n#{install}\n"
-    @out.string == "built cellbound-3d-linux64-dev → #{install}\n"
+    Then "the script ran with the build's axes and wrote into DEV_STAGE; the verb reports the stage"
+    stage = store.stage_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets))
+    (stage / "built.txt").read == "cellbound-3d linux64 dev\n#{stage}\n"
+    @out.string == "built cellbound-3d-linux64-dev → #{stage}\n"
   end
 
   test "#{words.inspect} builds #{expected}" do
@@ -149,7 +149,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
 
     Then
     @out.string.start_with?("built #{expected} → ")
-    (store.install_dir(Dev::Lifecycle::Build.parse(expected, targets)) / "built.txt").file?
+    (store.stage_dir(Dev::Lifecycle::Build.parse(expected, targets)) / "built.txt").file?
 
     Where
     words                                 | expected
@@ -158,7 +158,27 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     ["cellbound-3d", "--platform", "linux64"]           | "cellbound-3d-linux64-dev"
   end
 
-  test "a target with no build: has the checkout as its install: the tracked files fill the stage, untracked ones never do (dev#674)" do
+  test "a build: script that still reads $DEV_INSTALL builds through the one-release alias, and the verb says so after the report (dev#678)" do
+    Given "a script file, named by the builder: line, written for the old key"
+    (@project / "build.sh").write(<<~SH)
+      #!/bin/sh
+      set -eu
+      echo "$DEV_TARGET" > "$DEV_INSTALL/built.txt"
+    SH
+
+    When
+    execute(command)
+
+    Then
+    stage = store.stage_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets))
+    (stage / "built.txt").read == "cellbound-3d\n"
+    @out.string == <<~OUT
+      built cellbound-3d-linux64-dev → #{stage}
+      deprecated: the builder: script reads $DEV_INSTALL, one release's alias of $DEV_STAGE — read $DEV_STAGE; the next dev release drops $DEV_INSTALL
+    OUT
+  end
+
+  test "a target with no build: has the checkout as its stage: the tracked files fill the stage, untracked ones never do (dev#674)" do
     Given "a checkout tracking the build script, with an untracked file beside it"
     commit_project
     (@project / "untracked.txt").write("never ships")
@@ -167,9 +187,9 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     execute(command, "rspock")
 
     Then
-    install = store.install_dir(Dev::Lifecycle::Build.parse("rspock", targets))
-    @out.string == "built rspock → #{install}\n"
-    install.children.map { |child| child.basename.to_s } == ["build.sh"]
+    stage = store.stage_dir(Dev::Lifecycle::Build.parse("rspock", targets))
+    @out.string == "built rspock → #{stage}\n"
+    stage.children.map { |child| child.basename.to_s } == ["build.sh"]
   end
 
   test "a target with no build: outside a git checkout is refused: there are no tracked files to stage" do
@@ -202,7 +222,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
 
     Then
     raises Dev::Cli::TargetPlacement::HostDoesNotProduceError
-    !store.install_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets)).exist?
+    !store.stage_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-dev", targets)).exist?
   end
 
   test "`--runner` sends the verb to the label as `build <build>` over the snapshot, builds nothing here, and prints the crossing" do
@@ -217,7 +237,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     @remote.dispatched_verbs == "build cellbound-3d-linux64-release"
     @remote.dispatched_inputs == { "verbs" => "build cellbound-3d-linux64-release", "runner" => "linux-pool", "fetch" => "false" }
     @remote.sync.synced == ["linux-pool"]
-    !store.install_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-release", targets)).exist?
+    !store.stage_dir(Dev::Lifecycle::Build.parse("cellbound-3d-linux64-release", targets)).exist?
     @out.string == ""
     @remote.out.string.start_with?("dispatched `dev build cellbound-3d-linux64-release` on linux-pool: ")
   end
@@ -256,7 +276,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     verb.category == Dev::Cli::Command::Category::Lifecycle
     verb.flags == Dev::Cli::BuildSelector::FLAGS + Dev::Cli::DispatchResolver::FLAGS
     verb.flags.map(&:name) == ["--target", "--platform", "--config", "--runner", "--container"]
-    verb.desc == "Build a target's install"
+    verb.desc == "Build a target's stage"
     verb.positionals.map(&:usage) == ["[<build>]"]
     verb.positionals.fetch(0).desc.end_with?("(default: cellbound-3d-linux64-dev)")
     verb.listing.heading == "Builds"

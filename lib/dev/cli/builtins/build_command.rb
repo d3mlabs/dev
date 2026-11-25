@@ -15,7 +15,7 @@ module Dev
   module Cli
     module Builtins
       # `dev build [<build>] [--target T] [--platform P] [--config C]`: make
-      # one build's install through its target's builder. The
+      # one build's stage through its target's builder. The
       # verb exists iff the project declares `targets:`, and acts on one
       # build: the positional (a name or a pattern, an omitted axis taking
       # the target's first), its long form in flags, or — bare — the first
@@ -28,10 +28,11 @@ module Dev
       # `--container` forces) and hands that
       # dispatch the verb's invocation (`build <build>`, fully qualified,
       # for a remote host) and the env for a seam that runs here; the seam
-      # is the builder, writing the install into the store's directory for
-      # the build (`DEV_INSTALL`); `after` reports it. A target with no
-      # `builder:` has the checkout's tracked files as its install (the
-      # identity builder), so every target builds.
+      # is the builder, writing the stage into the store's directory for
+      # the build (`DEV_STAGE`); `after` reports it, and any deprecation the
+      # builder has to tell. A target with no `builder:` has the checkout's
+      # tracked files as its stage (the identity builder), so every target
+      # builds.
       class BuildCommand < LifecycleCommand
         extend T::Sig
 
@@ -40,7 +41,7 @@ module Dev
         # What `before` resolves and the seam and `after` read.
         class BuildEnv < T::Struct
           const :build, Lifecycle::Build
-          const :install, Pathname
+          const :stage, Pathname
           const :builder, Lifecycle::Builder
         end
 
@@ -50,7 +51,7 @@ module Dev
         # @param dispatcher [BuildDispatcher] the build → where it runs
         # @param listing [BuildListing] what the usage and completion list
         # @param ports [Lifecycle::Ports] the targets' builders
-        # @param store [Lifecycle::Store] where the install goes
+        # @param store [Lifecycle::Store] where the stage goes
         # @param out [IO, StringIO]
         sig do
           params(
@@ -74,7 +75,7 @@ module Dev
 
         sig { override.returns(String) }
         def desc
-          "Build a target's install"
+          "Build a target's stage"
         end
 
         sig { override.returns(T::Array[Cli::Positional]) }
@@ -106,20 +107,21 @@ module Dev
             build, runner: args.value(DispatchResolver::RUNNER_FLAG), container: args.flag?(DispatchResolver::CONTAINER_FLAG),
           )
           dispatch.dispatch(Lifecycle::VerbInvocation.new(words: [NAME, build.name])) do
-            BuildEnv.new(build:, install: @store.install_dir(build), builder: @ports.builder_for(build.target))
+            BuildEnv.new(build:, stage: @store.stage_dir(build), builder: @ports.builder_for(build.target))
           end
         end
 
         sig { override.params(env: BuildEnv, context: ExecutionContext).void }
         def seam(env, context:)
           _ = context
-          env.builder.build(env.build, env.install)
+          env.builder.build(env.build, env.stage)
         end
 
         sig { override.params(env: BuildEnv, context: ExecutionContext).void }
         def after(env, context:)
           _ = context
-          @out.puts "built #{env.build} → #{env.install}"
+          @out.puts "built #{env.build} → #{env.stage}"
+          env.builder.deprecations.each { |line| @out.puts line }
         end
       end
     end

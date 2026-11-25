@@ -20,7 +20,7 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
     @root = Pathname(Dir.mktmpdir("checkout-builder-"))
     @project = @root / "project"
     @project.mkpath
-    @install = @root / "store/rspock/install"
+    @stage = @root / "store/rspock/stage"
   end
 
   def teardown
@@ -43,7 +43,7 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
   end
 
   def staged
-    @install.glob("**/*", File::FNM_DOTMATCH).reject(&:directory?).map { |path| path.relative_path_from(@install).to_s }.sort
+    @stage.glob("**/*", File::FNM_DOTMATCH).reject(&:directory?).map { |path| path.relative_path_from(@stage).to_s }.sort
   end
 
   test "the tracked files reach the stage in their layout, modes and symlinks kept; untracked and ignored files never do" do
@@ -62,17 +62,18 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
     builder = Dev::Lifecycle::CheckoutBuilder.new(project_root: @project)
 
     When
-    builder.build(build("rspock"), @install)
+    builder.build(build("rspock"), @stage)
 
     Then "exactly the tracked paths, as files with their content and mode, the symlink as a symlink"
     staged == [".gitignore", "VERSION", "bin/tool", "lib/alias.rb", "lib/tool.rb"]
-    (@install / "bin/tool").read == "#!/bin/sh\necho hi\n"
-    (@install / "bin/tool").executable?
-    (@install / "lib/alias.rb").symlink?
-    File.readlink((@install / "lib/alias.rb").to_s) == "tool.rb"
-    !(@install / "coverage").exist?
-    !(@install / "vendor").exist?
-    !(@install / "scratch.txt").exist?
+    (@stage / "bin/tool").read == "#!/bin/sh\necho hi\n"
+    (@stage / "bin/tool").executable?
+    (@stage / "lib/alias.rb").symlink?
+    File.readlink((@stage / "lib/alias.rb").to_s) == "tool.rb"
+    builder.deprecations == []
+    !(@stage / "coverage").exist?
+    !(@stage / "vendor").exist?
+    !(@stage / "scratch.txt").exist?
   end
 
   test "the stage is the working tree's content: a modified tracked file ships as edited, a deleted one not at all" do
@@ -87,11 +88,11 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
     builder = Dev::Lifecycle::CheckoutBuilder.new(project_root: @project)
 
     When
-    builder.build(build("rspock"), @install)
+    builder.build(build("rspock"), @stage)
 
     Then
     staged == ["a.txt"]
-    (@install / "a.txt").read == "edited\n"
+    (@stage / "a.txt").read == "edited\n"
   end
 
   test "a gitlink — a nested repository the index records as a directory entry — is not a file of this checkout and is skipped" do
@@ -109,25 +110,25 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
     builder = Dev::Lifecycle::CheckoutBuilder.new(project_root: @project)
 
     When
-    builder.build(build("rspock"), @install)
+    builder.build(build("rspock"), @stage)
 
     Then
     git("ls-files", "-s", "nested").start_with?("160000")
     staged == ["a.txt"]
   end
 
-  test "a previous build's files are gone from the stage: the checkout as it is now is the whole install" do
+  test "a previous build's files are gone from the stage: the checkout as it is now is the whole stage" do
     Given "a stage holding a file from an earlier build"
     git("init", "-q")
     write("a.txt", "a\n")
     git("add", ".")
     git("commit", "-q", "-m", "one")
-    @install.mkpath
-    (@install / "stale.txt").write("from before")
+    @stage.mkpath
+    (@stage / "stale.txt").write("from before")
     builder = Dev::Lifecycle::CheckoutBuilder.new(project_root: @project)
 
     When
-    builder.build(build("rspock"), @install)
+    builder.build(build("rspock"), @stage)
 
     Then
     staged == ["a.txt"]
@@ -138,7 +139,7 @@ class Dev::Lifecycle::CheckoutBuilderTest < Minitest::Test
     builder = Dev::Lifecycle::CheckoutBuilder.new(project_root: @project)
 
     When
-    builder.build(build("rspock"), @install)
+    builder.build(build("rspock"), @stage)
 
     Then
     error = raises Dev::Lifecycle::CheckoutBuilder::NotACheckoutError

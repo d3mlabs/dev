@@ -7,12 +7,13 @@ require_relative "build"
 require_relative "packager"
 require_relative "packed_archive"
 require_relative "script_env"
+require_relative "script_source"
 require_relative "shell"
 
 module Dev
   module Lifecycle
     # The script form of the Packager port: the target's `packager:` script,
-    # run at the project root with the build, the install and `DEV_ARTIFACT`
+    # run at the project root with the build, the stage and `DEV_ARTIFACT`
     # (the archive path without its extension) in its env. The script
     # appends the extension of whatever it writes. What it wrote is read
     # back as the `<archive>.*` files that were not there before: the
@@ -40,10 +41,11 @@ module Dev
         @command = command
         @project_root = project_root
         @shell = shell
+        @source = T.let(ScriptSource.new(command:, project_root:), ScriptSource)
       end
 
       # @param build [Build]
-      # @param install [Pathname]
+      # @param stage [Pathname] the stage the builder wrote
       # @param archive [Pathname] the path without extension; its directory
       #   is created if absent
       # @param acceptance [Acceptance] unused: what the script archives is
@@ -52,12 +54,12 @@ module Dev
       # @raise [PackageScriptFailedError]
       # @raise [NothingPackagedError]
       # @raise [Shell::SpawnError]
-      sig { override.params(build: Build, install: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
-      def package(build, install, archive, acceptance: Acceptance.unconditional)
+      sig { override.params(build: Build, stage: Pathname, archive: Pathname, acceptance: Acceptance).returns(PackedArchive) }
+      def package(build, stage, archive, acceptance: Acceptance.unconditional)
         _ = acceptance
         archive.dirname.mkpath
         before = written(archive)
-        env = ScriptEnv.for_package(build, install:, archive:)
+        env = ScriptEnv.for_package(build, stage:, archive:)
         status = @shell.run(["sh", "-c", @command], chdir: @project_root, env:)
         unless status.success?
           raise PackageScriptFailedError, "package script `#{@command}` for #{build} #{Shell.describe(status)}"
@@ -70,6 +72,14 @@ module Dev
         end
 
         PackedArchive.new(archive: T.must(files.first), parts: T.must(files[1..]))
+      end
+
+      # The one-release alias of `DEV_STAGE`, when the script reads it.
+      sig { override.returns(T::Array[String]) }
+      def deprecations
+        return [] unless @source.mentions?(ScriptEnv::STAGE_ALIAS)
+
+        [ScriptEnv.stage_alias_deprecation(script: "packager:")]
       end
 
       # The declaration as `dev help` renders it: the line itself.

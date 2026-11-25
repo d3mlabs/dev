@@ -9,14 +9,15 @@ require "pathname"
 module Dev
   module Lifecycle
     # The port between dev and the project's build tool: given a build, make
-    # its install into the directory dev hands it. The builder never knows
-    # the archive format; that is the Packager's.
+    # its stage — the runnable, laid-out output — in the directory dev
+    # hands it. The builder never knows the archive format; that is the
+    # Packager's.
     #
     # The stage is fresh before any implementation runs: `build` empties
-    # the install directory and recreates it, then asks the implementation
-    # to fill it. One rule, in dev, so no script has to clear a previous
-    # build's files itself; a toolchain's incremental state lives in its
-    # own build directory, never in the stage, so nothing is lost.
+    # the directory and recreates it, then asks the implementation to fill
+    # it. One rule, in dev, so no script has to clear a previous build's
+    # files itself; a toolchain's incremental state lives in its own build
+    # directory, never in the stage, so nothing is lost.
     #
     # ScriptBuilder is the target's `builder:` script, reading the build from
     # `DEV_*`; CheckoutBuilder is the identity element a target with no
@@ -28,26 +29,26 @@ module Dev
       extend T::Helpers
       abstract!
 
-      # Make the build's install: the stage emptied, then filled.
+      # Make the build's stage: emptied, then filled.
       #
       # @param build [Build] what to build
-      # @param install [Pathname] the directory the install goes into;
-      #   emptied and recreated here, then what the Packager reads next
+      # @param stage [Pathname] the directory the stage goes into; emptied
+      #   and recreated here, then what the Packager reads next
       # @return [void]
-      sig(:final) { params(build: Build, install: Pathname).void }
-      def build(build, install)
-        FileUtils.rm_rf(install)
-        install.mkpath
-        fill(build, install)
+      sig(:final) { params(build: Build, stage: Pathname).void }
+      def build(build, stage)
+        FileUtils.rm_rf(stage)
+        stage.mkpath
+        fill(build, stage)
       end
 
-      # Fill the fresh stage with the build's install.
+      # Fill the fresh stage with the build's output.
       #
       # @param build [Build] what to build
-      # @param install [Pathname] the stage: exists and is empty
+      # @param stage [Pathname] exists and is empty
       # @return [void]
-      sig { abstract.params(build: Build, install: Pathname).void }
-      def fill(build, install); end
+      sig { abstract.params(build: Build, stage: Pathname).void }
+      def fill(build, stage); end
 
       # The keys a target may carry for this builder, namespaced under its
       # name in dev.yml; validated by the builder, never defined by dev.
@@ -71,6 +72,16 @@ module Dev
       # @return [String, nil]
       sig { abstract.returns(T.nilable(String)) }
       def version; end
+
+      # What the verb tells the operator after this builder ran: each line
+      # names something the declaration relies on that the next release
+      # drops, and what to change. Nothing, for most builders.
+      #
+      # @return [Array<String>]
+      sig { overridable.returns(T::Array[String]) }
+      def deprecations
+        []
+      end
     end
   end
 end

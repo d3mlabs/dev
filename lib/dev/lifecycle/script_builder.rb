@@ -5,15 +5,16 @@ require "pathname"
 require_relative "build"
 require_relative "builder"
 require_relative "script_env"
+require_relative "script_source"
 require_relative "shell"
 
 module Dev
   module Lifecycle
     # The script form of the Builder port: the target's `builder:` script, run
-    # at the project root with the build in its env and `DEV_INSTALL`
-    # naming the directory to stage into. The script owns the mapping from
-    # dev's ids to the toolchain's switches; dev owns where the install goes
-    # and what a failure means. Spawn-and-wait: the stage has work after the
+    # at the project root with the build in its env and `DEV_STAGE` naming
+    # the directory to stage into. The script owns the mapping from dev's
+    # ids to the toolchain's switches; dev owns where the stage goes and
+    # what a failure means. Spawn-and-wait: the stage has work after the
     # builder returns.
     #
     # The project root and the shell are fixed for a checkout and so are
@@ -38,17 +39,18 @@ module Dev
         @command = command
         @project_root = project_root
         @shell = shell
+        @source = T.let(ScriptSource.new(command:, project_root:), ScriptSource)
       end
 
       # @param build [Build]
-      # @param install [Pathname] the fresh stage, handed to the script as
-      #   `DEV_INSTALL`
+      # @param stage [Pathname] the fresh stage, handed to the script as
+      #   `DEV_STAGE`
       # @return [void]
       # @raise [BuildScriptFailedError]
       # @raise [Shell::SpawnError]
-      sig { override.params(build: Build, install: Pathname).void }
-      def fill(build, install)
-        status = @shell.run(["sh", "-c", @command], chdir: @project_root, env: ScriptEnv.for_build(build, install:))
+      sig { override.params(build: Build, stage: Pathname).void }
+      def fill(build, stage)
+        status = @shell.run(["sh", "-c", @command], chdir: @project_root, env: ScriptEnv.for_build(build, stage:))
         return if status.success?
 
         raise BuildScriptFailedError, "build script `#{@command}` for #{build} #{Shell.describe(status)}"
@@ -60,7 +62,7 @@ module Dev
         []
       end
 
-      # What the manifest records for an install a `builder:` script made.
+      # What the manifest records for a stage a `builder:` script made.
       NAME = "script"
 
       sig { override.returns(String) }
@@ -73,6 +75,14 @@ module Dev
       sig { override.returns(T.nilable(String)) }
       def version
         nil
+      end
+
+      # The one-release alias of `DEV_STAGE`, when the script reads it.
+      sig { override.returns(T::Array[String]) }
+      def deprecations
+        return [] unless @source.mentions?(ScriptEnv::STAGE_ALIAS)
+
+        [ScriptEnv.stage_alias_deprecation(script: "builder:")]
       end
 
       # The declaration as `dev help` renders it: the line itself.

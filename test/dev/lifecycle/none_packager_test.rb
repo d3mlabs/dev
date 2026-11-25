@@ -12,7 +12,7 @@ class Dev::Lifecycle::NonePackagerTest < Minitest::Test
 
   test "a none target is never packaged: reaching its packager is an error naming the target" do
     When
-    Dev::Lifecycle::NonePackager.new.package(build("cellbound-3d-win64-dev"), Pathname("/install"), Pathname("/store/x"))
+    Dev::Lifecycle::NonePackager.new.package(build("cellbound-3d-win64-dev"), Pathname("/stage"), Pathname("/store/x"))
 
     Then
     error = raises(Dev::Lifecycle::NonePackager::NeverPackagedError)

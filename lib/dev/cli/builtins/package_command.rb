@@ -18,12 +18,12 @@ module Dev
     module Builtins
       # `dev package [<build>] [--target T] [--platform P] [--config C]
       # [--no-build]`: turn one build into its artifact in the store — the
-      # archive its target's packager makes of the install, stamped with
+      # archive its target's packager makes of the stage, stamped with
       # `build-id.json`. `package` implies `build`,
       # make-like: the builder runs first unless the store's artifact for the
       # build is current — packaged from a clean tree at the commit the tree
       # is at now (Manifest::Artifact#current?) — or `--no-build` says to
-      # trust the install as it is; a target with no `builder:` stages the
+      # trust the stage as it is; a target with no `builder:` stages the
       # checkout's tracked files (the identity builder). A target with
       # `packager: none` is built, never packaged, and is refused here by
       # name.
@@ -35,14 +35,14 @@ module Dev
       # bring back under `--fetch`) and, for a seam that runs here, the env
       # — reading the tree's state once (the same reading decides staleness
       # and is what the stamp records); the seam is the builder when needed,
-      # then the packager, writing `<build>.<ext>` beside the install;
+      # then the packager, writing `<build>.<ext>` beside the stage;
       # `after` hashes the archive, derives the build id and stamps the
       # manifest — last, so a directory without one reads as unpackaged —
-      # reports the artifact, and names it to the enclosing Actions step
-      # when there is one, which is how the generic workflow knows what
-      # `--fetch` uploads. The packed archive crosses from the seam to
-      # `after` through the env: the template's one channel between the
-      # stages.
+      # reports the artifact with any deprecation the ports that ran have
+      # to tell, and names it to the enclosing Actions step when there is
+      # one, which is how the generic workflow knows what `--fetch`
+      # uploads. The packed archive crosses from the seam to `after`
+      # through the env: the template's one channel between the stages.
       #
       # Before the archive is written, the packager presents the tree as
       # it will ship to every channel whose `targets:` names the build
@@ -72,7 +72,7 @@ module Dev
           attr_reader :build
 
           sig { returns(Pathname) }
-          attr_reader :install
+          attr_reader :stage
 
           # @return [Pathname] the archive path without its extension
           sig { returns(Pathname) }
@@ -103,7 +103,7 @@ module Dev
           sig do
             params(
               build: Lifecycle::Build,
-              install: Pathname,
+              stage: Pathname,
               archive_stem: Pathname,
               builder: Lifecycle::Builder,
               packager: Lifecycle::Packager,
@@ -112,9 +112,9 @@ module Dev
               build_skipped: T.nilable(String),
             ).void
           end
-          def initialize(build:, install:, archive_stem:, builder:, packager:, acceptance:, state:, build_skipped:)
+          def initialize(build:, stage:, archive_stem:, builder:, packager:, acceptance:, state:, build_skipped:)
             @build = build
-            @install = install
+            @stage = stage
             @archive_stem = archive_stem
             @builder = builder
             @packager = packager
@@ -187,7 +187,7 @@ module Dev
 
         sig { override.returns(T::Array[Cli::Flag]) }
         def flags
-          BuildSelector::FLAGS + [Cli::Flag.new(NO_BUILD_FLAG, desc: "package the install as it is, without building first")] +
+          BuildSelector::FLAGS + [Cli::Flag.new(NO_BUILD_FLAG, desc: "package the stage as it is, without building first")] +
             DispatchResolver::FLAGS +
             [Cli::Flag.new(FETCH_FLAG, desc: "after a remote package, download the artifact into this machine's store")]
         end
@@ -215,7 +215,7 @@ module Dev
             state = Lifecycle::GitState.read(context.project!.root)
             PackageEnv.new(
               build:,
-              install: @store.install_dir(build),
+              stage: @store.stage_dir(build),
               archive_stem: @store.archive_stem(build),
               builder: @ports.builder_for(build.target),
               packager: @ports.packager_for(build.target),
@@ -229,8 +229,8 @@ module Dev
         sig { override.params(env: PackageEnv, context: ExecutionContext).void }
         def seam(env, context:)
           _ = context
-          env.builder.build(env.build, env.install) if env.build_skipped.nil?
-          env.packed = env.packager.package(env.build, env.install, env.archive_stem, acceptance: env.acceptance)
+          env.builder.build(env.build, env.stage) if env.build_skipped.nil?
+          env.packed = env.packager.package(env.build, env.stage, env.archive_stem, acceptance: env.acceptance)
         end
 
         # The build id's semver is read from the tree now, not at wiring:
@@ -256,10 +256,21 @@ module Dev
           )
           @out.puts "build skipped: #{env.build_skipped}" if env.build_skipped
           @out.puts "packaged #{artifact.name} → #{artifact.archive} (#{artifact.manifest.build_id})"
+          deprecations(env).each { |line| @out.puts line }
           @step_outputs.artifact(artifact.name, files: packed.files + [artifact.dir / Lifecycle::Manifest::Artifact::FILE_NAME])
         end
 
         private
+
+        # What the ports that ran have to tell: the builder's only when it
+        # ran (a skipped builder read nothing), the packager's always.
+        #
+        # @param env [PackageEnv]
+        # @return [Array<String>]
+        sig { params(env: PackageEnv).returns(T::Array[String]) }
+        def deprecations(env)
+          (env.build_skipped.nil? ? env.builder.deprecations : []) + env.packager.deprecations
+        end
 
         # The verb as a remote host runs it: the build fully qualified, the
         # one flag the seam reads kept, and the artifact to bring back when

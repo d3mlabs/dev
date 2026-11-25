@@ -9,7 +9,7 @@ require_relative "git"
 
 module Dev
   module Lifecycle
-    # The identity builder: what a target with no `builder:` gets. Its install
+    # The identity builder: what a target with no `builder:` gets. Its stage
     # is the checkout itself — the tracked files, as the working tree holds
     # them, copied into the stage with their modes and symlinks kept. Only
     # tracked files: what is ignored or untracked (`coverage/`, `vendor/`,
@@ -30,10 +30,10 @@ module Dev
       # tracked files to stage.
       class NotACheckoutError < RuntimeError; end
 
-      # What the manifest records for an install the checkout is.
+      # What the manifest records for a stage the checkout is.
       NAME = "checkout"
 
-      # @param project_root [Pathname] the checkout whose tracked files are the install
+      # @param project_root [Pathname] the checkout whose tracked files are the stage
       sig { params(project_root: Pathname).void }
       def initialize(project_root:)
         @project_root = project_root
@@ -41,13 +41,13 @@ module Dev
       end
 
       # @param build [Build] unused: the checkout is the same for every build of the target
-      # @param install [Pathname] the fresh stage
+      # @param stage [Pathname] the fresh stage
       # @return [void]
       # @raise [NotACheckoutError]
       # @raise [Git::CommandFailedError]
       # @raise [Git::GitMissingError]
-      sig { override.params(build: Build, install: Pathname).void }
-      def fill(build, install)
+      sig { override.params(build: Build, stage: Pathname).void }
+      def fill(build, stage)
         _ = build
         tracked_files.each do |relative|
           source = @project_root / relative
@@ -57,7 +57,7 @@ module Dev
           next unless source.symlink? || source.exist?
           next if source.directory? && !source.symlink?
 
-          destination = install / relative
+          destination = stage / relative
           destination.dirname.mkpath
           FileUtils.copy_entry(source, destination, true)
         end

@@ -79,7 +79,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     (@project / "build.sh").write(<<~SH)
       #!/bin/sh
       set -eu
-      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_INSTALL/built.txt"
+      echo "$DEV_TARGET ${DEV_PLATFORM:-} ${DEV_CONFIG:-}" > "$DEV_STAGE/built.txt"
       echo "$DEV_TARGET" >> "#{@root}/build-runs"
     SH
     (@project / "VERSION").write("1.1.0\n")

@@ -16,7 +16,7 @@ module Dev
       # archive path without its extension, `./<DIR's name>` unless given;
       # the files written are printed one per line. Plumbing for a target's
       # `packager:` script that wants the default form with a twist (`dev
-      # pack "$DEV_INSTALL" --out "$DEV_ARTIFACT"`), so hidden from the
+      # pack "$DEV_STAGE" --out "$DEV_ARTIFACT"`), so hidden from the
       # listings.
       class PackCommand < BuiltinCommand
         extend T::Sig
@@ -72,9 +72,9 @@ module Dev
         def call(args:, context:)
           raise UsageError, USAGE unless args.positionals.size == 1
 
-          install = Pathname(args.positionals.fetch(0)).expand_path
+          directory = Pathname(args.positionals.fetch(0)).expand_path
           archive = @archive_factory.call(form(args))
-          packed = archive.pack(install, stem(args, install))
+          packed = archive.pack(directory, stem(args, directory))
           packed.files.each { |file| @out.puts file }
         end
 
@@ -98,12 +98,12 @@ module Dev
         end
 
         # @param args [Cli::ParsedArgs]
-        # @param install [Pathname] the directory being archived
+        # @param directory [Pathname] the directory being archived
         # @return [Pathname] the archive path without extension
-        sig { params(args: Cli::ParsedArgs, install: Pathname).returns(Pathname) }
-        def stem(args, install)
+        sig { params(args: Cli::ParsedArgs, directory: Pathname).returns(Pathname) }
+        def stem(args, directory)
           out = args.value(OUT_FLAG)
-          out ? Pathname(out).expand_path : Pathname.pwd / install.basename
+          out ? Pathname(out).expand_path : Pathname.pwd / directory.basename
         end
       end
     end

@@ -31,13 +31,13 @@ class Dev::Lifecycle::StoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "the install and the archive stem sit inside the build's directory, beside the manifest" do
+  test "the stage and the archive stem sit inside the build's directory, beside the manifest" do
     Given
     root = Dir.mktmpdir("store-")
     store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: root)
 
     Expect
-    store.install_dir(build("cellbound-3d-win64-dev")) == store.dir(build("cellbound-3d-win64-dev")) / "install"
+    store.stage_dir(build("cellbound-3d-win64-dev")) == store.dir(build("cellbound-3d-win64-dev")) / "stage"
     store.archive_stem(build("cellbound-3d-win64-dev")) == store.dir(build("cellbound-3d-win64-dev")) / "cellbound-3d-win64-dev"
     store.archive_stem(build("rspock")) == Pathname(root) / "artifacts/cellbound-3d/rspock/rspock"
 
@@ -85,11 +85,11 @@ class Dev::Lifecycle::StoreTest < Minitest::Test
     FileUtils.rm_rf(root)
   end
 
-  test "an install directory without a manifest is not an artifact: a build in progress reads as unpackaged" do
+  test "a stage without a manifest is not an artifact: a build in progress reads as unpackaged" do
     Given
     root = Dir.mktmpdir("store-")
     store = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: all_targets, data_root: root)
-    store.install_dir(build("rspock")).mkpath
+    store.stage_dir(build("rspock")).mkpath
 
     Expect
     store.artifact(build("rspock")).nil?

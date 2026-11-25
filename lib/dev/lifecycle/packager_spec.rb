@@ -28,7 +28,7 @@ module Dev
       def to_s; end
 
       # `packager: <command>` — a shell command run at the project root with
-      # the build, the install and the archive path in its env (ScriptEnv).
+      # the build, the stage and the archive path in its env (ScriptEnv).
       class Script < T::Struct
         extend T::Sig
         include PackagerSpec
@@ -50,8 +50,8 @@ module Dev
 
       # `packager: archive` (or omitted) in one of dev's own forms
       # (Lifecycle::Archive::Form): the zip, or the tar — whole or split.
-      # `files:` (Lifecycle::FileSelection) names which of the install's
-      # files ship; omitted, all of them. With `vendor: true`, the install
+      # `files:` (Lifecycle::FileSelection) names which of the stage's
+      # files ship; omitted, all of them. With `vendor: true`, the stage
       # is a self-contained tree (Deps::SelfContainedTree) whose gems are
       # vendored into it before it is archived, so the asset ships them and
       # install writes launchers only.
@@ -79,7 +79,7 @@ module Dev
         end
       end
 
-      # `packager: as-is` — the install already is the archive.
+      # `packager: as-is` — the stage already is the archive.
       class AsIs < T::Struct
         extend T::Sig
         include PackagerSpec
