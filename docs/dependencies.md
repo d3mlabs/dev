@@ -342,7 +342,7 @@ under the data root, and writes two files at the repo root:
   `<data root>/gems/<name>/<host|container>/<keg version>`, where `<name>`
   is dev.yml's `name`. `GEM_PATH` is that gem home followed by the keg's
   own gem directory, so the Ruby's default gems stay loadable.
-  Machine-specific; gitignore it.
+  Machine-specific; gitignored ([the list](gitignore.md)).
 - `.ruby-version` — the bare version string, for tools that are not
   shadowenv-aware (RubyMine, Bundler's `ruby file:`, setup-ruby). **Commit
   it.** `dev up` rewrites it from the lock every run, so edit
@@ -360,9 +360,9 @@ whatever Ruby the shell has.
 
 Installs the locked Python through brew, builds the project venv on that
 keg under the data root, and links it as `.venv` at the repo root
-(`.venv-container` inside the build container). Gitignore both links. The
-venv's `VIRTUAL_ENV` and `bin` enter the project environment. `pip`
-declarations install into it.
+(`.venv-container` inside the build container). Both links are gitignored
+([the list](gitignore.md)). The venv's `VIRTUAL_ENV` and `bin` enter the
+project environment. `pip` declarations install into it.
 
 ### gem
 
@@ -502,7 +502,7 @@ re-resolves it every time, and the lock's header says so.
 ## What the checkout carries
 
 Committed: `dependencies.rb`, `deps.lock`, `.ruby-version`, and the
-generated `Gemfile` / `Gemfile.lock` when gems are declared.
-
-Gitignored: `.shadowenv.d/`, `.shadowenv.d-container/`, `.venv`, `.venv-container`, `build/_deps/`.
-Full list: [deps-channels.md](deps-channels.md#what-the-checkout-carries-and-gitignores).
+generated `Gemfile` / `Gemfile.lock` when gems are declared. Gitignored:
+the activation state `dev up` writes for this machine. The full list, with
+the command that writes the ignore lines:
+[What dev writes into a checkout](gitignore.md).

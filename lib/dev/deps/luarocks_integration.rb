@@ -18,6 +18,10 @@ module Dev
       class InstallError < StandardError; end
 
       INSTALL_DIR = "lua_modules"
+      # The install tree as the repo-relative .gitignore line covering it —
+      # beside the path it covers, collected by Dev::Footprint. Rocks compile
+      # for one interpreter on one OS/arch; the tree never commits.
+      GITIGNORE_FOOTPRINT = T.let("#{INSTALL_DIR}/".freeze, String)
 
       # @param repository    [Repository, nil]  source adapter for luarocks deps
       # @param store         [ArtifactStore, nil] artifact store

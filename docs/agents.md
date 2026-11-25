@@ -75,28 +75,22 @@ dev learnings invariants    # print the invariants block (for prompt builders)
 dev learnings init [--org | --gitignore]
 ```
 
-`init` scaffolds an empty repo-tier index and the `.gitignore` footprint
-below, or with `--org` the knowledge-repo layout. An existing index is
-left untouched.
+`init` scaffolds an empty repo-tier index and writes dev's `.gitignore`
+lines ([the list](gitignore.md)), or with `--org` the knowledge-repo
+layout. An existing index is left untouched.
 
 An agent-runner workflow runs `dev learnings sync` explicitly before
 starting agent sessions, so they never start on stale invariants.
 
 ## What an adopting repo gitignores
 
-dev materializes three paths that must never be committed:
-
-```gitignore
-# dev-managed agent links — rematerialized by `dev up` / `dev deps install` / `dev plan`, never committed
-.cursor/rules/org-invariants.mdc
-.agents/skills/dev/
-.cursor/plans/
-```
-
-`dev learnings init --gitignore` adds whichever lines git does not already
-ignore, inside this block, and never moves a line a human wrote. `dev
-learnings status`, `dev skills status` and `dev plan status` each warn
-when their path is not ignored.
+The agent modules materialize three paths that must never be committed:
+`.cursor/rules/org-invariants.mdc`, `.agents/skills/dev/` and
+`.cursor/plans/`. They are part of dev's managed footprint, which `dev
+learnings init --gitignore` writes and `dev learnings status` checks;
+`dev skills status` and `dev plan status` each warn for their own path.
+The full list, agent links and activation state together:
+[What dev writes into a checkout](gitignore.md).
 
 Tracked: `.cursor/rules/learnings-index.mdc`, `.cursor/skills/**`, and any
 repo-own `.agents/skills/<name>/`.

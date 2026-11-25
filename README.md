@@ -73,17 +73,20 @@ Dev::Deps.define do
 end
 ```
 
-Then lock and install:
+Then lock, install, and gitignore what dev writes for this machine:
 
 ```bash
-dev deps update   # resolves dependencies.rb into deps.lock; commit the lock
-dev up            # installs what the lock names, then runs the project's `up`
-dev test          # runs under the locked Ruby, with locked formulae on PATH
+dev deps update                  # resolves dependencies.rb into deps.lock; commit the lock
+dev up                           # installs what the lock names, then runs the project's `up`
+dev learnings init --gitignore   # adds dev's machine-local paths to .gitignore; commit the diff
+dev test                         # runs under the locked Ruby, with locked formulae on PATH
 ```
 
 Each file is optional. A `dev.yml` alone gives you the command runner; a
 `dependencies.rb` with only `ruby` gives you a pinned interpreter; a full
 `dependencies.rb` gives you locked dependencies and generated `Gemfile`.
+What `dev up` writes into the checkout, and which of it to commit:
+[What dev writes into a checkout](docs/gitignore.md).
 
 ## Usage
 
@@ -132,6 +135,8 @@ In the order a new user needs them:
    channels, releases.
 3. [Dependencies](docs/dependencies.md) — `dependencies.rb`, the lock,
    integrations, `dev deps`.
+   [What dev writes into a checkout](docs/gitignore.md) — what to commit,
+   what to gitignore.
 4. [Configuration](docs/configuration.md) — settings, org deployment
    formulas, host tooling.
 5. [Shell integration](docs/shell.md) — `dev cd`, `dev clone`, completion,

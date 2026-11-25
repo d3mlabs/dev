@@ -191,15 +191,36 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     When "running dev learnings status"
     accessor.status
 
-    Then "a frame per tier: cache age and the machine-side render under the org, the link and its footprint " \
-         "under the project — the footprint a {{x}} for the unscaffolded repo"
-    ui.rows.size == 6
+    Then "a frame per tier: cache age and the machine-side render under the org, the link and dev's whole " \
+         "footprint under the project — one {{x}} per managed path for the unscaffolded repo"
+    ui.rows.size == 5 + Dev::Footprint::MANAGED_PATHS.size
     ui.rows[0] == [:frame, "Org learnings (#{File.join(dir, "knowledge")})", 0]
     ui.rows[1][1].match?(/\A\{\{v\}\} cache: #{Regexp.escape(cache.dir.to_s)} \(refreshed \d+s ago\)\.\z/)
     ui.rows[2] == [:note, "{{v}} invariants: rendered at #{synchronizer.rendered_invariants_file}.", 1]
     ui.rows[3] == [:frame, "Project (#{project})", 0]
     ui.rows[4] == [:note, "{{v}} invariants link: #{project / ".cursor" / "rules" / "org-invariants.mdc"} (linked).", 1]
-    ui.rows[5] == [:note, "{{x}} .cursor/rules/org-invariants.mdc is not gitignored — run `dev learnings init --gitignore`.", 1]
+    ui.rows.drop(5) == Dev::Footprint::MANAGED_PATHS.map do |path|
+      [:note, "{{x}} #{path} is not gitignored — run `dev learnings init --gitignore`.", 1]
+    end
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "status is silent on the footprint once init --gitignore has written it" do
+    Given "a synced project whose .gitignore carries dev's footprint"
+    dir = Dir.mktmpdir("dev-learnings-acc-test-")
+    ui = RecordingUi.new
+    accessor, = build_env(dir, ui: ui)
+    accessor.sync
+    accessor.init(gitignore_only: true)
+    ui.events.clear
+
+    When "running dev learnings status"
+    accessor.status
+
+    Then "no path is reported missing"
+    ui.rows.none? { |_kind, text, _depth| text.include?("not gitignored") }
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -374,8 +395,7 @@ class Dev::Learnings::AccessorTest < Minitest::Test
     ui.rows == [
       [:frame, "Learnings scaffold (#{project})", 0],
       [:note, "{{v}} scaffolded #{index} (this repo's empty always-on learnings index) — commit it.", 1],
-      [:note, "{{v}} added .cursor/rules/org-invariants.mdc, .agents/skills/dev/, .cursor/plans/ to .gitignore " \
-        "(dev's managed footprint) — commit it.", 1],
+      [:note, "{{v}} added #{Dev::Footprint::MANAGED_PATHS.join(", ")} to .gitignore (dev's managed footprint) — commit it.", 1],
     ]
 
     Cleanup
