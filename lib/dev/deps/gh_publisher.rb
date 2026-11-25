@@ -31,23 +31,24 @@ module Dev
     # Releases only: a head points at a release, so a working artifact
     # from the store is refused; the channel is reached with `dev deploy
     # gh --release <version>`. Immutable releases only: a head is what
-    # every follower installs, so the release it names must be one the
+    # every lock on the series installs and every `@v1` workflow runs, so
+    # the release it names must be one the
     # forge has frozen (`immutable: true`, set by the repository's
     # immutable-releases setting at the cut); a mutable one is refused,
     # naming the setting.
     #
-    # Separate from GhRepository, the read side: a follower resolving a
-    # pin and a deploy moving a pointer share nothing but the forge.
+    # Separate from GhRepository, the read side: a lock resolving a pin
+    # and a deploy moving a pointer share nothing but the forge.
     #
-    # The channel's head is pointed: the series tag is what a follower of
-    # the series (`~> 1` on a host's stream, `@v1` in a workflow) resolves,
-    # and this publisher is what moves it — forward on a deploy, back when
+    # The channel's head is pointed: the series tag is what the series
+    # resolves to (`~> 1` in a project's lock, `@v1` in a workflow), and
+    # this publisher is what moves it — forward on a deploy, back when
     # an earlier release of the series is deployed again. The latest
     # designation follows the newest deployed series only, so a 1.x patch
     # deployed after 2.0 is live moves `v1` and leaves `latest` alone.
     #
     # A tree this channel receives that ships its `dependencies.rb` and
-    # `deps.lock` is installed self-contained by every follower
+    # `deps.lock` is installed self-contained by every lock that pins it
     # (SelfContainedTree): dev converges its dependencies into the tree and
     # writes a launcher per `exe/`. Whether the tree is complete for that
     # is this publisher's to say at `dev package` (#accept!), each refusal
@@ -61,7 +62,7 @@ module Dev
       class WorkingArtifactError < RuntimeError; end
 
       # The release is not immutable: its tag and assets could change
-      # under every follower of the head.
+      # under every reader of the head.
       class MutableReleaseError < RuntimeError; end
 
       # The tree about to be archived ships a self-contained tree's markers
@@ -157,7 +158,7 @@ module Dev
       # @param channel [Lifecycle::Channel]
       # @param track [Lifecycle::Track] what the refusal of a working artifact names
       # @param scratch [Pathname] unused: nothing is materialised
-      # @return [Lifecycle::Receipt] what moved, and the followers it reaches as the hint
+      # @return [Lifecycle::Receipt] what moved, and what resolves to it from here as the hint
       # @raise [WorkingArtifactError]
       # @raise [MutableReleaseError]
       # @raise [Lifecycle::Series::NotAVersionError]
@@ -210,7 +211,7 @@ module Dev
       end
 
       # A tree shipping a self-contained tree's markers must be complete
-      # for the install every follower runs (SelfContainedTree#gaps); a plain
+      # for the install every lock runs (SelfContainedTree#gaps); a plain
       # asset is accepted as it is.
       #
       # @param tree [Pathname] the tree as it will ship
@@ -274,7 +275,7 @@ module Dev
 
       # The writes the candidate calls for, pointer first: a latest
       # designation on a series whose tag did not move would name a
-      # release no follower is at.
+      # release the series does not resolve to.
       #
       # @param candidate [Candidate]
       # @return [void]
@@ -291,8 +292,8 @@ module Dev
       # @return [String] why a mutable release is refused, naming the setting
       sig { params(candidate: Candidate).returns(String) }
       def mutable_reason(candidate)
-        "#{candidate.tag}'s release is mutable (immutable: false), so its tag and assets could change under every follower of " \
-          "#{candidate.series} — enable immutable releases on the repository (#{Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) " \
+        "#{candidate.tag}'s release is mutable (immutable: false), so its tag and assets could change under every reader of " \
+          "#{candidate.series} (~> #{candidate.series.major}, @#{candidate.series}) — enable immutable releases on the repository (#{Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) " \
           "before the next `dev release`; " \
           "a release already cut stays mutable"
       end
@@ -357,10 +358,10 @@ module Dev
       end
 
       # @param candidate [Candidate]
-      # @return [String] who the move reaches
+      # @return [String] what the move reaches
       sig { params(candidate: Candidate).returns(String) }
       def hint(candidate)
-        "Followers of #{candidate.series} (~> #{candidate.series.major}, @#{candidate.series}) take #{candidate.tag} from here"
+        "#{candidate.series} (~> #{candidate.series.major}, @#{candidate.series}) resolves to #{candidate.tag} from here"
       end
     end
   end

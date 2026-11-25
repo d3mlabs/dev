@@ -23,7 +23,7 @@ module Dev
   # `--replace` — config.sh taking over a registration GitHub already holds
   # under the name — is passed only when the config says so: only this
   # family's own name is ever replaced; any other holder is refused
-  # upstream, never overwritten here.
+  # by the caller, never overwritten here.
   #
   # It installs a systemd service and touches the host filesystem and
   # network, so it runs on the host, never inside a build container.
@@ -171,7 +171,7 @@ module Dev
       end
 
       # Mint a runner token via the API. `kind` is "registration-token" (to
-      # add) or "remove-token" (to deregister); the endpoint follows the
+      # add) or "remove-token" (to deregister); the endpoint takes the
       # scope's shape (repos/... for "owner/repo", orgs/... for a bare org).
       # The one token seam, shared with RunnerTeardown's deregistration.
       #

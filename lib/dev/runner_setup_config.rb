@@ -36,7 +36,7 @@ module Dev
     # true for a name whose registration is this family's own — register
     # decides, having looked the name up. False enrolls plainly:
     # a name nothing holds needs no replacing, and one another family holds
-    # is refused upstream rather than stolen here.
+    # is refused by the caller rather than stolen here.
     sig { returns(T::Boolean) }
     attr_reader :replace
 

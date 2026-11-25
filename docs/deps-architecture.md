@@ -162,7 +162,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      release's commit) and the requirement is series-shaped
      (`VersionScheme#series_span`: `~> 1`, `>= 1, < 2`, `>= 1`), the
      head of the newest covered series among the candidates, so a lock
-     and a follower on `@v1` read one pointer; the rule rides the pin as
+     and a workflow on `@v1` read one pointer; the rule rides the pin as
      its `rule` and accounts for itself in the lock report
      (`explanation`: a head always, the greatest only beside heads the
      ask did not cover), never in the lock — mints the

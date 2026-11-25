@@ -251,8 +251,8 @@ requirement that covers whole series and nothing finer is
 **series-shaped**: `~> 1` and `>= 1, < 2` name series 1; `>= 1` names
 every series from 1 on. On such a channel a series-shaped requirement
 resolves to the head of the newest series it covers that has one — the
-version *and* the commit `v<major>` points at — so the lock follows the
-same pointer an adopter's `uses: …@v1` follows. Rolling a deploy back
+version *and* the commit `v<major>` points at — so the lock reads the
+same pointer an adopter's `uses: …@v1` resolves through. Rolling a deploy back
 (`dev deploy gh --release 1.3.0` while 1.4.0 is cut) moves `v1`, and the
 next `dev deps update` locks 1.3.0 again; nothing re-locks the version
 the operator just rolled away from.

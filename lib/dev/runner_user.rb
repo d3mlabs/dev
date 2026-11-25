@@ -277,7 +277,7 @@ module Dev
       @path = path
       @owner_of = owner_of
       @operator = operator
-      # Streams (`system`, not `capture`): brew's own refusal is the
+      # Inherited stdio (`system`, not `capture`): brew's own refusal is the
       # warning's context, and the sudo session is already open.
       @tap_trust = T.let(
         TapTrust.new(user: name, brew: brew, tap: tap, ui: ui,

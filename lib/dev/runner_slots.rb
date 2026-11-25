@@ -10,7 +10,7 @@ module Dev
   # is `<base>` — the runner's name, the hostname by default, which is
   # what one enrollment was called before slots existed, so an existing
   # enrollment is one slot by construction — and slot n is `<base>-<n>`.
-  # Dirs follow the same shape beside slot 1's: `<dir>` and `<dir>-<n>`,
+  # Dirs take the same shape beside slot 1's: `<dir>` and `<dir>-<n>`,
   # so every slot sits next to the first wherever that one lives
   # (RunnerDiscovery's `actions-runner-*` glob finds them all).
   class RunnerSlots

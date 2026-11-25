@@ -30,8 +30,8 @@ ships artifacts from the store on the channel's **testing** track, or
 from a release on its **live** track. `dev release` cuts a tag and
 attaches archives to a GitHub release; it deploys nothing.
 
-Every channel has a **head**: what a follower installs when it asks for
-nothing in particular. `release` never moves a head; `deploy` moves
+Every channel has a **head**: what the channel answers when asked for a
+series and nothing finer. `release` never moves a head; `deploy` moves
 exactly one. How the destination keeps it is the channel's **head
 strategy**, declared by its publisher ([The channel
 contract](#the-channel-contract)).
@@ -137,7 +137,7 @@ dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--run
    build is shown the tree as it ships — the `files:` selection, not the
    install — and may refuse it. Most channels take any tree; `gh`
    refuses a [self-contained tree](dependencies.md#self-contained-trees)
-   that is incomplete for the install every follower runs: a
+   that is incomplete for the install every lock that pins it runs: a
    `dependencies.rb` without its `deps.lock` (or the reverse), a lock
    pinning no Ruby, no `exe/`, or a `bin/<name>` an `exe/<name>`'s
    launcher would overwrite. The refusal names the channel and each gap;
@@ -489,8 +489,8 @@ the same over either:
 Credentials come from `dev cred` or the script's environment, never from
 `dev.yml`.
 
-**Head.** Every channel has a head — what a follower installs when it
-asks for nothing in particular — and one rule holds across channels:
+**Head.** Every channel has a head — what the channel answers when
+asked for a series and nothing finer — and one rule holds across channels:
 `release` never moves a head, `deploy` moves exactly one. The mechanism
 is the destination's, and every publisher declares which of two it has:
 
@@ -508,25 +508,38 @@ is the destination's, and every publisher declares which of two it has:
 A head is kept per **series** — every version of one major, `v1`, `v2`:
 a pointed channel holds one pointer per series it serves, a derived
 channel's head within a series is that major's greatest release. A
-follower on a series (`~> 1`) never crosses a major by following.
+deploy never crosses a major: `v2` moves and `v1` stays.
 
-A lock and a follower read the same head. A dependency declared with a
-**series-shaped** requirement — one whose bounds are series boundaries
-and nothing finer: `~> 1`, `>= 1, < 2`, `>= 1` — resolves, on a pointed
-channel, to the head of the newest series it covers: `dev deps update`
-locks what `v1` points at, the version and the commit, from the same
-pointer an adopter's `@v1` resolves. A rollback is `dev deploy gh
---release <previous>`, which moves `v1`, and the next re-lock follows it
-down; nothing re-locks the greatest tag the operator just rolled away
-from. A series the channel keeps no pointer for, and every derived
-channel, resolves to the greatest satisfying version. A requirement with
-a bound inside a series (`>= 1.4`, `~> 1.2`) names versions, not series,
-and takes the greatest satisfying one on every channel; `tag:` and `sha:`
-are exact. The lock report says which rule chose: `series head v1 →
-v1.3.0` or `greatest satisfying` ([dependencies.md](dependencies.md#series-heads)).
-The set of strategies is closed: a destination that keeps no pointer and
-whose versions are not totally ordered is a third strategy to name in dev
-before it gets a publisher, never a special case inside one.
+A head has two readers, and no host is one. A **workflow caller**
+names the series in its `uses:` (`d3mlabs/ai-flow/.github/
+workflows/ai-commands.yml@v1`) and takes whatever `v1` points at on each
+run. A **project's lock** names the series in a **series-shaped**
+requirement — one whose bounds are series boundaries and nothing finer:
+`~> 1`, `>= 1, < 2`, `>= 1` (`gh "d3mlabs/ai-flow", "~> 1"` in its
+`dependencies.rb`) — and resolves it, on a pointed channel, to the head
+of the newest series it covers: `dev deps update` locks what `v1` points
+at, the version and the commit, from the same pointer the caller's `@v1`
+resolves. A rollback is `dev deploy gh --release <previous>`, which
+moves `v1`, and the next re-lock follows it down; nothing re-locks the
+greatest tag the operator just rolled away from — a rollback, which is a
+`deploy`, reaches the caller and the lock alike. A series the channel
+keeps no pointer for, and every derived channel, resolves to the greatest
+satisfying version. A requirement with a bound inside a series (`>= 1.4`,
+`~> 1.2`) names versions, not series, and takes the greatest satisfying
+one on every channel; `tag:` and `sha:` are exact. The lock report says
+which rule chose: `series head v1 → v1.3.0` or `greatest satisfying`
+([dependencies.md](dependencies.md#series-heads)). A runner host follows
+nothing: its jobs run the checkout they are given, and the tool that
+checkout pins is installed from its lock by the job's own `dev up`
+([Runners: what a slot runs](runners.md#what-a-slot-runs)).
+
+The head is not the resolver's greatest-satisfying version. A requirement
+that is not a series (`>= 1.4`) wants the greatest version that satisfies
+it; a series wants what is deployed; after a rollback the deployed
+version is lower than the greatest one there, and the two must be allowed
+to say so. The set of strategies is closed: a destination that keeps no
+pointer and whose versions are not totally ordered is a third strategy to
+name in dev before it gets a publisher, never a special case inside one.
 
 **Acceptance.** Whether a tree is complete for a destination is the
 destination's to say, and it says so at `package`, not on the host
@@ -748,7 +761,7 @@ commands:
 
 The heads are one **series tag** per deployed series — `v1`, `v2`: the
 major, as `gh "owner/repo", "~> 1"` in an adopter's `dependencies.rb`
-or `@v1` in a workflow follows it; both read the tag, so a deploy
+or `@v1` in a workflow resolves to it; both read the tag, so a deploy
 reaches the adopter's lock on its next `dev deps update` and its
 workflow on its next job — and GitHub's **latest designation**. `dev
 deploy gh --release 1.3.0`
@@ -759,12 +772,13 @@ newest series with a tag, its own included. A 1.x patch deployed after
 2.0 is live moves `v1` and leaves latest on 2.0; a pre-release moves its
 series tag and is never designated latest. A release the heads are
 already at writes nothing. Receipt: `v1 → v1.3.0 (0123456789ab), from
-v1.2.0 (fedcba987654); latest → v1.3.0`, with the hint `Followers of v1
-(~> 1, @v1) take v1.3.0 from here` when anything moved.
+v1.2.0 (fedcba987654); latest → v1.3.0`, with the hint `v1 (~> 1, @v1)
+resolves to v1.3.0 from here` when anything moved.
 
 Releases only: a head points at a release, so a store artifact is
 refused and `--release <version>` is the only form. Immutable releases
-only: the head is what every follower installs, so the release it names
+only: the head is what every lock on the series installs and every
+`@v1` workflow runs, so the release it names
 must be one the forge has frozen — the repository's immutable-releases
 setting, read back from the release as `immutable: true`. A mutable
 release is refused before anything moves, naming the setting; `dev
@@ -792,7 +806,7 @@ channel cuts every release with `--latest=false`
 The channel also has a say at `dev package`. A tree it receives that
 ships `dependencies.rb` and `deps.lock` is installed
 [self-contained](dependencies.md#self-contained-trees)
-by every follower, and the channel refuses one that is incomplete for
+by every lock that pins it, and the channel refuses one that is incomplete for
 that install before it becomes an asset: the manifest without the lock
 (or the reverse), a lock pinning no Ruby, no `exe/` to write launchers
 for, or a `bin/<name>` an `exe/<name>`'s launcher would overwrite. The

@@ -2,11 +2,9 @@
 # frozen_string_literal: true
 
 require "set"
-require "dev/lifecycle/channel"
 require "dev/lifecycle/project_version"
 require "dev/reach"
 require "dev/runner_group_contract"
-require "dev/stream"
 require_relative "value_equality"
 
 module Dev
@@ -20,17 +18,16 @@ module Dev
   # project's dev.yml (`runner_roles:`), which may give it a runner group
   # pinned to the project's own workflows (`group:` + `workflows:`) and a
   # job identity (`job_identity:`), the OS user its jobs run as
-  # (JobIdentity). A declared role's pins follow the project's series —
+  # (JobIdentity). A declared role's pins are at the project's series —
   # `v<major>` from its VERSION — so the declaration names workflow paths
   # and is bound to the project's repo and version at register
   # (Declaration#bind). Which project declares which roles is that
   # project's business: dev knows none by name.
   #
-  # A declared role of a project deployed through the gh channel anchors
-  # its slots to the project's **stream** (Stream): `<repo>@gh ~> <major>`,
-  # the series its pins already follow — its jobs run the deployed head,
-  # kept current by the slot's job-started hook, where a build host's run
-  # the checkout. Which a role is, is the project's `deploy:` to say.
+  # A role says nothing about what its jobs run: every slot's jobs run
+  # the checkout they are given, and what that checkout needs — a
+  # deployed tool among it — is its lock's, installed by the job's own
+  # `dev up`. The role's verbs are enrollment acts.
   #
   # A role whose group carries a workflow pin is org-scoped, since only a
   # group can carry the pin; a build host is its repo's.
@@ -132,23 +129,19 @@ module Dev
       end
 
       # The role bound to its project: each workflow path pinned at the
-      # project's repo and series tag (`<repo>/<path>@refs/tags/v<major>`),
-      # and — for a project deployed through gh — its slots anchored to
-      # the project's stream at that series.
+      # project's repo and series tag (`<repo>/<path>@refs/tags/v<major>`).
       #
       # @param repo [String] the project's "owner/repo"
       # @param version [String, nil] the project's VERSION; needed only
-      #   when the role pins workflows or the project deploys through gh
-      # @param channels [Hash{String => Lifecycle::Channel}] the project's deploy channels
+      #   when the role pins workflows
       # @return [Dev::RunnerRole]
-      # @raise [DeclarationError] when the role needs a series and the
-      #   project declares no semver version to take one from
-      sig { params(repo: String, version: T.nilable(String), channels: T::Hash[String, Lifecycle::Channel]).returns(RunnerRole) }
-      def bind(repo:, version:, channels: {})
+      # @raise [DeclarationError] when the role pins workflows and the
+      #   project declares no semver version to take the series from
+      sig { params(repo: String, version: T.nilable(String)).returns(RunnerRole) }
+      def bind(repo:, version:)
         group_name = group
         contract = group_name && RunnerGroupContract.new(name: group_name, workflows: pins(repo, version), visibility: visibility)
-        stream = Stream.deployed_through_gh?(channels) ? Stream.new(repo: repo, series: series(version, "follows the project's")) : nil
-        RunnerRole.declared(name: name, labels: labels, group: contract, job_identity: job_identity, stream: stream)
+        RunnerRole.declared(name: name, labels: labels, group: contract, job_identity: job_identity)
       end
 
       # @return [Array] the members that constitute identity
@@ -167,7 +160,7 @@ module Dev
       def pins(repo, version)
         return [] if workflows.empty?
 
-        series = series(version, "pins its workflows at the project's")
+        series = series(version)
         workflows.map { |path| "#{repo}/#{path}@refs/tags/#{series}" }
       end
 
@@ -175,21 +168,20 @@ module Dev
       # `major.minor.patch`, as every pin and deploy of the project reads it.
       #
       # @param version [String, nil] the project's VERSION
-      # @param need [String] what of the role wants the series, for the error
       # @return [Lifecycle::Series]
       # @raise [DeclarationError] when there is no semver version to take it from
-      sig { params(version: T.nilable(String), need: String).returns(Lifecycle::Series) }
-      def series(version, need)
+      sig { params(version: T.nilable(String)).returns(Lifecycle::Series) }
+      def series(version)
         if version.nil?
           raise DeclarationError,
-            "runner role '#{name}' #{need} series (v<major>), but the project keeps no " \
+            "runner role '#{name}' pins its workflows at the project's series (v<major>), but the project keeps no " \
               "#{Lifecycle::ProjectVersion::FILE_NAME} — declare one"
         end
 
         Lifecycle::ProjectVersion.series_tag(version)
         Lifecycle::Series.of(version)
       rescue Lifecycle::ProjectVersion::NotSemverError => e
-        raise DeclarationError, "runner role '#{name}' #{need} series, but #{e.message}"
+        raise DeclarationError, "runner role '#{name}' pins its workflows at the project's series, but #{e.message}"
       end
     end
 
@@ -209,29 +201,17 @@ module Dev
     sig { returns(T.nilable(String)) }
     attr_reader :job_identity
 
-    # The stream the role's slots follow (their job-started hook installs
-    # its head before each job); nil for a role whose jobs run the checkout.
-    sig { returns(T.nilable(Stream)) }
-    attr_reader :stream
-
     # @param name [String]
     # @param labels [Array<String>]
     # @param group [Dev::RunnerGroupContract, nil]
     # @param job_identity [String, nil]
-    # @param stream [Dev::Stream, nil]
     # @param kind [Kind]
-    sig do
-      params(
-        name: String, labels: T::Array[String], group: T.nilable(RunnerGroupContract), job_identity: T.nilable(String),
-        stream: T.nilable(Stream), kind: Kind,
-      ).void
-    end
-    def initialize(name:, labels:, group:, job_identity:, stream:, kind:)
+    sig { params(name: String, labels: T::Array[String], group: T.nilable(RunnerGroupContract), job_identity: T.nilable(String), kind: Kind).void }
+    def initialize(name:, labels:, group:, job_identity:, kind:)
       @name = name
       @labels = labels
       @group = group
       @job_identity = job_identity
-      @stream = stream
       @kind = kind
     end
 
@@ -246,7 +226,7 @@ module Dev
       # @return [Dev::RunnerRole]
       sig { params(labels: T::Array[String], group: T.nilable(RunnerGroupContract)).returns(RunnerRole) }
       def build_host(labels:, group: nil)
-        new(name: BUILD_HOST_NAME, labels: labels, group: group, job_identity: nil, stream: nil, kind: Kind::BuildHost)
+        new(name: BUILD_HOST_NAME, labels: labels, group: group, job_identity: nil, kind: Kind::BuildHost)
       end
 
       # A role a project declares (Declaration#bind, or a shipped alias).
@@ -258,16 +238,10 @@ module Dev
       # @param labels [Array<String>]
       # @param group [Dev::RunnerGroupContract, nil]
       # @param job_identity [String, nil]
-      # @param stream [Dev::Stream, nil] the stream the slots follow; nil for a checkout's role
       # @return [Dev::RunnerRole]
       # @raise [DeclarationError]
-      sig do
-        params(
-          name: String, labels: T::Array[String], group: T.nilable(RunnerGroupContract), job_identity: T.nilable(String),
-          stream: T.nilable(Stream),
-        ).returns(RunnerRole)
-      end
-      def declared(name:, labels:, group: nil, job_identity: nil, stream: nil)
+      sig { params(name: String, labels: T::Array[String], group: T.nilable(RunnerGroupContract), job_identity: T.nilable(String)).returns(RunnerRole) }
+      def declared(name:, labels:, group: nil, job_identity: nil)
         raise DeclarationError, "runner role '#{name}' is builtin — a dev.yml role needs another name" if name == BUILD_HOST_NAME
         raise DeclarationError, "runner role '#{name}' declares no labels" if labels.empty?
         if group && !group.owned?
@@ -276,7 +250,7 @@ module Dev
               "project's own workflows (workflows: [.github/workflows/<file>.yml]); a human's group is a build host's (--group)"
         end
 
-        new(name: name, labels: labels, group: group, job_identity: job_identity, stream: stream, kind: Kind::Declared)
+        new(name: name, labels: labels, group: group, job_identity: job_identity, kind: Kind::Declared)
       end
 
       # A role known by its pool alone: slots in a runner group whose
@@ -289,7 +263,7 @@ module Dev
       # @return [Dev::RunnerRole]
       sig { params(pool: String, labels: T::Array[String]).returns(RunnerRole) }
       def pooled(pool:, labels:)
-        new(name: pool, labels: labels, group: RunnerGroupContract.new(name: pool), job_identity: nil, stream: nil, kind: Kind::Pooled)
+        new(name: pool, labels: labels, group: RunnerGroupContract.new(name: pool), job_identity: nil, kind: Kind::Pooled)
       end
 
       # The role a slot plays, from its `.runner` record's pool and GitHub's
@@ -334,8 +308,8 @@ module Dev
       @kind == Kind::Pooled
     end
 
-    # The role as it enrolls at a repo: the same labels, identity and
-    # stream, no runner group. Runner groups partition an org's runners
+    # The role as it enrolls at a repo: the same labels and identity, no
+    # runner group. Runner groups partition an org's runners
     # and a repo has none — config.sh refuses a group name there — so a
     # declared role's group is its org-scope reach (`--org`) and nothing
     # else; a repo-scoped slot's reach is the repo's workflows.
@@ -345,7 +319,7 @@ module Dev
     def at_repo_scope
       return self if @group.nil?
 
-      self.class.new(name: @name, labels: @labels, group: nil, job_identity: @job_identity, stream: @stream, kind: @kind)
+      self.class.new(name: @name, labels: @labels, group: nil, job_identity: @job_identity, kind: @kind)
     end
 
     # Whether the role has a pinned runner group of its own: registered at
@@ -436,7 +410,7 @@ module Dev
     # @return [Array] the members that constitute identity
     sig { override.returns(T::Array[T.anything]) }
     def equality_members
-      [@name, @labels, @group, @job_identity, @stream, @kind]
+      [@name, @labels, @group, @job_identity, @kind]
     end
   end
 end

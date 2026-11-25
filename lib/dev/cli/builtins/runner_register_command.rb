@@ -20,13 +20,13 @@ require "dev/runner_group_contract"
 require "dev/runner_groups"
 require "dev/runner_registry"
 require "dev/reach"
+require "dev/retired_job_hook"
 require "dev/runner_role"
 require "dev/runner_role_aliases"
 require "dev/runner_setup"
 require "dev/runner_setup_config"
 require "dev/runner_teardown"
 require "dev/runner_user"
-require "dev/stream_hook"
 require "dev/wsl_conf"
 require "dev/wsl_keepalive_task"
 require "dev/wsl_runner_host"
@@ -43,7 +43,7 @@ module Dev
       #   dev runner register --role ue-farm     # a role dev.yml declares under runner_roles:
       #   dev runner register --org --role agent # a declared role with a group, at the org
       #
-      # Scope follows the checkout: a registration is the repo's unless
+      # Scope is the checkout's: a registration is the repo's unless
       # `--org` puts it at the repo's org, where a declared role with a
       # group joins it — pinned to the project's own workflows at its
       # series. A repo owned by a user account has no org and `--org` is
@@ -88,14 +88,6 @@ module Dev
         # not enroll rather than let `config.sh --replace` take it over
         # A RuntimeError so the CLI boundary prints it and exits 1.
         class RegistrationHeldError < RuntimeError; end
-
-        # `--role <declared>` from a checkout whose `targets:` this dev
-        # cannot read (ProjectContext#lifecycle_fault): the channels a
-        # declared role anchors to derive from it, so whether the role
-        # follows a stream is unknown — register did not enroll slots that
-        # would follow nothing. A RuntimeError so the CLI boundary prints it
-        # and exits 1.
-        class RoleStreamUnreadableError < RuntimeError; end
 
         ORG_FLAG = "--org"
         ROLE_FLAG = "--role"
@@ -158,10 +150,11 @@ module Dev
         # `--repo` override; the gh boundary behind the derived label.
         RepoResolver = T.type_alias { T.proc.params(override: T.nilable(String)).returns(String) }
 
-        # Builds the job-started hook for this host's enrollments, written
-        # as the host rule's runner user (nil on a Mac, where the operator
-        # owns them), speaking on the Ui; injected for tests.
-        StreamHookFactory = T.type_alias { T.proc.params(runner_user: T.nilable(Dev::RunnerUser), ui: Ui).returns(Dev::StreamHook) }
+        # Builds the one-release migration that removes the job-started hook
+        # dev 0.9.x left in a slot's dir (RetiredJobHook), writing as the
+        # host rule's runner user (nil on a Mac, where the operator owns the
+        # enrollments), speaking on the Ui; injected for tests.
+        RetiredHookFactory = T.type_alias { T.proc.params(runner_user: T.nilable(Dev::RunnerUser), ui: Ui).returns(Dev::RetiredJobHook) }
 
         sig do
           params(
@@ -179,7 +172,7 @@ module Dev
             reach_factory: ReachFactory,
             groups: T.nilable(Dev::RunnerGroups),
             refresher: Dev::OperatorAccess::Refresher,
-            stream_hook_factory: StreamHookFactory,
+            retired_hook_factory: RetiredHookFactory,
           ).void
         end
         def initialize(
@@ -209,7 +202,7 @@ module Dev
           groups: nil,
           # How the operator's login is widened when the pre-flight offers it.
           refresher: Dev::OperatorAccess::DEFAULT_REFRESHER,
-          stream_hook_factory: ->(runner_user, ui) { Dev::StreamHook.new(as_user: runner_user&.name, ui: ui) }
+          retired_hook_factory: ->(runner_user, ui) { Dev::RetiredJobHook.new(as_user: runner_user&.name, ui: ui) }
         )
           super()
           @groups = T.let(groups || Dev::RunnerGroups.new(registry: registry), Dev::RunnerGroups)
@@ -230,7 +223,7 @@ module Dev
           @wsl_runner_host = wsl_runner_host
           @pins_reader = pins_reader
           @reach_factory = reach_factory
-          @stream_hook_factory = stream_hook_factory
+          @retired_hook_factory = retired_hook_factory
         end
 
         # The summary line, then what the operator needs at the prompt: who
@@ -261,24 +254,22 @@ module Dev
                             (v<major>, read from VERSION — never typed), and a
                             `job_identity:` — the OS user its jobs run as.
 
-            What a slot's jobs run follows the role. A build host's run the checkout. A
-            declared role's, when the project deploys through gh (`deploy: gh:` in its
-            dev.yml), follow the project's STREAM: <repo>@gh ~> <major>, the series the
-            pins already follow. Register records the stream in each slot's runner dir
-            (.env: #{Dev::StreamHook::STREAM_ENV}) and installs the runner's job-started hook there
-            (#{Dev::StreamHook::HOOK_ENV} → #{Dev::StreamHook::SCRIPT}), which runs
-            `dev runner follow <dir>` before every job: it installs the series' head
-            (the release `v<major>` points at, as the gh tree ~/.dev/gh/<repo>/<tag>,
-            installed self-contained) when it moved, and exports the tree's bin to the job's
-            PATH. The service is bounced once when the hook changes. A role that
-            follows no stream has no hook; re-running register removes a stale one.
+            A slot's jobs run the checkout they are given, whatever the role; a tool
+            the checkout depends on (a `gh` pin in its dependencies.rb) is installed
+            from its lock by the job's own `dev up`, which puts the tree's bin on the
+            project PATH. Register records nothing about what a slot runs. A slot
+            enrolled by dev 0.9.x carries a job-started hook in its runner dir
+            (.env: #{Dev::RetiredJobHook::HOOK_ENV}, #{Dev::RetiredJobHook::STREAM_ENV}; #{Dev::RetiredJobHook::SCRIPT}) that installed a
+            deployed head before each job: re-running register removes it and bounces
+            the service once (this release's migration); `dev runner status` names a
+            leftover as drift until then.
 
-            Scope follows the checkout: without --org the slots are this repo's — its
+            Scope is the checkout's: without --org the slots are this repo's — its
             jobs through any of its workflows, no runner group — for every role, a
             grouped one included (its group is its org-scope reach; a repo has no
             runner groups). --repo a/b enrolls for that repo instead: a declared role
-            keeps its own project's pins and stream (ai-flow's agent for a repo's
-            editor lane, say); the slots are a/b's. --org
+            keeps its own project's pins (ai-flow's agent for a repo's editor lane,
+            say); the slots are a/b's. --org
             puts them at the repo's org: a declared role with a group joins it (the group
             carries the workflow pin), --labels makes a custom set an org pool in a
             human's --group. A declared role without a group is always its repo's. A
@@ -412,7 +403,6 @@ module Dev
               dev runner register --org --role agent --slots 3 # three jobs at once; this repo may use them
               dev runner register --role agent --slots 2       # this repo's own slots of the role, no group
               dev runner register --org --labels ue-engine --group ue-hosted   # a human's pool
-              dev runner follow ~/actions-runner-agent # what slot 1's hook runs before each job: install the moved head now
           DESC
         end
 
@@ -565,7 +555,7 @@ module Dev
           replacing = fresh.to_h { |slot| [slot, replace?(scope, fresh_slot_name(slot, naming), own, known, ui: context.ui)] }
           retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes, ui: context.ui)
 
-          hook = @stream_hook_factory.call(runner_user, context.ui)
+          retired_hook = @retired_hook_factory.call(runner_user, context.ui)
           (1..count).each do |slot|
             enrollment = by_slot[slot]&.first
             runner = enrollment && runners[enrollment.name]
@@ -573,7 +563,7 @@ module Dev
               amend_enrollment(scope, enrollment, runner, config, ui: context.ui)
               @groups.place!(group, runner, org: scope, ui: context.ui) if group
               identity&.after_enroll!(runner_dir: enrollment.dir, slot: slot)
-              hook.converge!(runner_dir: enrollment.dir, stream: role.stream)
+              retired_hook.remove!(runner_dir: enrollment.dir)
               next
             end
 
@@ -596,7 +586,7 @@ module Dev
             end
             slot_setup.run
             identity&.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot)
-            hook.converge!(runner_dir: slot_setup.resolve_dir, stream: role.stream)
+            retired_hook.remove!(runner_dir: slot_setup.resolve_dir)
           end
 
           converge_access!(scope, group, repo, ui: context.ui) if org
@@ -1158,14 +1148,10 @@ module Dev
 
         # The role `--role` names: the checkout's dev.yml declaration, bound
         # to the declaring checkout's own repo and series — its workflow
-        # pins and, when it deploys through gh, its stream are the
-        # project's, whichever repo the registration serves (`--repo`
-        # enrolls this project's role for another repo's lane).
+        # pins are the project's, whichever repo the registration serves
+        # (`--repo` enrolls this project's role for another repo's lane).
         # A declared role without a group is its repo's — org scope needs a
         # group to fix the slots' reach — and `--org` is refused for it.
-        # Whether the checkout deploys through gh is read from its channels,
-        # which a dev that could not read `targets:` does not have: it
-        # refuses rather than bind the role to no stream.
         #
         # @param name [String]
         # @param context [Dev::Cli::ExecutionContext]
@@ -1173,7 +1159,6 @@ module Dev
         # @param declaring_repo [Proc] the enclosing checkout's repo
         # @return [Dev::RunnerRole]
         # @raise [ArgumentError]
-        # @raise [RoleStreamUnreadableError]
         # @raise [Dev::RunnerRole::DeclarationError]
         sig { params(name: String, context: ExecutionContext, org: T::Boolean, declaring_repo: T.proc.returns(String)).returns(RunnerRole) }
         def declared_role(name, context, org, declaring_repo)
@@ -1185,18 +1170,7 @@ module Dev
                 "runner_roles: { #{name}: { labels: [...] } }"
           end
 
-          fault = T.must(project).lifecycle_fault
-          if fault
-            raise RoleStreamUnreadableError,
-              "runner role '#{name}' anchors to this project's channels, and this dev cannot read dev.yml `targets:` " \
-                "they derive from (#{fault.message}) — upgrade dev (`dev up` upgrades it) and retry"
-          end
-
-          role = declaration.bind(
-            repo: declaring_repo.call,
-            version: Lifecycle::ProjectVersion.declared(T.must(project).root),
-            channels: T.must(project).channels,
-          )
+          role = declaration.bind(repo: declaring_repo.call, version: Lifecycle::ProjectVersion.declared(T.must(project).root))
           if org && !role.org_scoped?
             raise ArgumentError,
               "runner role '#{name}' is this repo's — a role enrolls at the org only in a group pinned to this project's " \

@@ -622,7 +622,6 @@ module Dev
             desc: "Enroll, inspect or unenroll this host as a self-hosted runner",
             category: Command::Category::Environment,
             children: {
-              "follow" => Builtins::RunnerFollowCommand.new,
               "register" => Builtins::RunnerRegisterCommand.new,
               "status" => Builtins::RunnerStatusCommand.new,
               "unregister" => Builtins::RunnerUnregisterCommand.new,

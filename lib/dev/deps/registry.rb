@@ -83,7 +83,7 @@ module Dev
           # dev.yml declares the channel. The destination is the project's
           # own repo on the forge, which every project that releases has,
           # so no pin names it — and a head there means something only to
-          # a project followers install from, so the channel is never
+          # a project others depend on, so the channel is never
           # contributed unasked.
           Declaration = new("declaration")
         end
@@ -357,8 +357,8 @@ module Dev
           # project declaring `deploy gh` gets the publisher that moves the
           # channel's head — the series tag and the latest designation —
           # to a release it cut. No pin reaches it: every project that
-          # releases has the destination, and only a project followers
-          # install from wants a head there.
+          # releases has the destination, and only a project others
+          # depend on wants a head there.
           Entry.new(
             symbol: :gh,
             repository: GhRepository,

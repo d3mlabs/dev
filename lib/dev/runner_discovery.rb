@@ -4,9 +4,6 @@
 require "etc"
 require "json"
 
-require "dev/stream"
-require "dev/stream_hook"
-
 module Dev
   # This machine's runner enrollments, inspected — never recorded: the
   # actions-runner install dirs under $HOME (suffixless or
@@ -68,11 +65,6 @@ module Dev
       # has lost the runner and its labels with it. Never read from the
       # dir's name or the runner's.
       const :pool, String
-
-      # The stream the enrollment's job-started hook follows (recorded in
-      # the dir's `.env` by register, StreamHook); nil for a slot whose
-      # jobs run a checkout, a build host's.
-      const :stream, T.nilable(Stream), default: nil
     end
 
     # GitHub's default runner group, what a record naming no pool is in.
@@ -192,7 +184,6 @@ module Dev
           display_dir: display_dir(dir, home),
           owner: owner(dir),
           pool: record["poolName"].to_s.empty? ? DEFAULT_POOL : record["poolName"].to_s,
-          stream: StreamHook.recorded(dir),
         )
       rescue JSON::ParserError, Errno::ENOENT
         nil

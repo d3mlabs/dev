@@ -23,8 +23,8 @@ module Dev
     # knew going in. Whatever a publisher materialises lives in its scratch,
     # the channel's own directory under the project's store (Store#scratch).
     #
-    # Every channel also has a **head** — what a follower installs when it
-    # asks for nothing in particular — and the port declares how its
+    # Every channel also has a **head** — what the channel answers when
+    # asked for a series and nothing finer — and the port declares how its
     # destination keeps it (HeadStrategy): a pointer `deploy` moves, or
     # versions dev computes the head over (Head.derive). The rule that
     # `release` never moves a head and `deploy` moves exactly one is dev's

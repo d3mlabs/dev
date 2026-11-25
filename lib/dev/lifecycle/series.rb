@@ -7,12 +7,12 @@ require_relative "release_tag"
 module Dev
   module Lifecycle
     # A release **series**: every version of one major, named `v<major>`
-    # as the plan names a series tag. What a follower is on — a host on
-    # `~> 1`, an adopter on `@v1` — and what a head is kept per: a pointed
+    # as the plan names a series tag. What a series-shaped requirement
+    # (`~> 1`) and a workflow's `@v1` name, and what a head is kept per: a pointed
     # channel holds one pointer per series, a derived channel's head within
     # a series is the greatest non-prerelease version of that major
-    # (Head.derive). A major is never crossed by following: a 2.0.0 deploy
-    # moves `v2` and leaves every follower of `v1` where it was.
+    # (Head.derive). A major is never crossed by a deploy: a 2.0.0 deploy
+    # moves `v2` and leaves every reader of `v1` where it was.
     #
     # The major is semver's, whatever the version's own spelling: under
     # 0.x the minor is the breaking unit, and the series is still `v0`,

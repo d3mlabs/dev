@@ -109,8 +109,9 @@ agent CLI; ai-flow declares `cursor-cli` in its own `dependencies.rb`,
 and its runner roles — the labels, the runner group, the pinned
 workflows, the `ai-agent` job identity — in its own `dev.yml`. A host
 becomes an agent host by `dev runner register --org --role agent` from
-an ai-flow checkout and follows ai-flow's releases through its gh
-channel ([Runners](runners.md#streams)). No setting, Brewfile line or
+an ai-flow checkout; which ai-flow its jobs run is the adopting
+project's lock to say, installed by the job's own `dev up`
+([Runners](runners.md#what-a-slot-runs)). No setting, Brewfile line or
 builtin role in dev names ai-flow; the build host is dev's one builtin
 role.
 
@@ -152,10 +153,10 @@ checkout](cli.md#inside-devs-own-checkout-dev-is-the-checkout)).
 
 A tool deployed through its own gh channel is live the same way, one
 release at a time: `dev release` cuts an immutable release, `dev deploy
-gh` moves the series head to it, and every host following that stream
-installs the head before its next job ([Lifecycle](lifecycle.md#gh),
-[Runners](runners.md#streams)). dev's formula is the brew channel's head;
-a deployed tool's series tag is the gh channel's.
+gh` moves the series head to it, and every lock pinning that series
+takes the head at its next `dev up` ([Lifecycle: the channel contract](lifecycle.md#the-channel-contract)).
+dev's formula is the brew channel's head; a deployed tool's series tag
+is the gh channel's.
 
 ## Migrating from the monolithic formula
 

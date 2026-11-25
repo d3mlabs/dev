@@ -16,7 +16,6 @@ dev runner register --org --role agent --slots 3        # three jobs at once
 dev runner register --org --labels ue-engine --group ue-hosted # org pool in a human-made group
 dev runner status                         # this machine's enrollments and host facts
 dev runner status --check                 # the host's posture alone, no GitHub; exit 1 on drift (every job runs it)
-dev runner follow ~/actions-runner-agent  # what a slot's job-started hook runs: install the stream's head now, if it moved
 dev runner unregister d3mlabs             # by scope (the last part of a family's title in status) …
 dev runner unregister ~/actions-runner    # … or by directory (Tab completes both)
 dev runner unregister                     # lists this host's enrollments by scope and asks which
@@ -37,7 +36,7 @@ every other role is declared by a project's `dev.yml`.
 | Role | Labels | Group | Jobs run as | Jobs run | Scope |
 |---|---|---|---|---|---|
 | build host (bare `register`, or `--labels`) | the repo's name, or the `--labels` set | none, or `--group` | the enrolling user | the checkout | repo; `--org` with `--labels` makes an org pool |
-| a dev.yml role (`--role <name>`) | as declared | `group:` when declared, pinned to the project's `workflows:` | `job_identity:` when declared, else the enrolling user | the project's [stream](#streams) when it deploys through gh, else the checkout | repo; `--org` when the role declares a group |
+| a dev.yml role (`--role <name>`) | as declared | `group:` when declared, pinned to the project's `workflows:` | `job_identity:` when declared, else the enrolling user | the checkout | repo; `--org` when the role declares a group |
 
 A repo declares its roles in `dev.yml`:
 
@@ -63,44 +62,26 @@ runner_roles:
 (the role's labels are its declaration) and `--org` with a role that
 declares no group (org scope needs a group to fix the slots' reach).
 
-### Streams
+### What a slot runs
 
-A declared role's jobs run the project as a deployed tool when the project
-deploys through gh (`deploy: gh:` in its `dev.yml`), not as the checkout a
-build host's jobs run. What they run is the project's **stream**:
-`<owner/repo>@gh ~> <major>` — the repo's gh channel, followed on one
-series, the same series the role's workflow pins follow. The `~>` is the
-constraint a host declares the way an adopter's `uses: …@v<major>` does:
-this major and any minor or patch; a follower never crosses a major.
+A slot's jobs run the checkout they are given, whatever the role. A
+deployed tool among what that checkout needs — ai-flow's `dev`, say — is
+a pin in the checkout's lock, and the job's own `dev up` installs it the
+way it installs every other pin. A host records nothing about which
+release of anything its jobs run: that is the adopter's lock's to say,
+and the adopter's workflow (`uses: …@v<major>`) to carry. Who reads a
+series head is [Lifecycle: the channel contract](lifecycle.md#the-channel-contract); `dev runner` knows no
+head. Its verbs are enrollment acts — a slot's registration, its service,
+its labels, its reach — and nothing more.
 
-The stream's **head** is the release the series tag `v<major>` points at
-on GitHub — the tag `dev deploy gh` moves ([Lifecycle](lifecycle.md)). A
-host does not record it; it reads it before each job.
-
-Register derives the stream from the checkout — the repo as GitHub spells
-it, the major from `VERSION` — and writes it into each slot's runner
-directory as the runner's **job-started hook**: `.env` gets
-`ACTIONS_RUNNER_HOOK_JOB_STARTED=<dir>/dev-job-started.sh` and
-`DEV_STREAM=<stream>`, and `dev-job-started.sh` runs
-`dev runner follow <dir>`. The runner runs the hook before every job:
-
-1. the head is read (`v<major>` → its commit → the `v<major>.x.y` release
-   tag at that commit);
-2. the head is installed when it is not yet — as the gh tree every gh pin
-   becomes, `~/.dev/gh/<owner>/<repo>/<tag>` in the artifact store,
-   installed self-contained (Ruby keg, vendored gems, `bin/` launchers) —
-   a no-op when it is;
-3. the tree's `bin` is appended to the job's `$GITHUB_PATH`, so the tool
-   in every step of the job is the head's.
-
-A head that moves mid-job is seen by the next job; a rolled-back head is
-followed back. The runner reads `.env` at start, so register bounces the
-service once when the hook changes, and only then; a role that follows no
-stream has no hook, and re-running register removes one left from before.
-`dev runner follow <dir>` by hand installs a moved head now rather than at
-the next job — `dev runner status` names it when a head is not installed.
-A project deployed through gh needs a semver `VERSION` for its declared
-roles to bind, whether or not they pin workflows.
+dev 0.9.x wrote a **job-started hook** into each slot of a declared role
+whose project deployed through gh (`.env` keys
+`ACTIONS_RUNNER_HOOK_JOB_STARTED` and `DEV_STREAM`, the script
+`dev-job-started.sh`) that installed the project's head before every job.
+That hook is retired. Re-running `dev runner register` on a slot carrying
+it removes the script and the two keys and bounces the service once, so
+the runner rereads `.env`; `dev runner status` names a leftover hook as a
+finding until then. Nothing else in a slot's directory is dev's.
 
 For one release, `--ai-flow` stands for `--role agent` and `--labels
 ai-orchestrator` for `--role orchestrator` as ai-flow's `dev.yml` declares
@@ -110,7 +91,7 @@ checkout — and both go away in the next release.
 
 ### Scope
 
-Scope follows the checkout. Without `--org`, the slots are the repo's:
+Scope is the checkout's. Without `--org`, the slots are the repo's:
 only that repo's jobs land on them, for every role — a build host, or a
 repo that wants agent slots of its own. `--org` registers at the repo's
 org: a grouped role joins its runner group there, and every repo the
@@ -157,8 +138,8 @@ supply them. Three vocabularies:
 - **A repo's own label**: its name as GitHub spells it, lowercased
   (`d3mlabs/cellbound-3d` → `cellbound-3d`). Bare `dev runner register`
   uses it; `--repo a/b` moves it. With `--role`, `--repo a/b` enrolls the
-  checkout's declared role for `a/b` — the role's labels, identity and
-  stream stay the declaring project's, the scope is `a/b`, and no runner
+  checkout's declared role for `a/b` — the role's labels and identity
+  stay the declaring project's, the scope is `a/b`, and no runner
   group: a repo has none (ai-flow's `agent` as cellbound-3d's editor lane).
 - **Custom labels** through `--labels`, for special fleets (`ue-engine`).
 - **A role's labels**: what its `dev.yml` declaration lists. ai-flow's
@@ -246,8 +227,8 @@ online. Busy counts; offline does not. See
    registration token through your `gh` auth, `config.sh --unattended`,
    service install. A repo-scoped runner re-registered `--org`
    deregisters at its old scope first.
-4. **The job-started hook**, per slot: pointed at the role's
-   [stream](#streams), or removed when the role follows none.
+4. **The retired job-started hook**, per slot: removed when a slot still
+   carries one from dev 0.9.x ([What a slot runs](#what-a-slot-runs)).
 
 Register never takes over another runner's registration. Runner names are
 unique per scope; a name held by a registration that is not this family's
@@ -420,22 +401,10 @@ orchestrator · 2 slots · d3mlabs
 ✓ box-orchestrator, -2 — online · service installed · runs as runner
 ```
 
-A family that follows a [stream](#streams) has one more fact after its
-reach: the stream, the head the series tag names on GitHub, what this host
-has installed, and the identity its jobs run as:
-
-```text
-✓ stream: d3mlabs/ai-flow@gh ~> 1 — head 1.4.2 installed · jobs as ai-agent
-✗ stream: d3mlabs/ai-flow@gh ~> 1 — head 1.4.2, installed 1.4.1 · jobs as ai-agent (the next job installs it; now: `dev runner follow ~/actions-runner-agent`)
-```
-
-A series with no head (nothing deployed), or a series tag moved to a
-commit no release names, is red with the lookup's words; GitHub
-unreachable reads `?`. The stream is the role's from the declaring
-checkout; a family known by its pool alone reads it from its slots' hook
-records. Each slot's facts then say whether its hook follows the role's
-stream — missing, or following another stream, is a finding; a hook on a
-role that follows no stream is a stale one register removes.
+A slot still carrying the job-started hook dev 0.9.x wrote ([What a slot
+runs](#what-a-slot-runs)) breaks out as a red slot with the finding
+`job-started hook left from dev 0.9.x (dev-job-started.sh)`; the next
+`dev runner register` removes it.
 
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
@@ -446,7 +415,7 @@ unpinned `Default` group and a grouped role whose group lost its workflow
 pin each render that way; a
 registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,
-service installed, who it runs as, the hook's stream, the `_work` grant
+service installed, who it runs as, no leftover hook, the `_work` grant
 for agents) fold into
 one line while uniform, and a deviating slot breaks out on its own ✗ line
 with its directory and the findings. A red slot's remedy names both ways
