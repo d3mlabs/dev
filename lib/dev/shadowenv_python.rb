@@ -50,6 +50,11 @@ module Dev
     # project: suffixed as the container's shadowenv directory is
     # (BuildContainer::CONTAINER_SHADOWENV_DIR).
     CONTAINER_VENV_DIR = ".venv-container"
+    # Both links as the repo-relative .gitignore lines covering them —
+    # beside the paths they cover, collected by Dev::Footprint. Bare names,
+    # no trailing slash: git matches a `name/` pattern against directories
+    # only, and a symlink is a file to git, so `.venv/` would ignore nothing.
+    GITIGNORE_FOOTPRINT = T.let([HOST_VENV_DIR, CONTAINER_VENV_DIR].freeze, T::Array[String])
     # The store base every project's venvs live under; the store re-roots
     # the `~/.dev` prefix onto the data root (Dev::DataRoot).
     VENVS_ROOT = T.let("#{Dev::DataRoot::HOME_ROOT}/venv".freeze, String)

@@ -167,6 +167,10 @@ module Dev
     # write.
     SHADOWENV_DIR = ".shadowenv.d"
     CONTAINER_SHADOWENV_DIR = ".shadowenv.d-container"
+    # Both sides' directories as the repo-relative .gitignore lines covering
+    # them — beside the paths they cover, collected by Dev::Footprint. A
+    # lisp names one machine's prefixes; neither directory ever commits.
+    GITIGNORE_FOOTPRINT = T.let(["#{SHADOWENV_DIR}/", "#{CONTAINER_SHADOWENV_DIR}/"].freeze, T::Array[String])
 
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }

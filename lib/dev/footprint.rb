@@ -3,8 +3,12 @@
 
 require "open3"
 require "pathname"
+require_relative "build_container"
+require_relative "deps/cmake_integration"
+require_relative "deps/luarocks_integration"
 require_relative "learnings/layout"
 require_relative "plan/workspace"
+require_relative "shadowenv_python"
 require_relative "skills/layout"
 require_relative "ui"
 
@@ -14,7 +18,16 @@ module Dev
   # rather than a README claim. Each producer owns the ignore line for the
   # path it materializes (the constant sits beside the path it covers, so
   # the two cannot drift); this module collects them, writes them into the
-  # repo's `.gitignore` under one marker block, and checks them.
+  # repo's `.gitignore` under one marker block, and checks them. The list
+  # is documented, row for row, in docs/gitignore.md.
+  #
+  # Two kinds of producer: activation state a `dependencies.rb` directive
+  # materializes (the per-side lisps and venv links, the cmake source
+  # links, the luarocks tree — every one naming a path on one machine), and
+  # the agent links the learnings, skills and plan modules place. The list
+  # is unconditional: a project that declares no `python` ignores `.venv`
+  # for nothing, which costs a line, where a conditional list would cost a
+  # second writer per directive.
   #
   # Idempotency is per path, judged by git itself (`git check-ignore`): a
   # path the user already covers with their own pattern is left alone, a
@@ -24,11 +37,22 @@ module Dev
     extend T::Sig
 
     # The comment heading dev's block in a repo's .gitignore.
-    HEADER = "# dev-managed agent links — rematerialized by `dev up` / `dev deps install` / `dev plan`, never committed"
+    HEADER = "# dev-managed paths — rematerialized by `dev up` / `dev deps install` / `dev plan`, never committed"
+    # One release's alias of HEADER, from when the block held agent links
+    # only: a block under it is dev's and takes new lines (its header is
+    # rewritten to HEADER on the way), so no adopter gets a second block.
+    # Delete with the next release.
+    LEGACY_HEADER = "# dev-managed agent links — rematerialized by `dev up` / `dev deps install` / `dev plan`, never committed"
 
-    # Every path dev materializes into a project, from its owner.
+    # Every path dev materializes into a project, from its owner: the
+    # activation state first, in the order `dev up` writes it, then the
+    # agent links.
     MANAGED_PATHS = T.let(
       [
+        *Dev::BuildContainer::GITIGNORE_FOOTPRINT,
+        *Dev::ShadowenvPython::GITIGNORE_FOOTPRINT,
+        Dev::Deps::CmakeIntegration::GITIGNORE_FOOTPRINT,
+        Dev::Deps::LuaRocksIntegration::GITIGNORE_FOOTPRINT,
         Dev::Learnings::Layout::GITIGNORE_FOOTPRINT,
         Dev::Skills::Layout::GITIGNORE_FOOTPRINT,
         Dev::Plan::Workspace::GITIGNORE_FOOTPRINT,
@@ -136,15 +160,17 @@ module Dev
 
       # Add the paths inside dev's block: right after its last line when the
       # header exists (the block runs to the next blank line or EOF), else as
-      # a fresh block after a separating blank line.
+      # a fresh block after a separating blank line. A block still under the
+      # legacy header is the same block; its header is brought current.
       #
       # @param lines [Array<String>] mutated in place
       # @param paths [Array<String>]
       # @return [void]
       sig { params(lines: T::Array[String], paths: T::Array[String]).void }
       def insert(lines, paths)
-        header_at = lines.index(HEADER)
+        header_at = lines.index(HEADER) || lines.index(LEGACY_HEADER)
         if header_at
+          lines[header_at] = HEADER
           at = header_at + 1
           at += 1 while at < lines.size && !T.must(lines[at]).strip.empty?
           paths.each_with_index { |path, offset| lines.insert(at + offset, path) }

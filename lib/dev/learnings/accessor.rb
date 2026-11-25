@@ -266,8 +266,9 @@ module Dev
       end
 
       # The project tier's linked state: a frame for the project with the
-      # invariants link and its footprint, or a pointer when there is no
-      # enclosing project.
+      # invariants link and dev's whole managed footprint — the list
+      # `init --gitignore` writes, checked by the verb beside it — or a
+      # pointer when there is no enclosing project.
       #
       # @return [void]
       sig { void }
@@ -280,7 +281,7 @@ module Dev
 
         @ui.frame("Project (#{project_root})") do
           @ui.note(invariants_link_fact(@synchronizer.project_rules_file(project_root)))
-          Dev::Footprint.warn_missing(@ui, project_root, [Layout::GITIGNORE_FOOTPRINT])
+          Dev::Footprint.warn_missing(@ui, project_root, Dev::Footprint::MANAGED_PATHS)
         end
       end
 

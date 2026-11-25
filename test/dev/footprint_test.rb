@@ -10,9 +10,22 @@ require "tmpdir"
 
 transform!(RSpock::AST::Transformation)
 class Dev::FootprintTest < Minitest::Test
+  # The agent-link subset, enough to exercise the writer's block mechanics.
   PATHS = [".cursor/rules/org-invariants.mdc", ".agents/skills/dev/", ".cursor/plans/"].freeze
 
   BLOCK = "#{Dev::Footprint::HEADER}\n.cursor/rules/org-invariants.mdc\n.agents/skills/dev/\n.cursor/plans/\n".freeze
+
+  # The whole footprint, as docs/gitignore.md lists it: activation state
+  # first, then the agent links.
+  FULL_FOOTPRINT = [
+    ".shadowenv.d/",
+    ".shadowenv.d-container/",
+    ".venv",
+    ".venv-container",
+    "build/_deps/",
+    "lua_modules/",
+    *PATHS,
+  ].freeze
 
   def git_repo(dir)
     root = Pathname(dir) / "repo"
@@ -26,8 +39,63 @@ class Dev::FootprintTest < Minitest::Test
   end
 
   test "MANAGED_PATHS collects each owner's footprint line" do
-    Expect "the three paths dev materializes into a project"
-    Dev::Footprint::MANAGED_PATHS == PATHS
+    Expect "every path dev materializes into a project: the activation state, then the agent links"
+    Dev::Footprint::MANAGED_PATHS == FULL_FOOTPRINT
+  end
+
+  test "the default writer writes the whole footprint, and git then ignores the venv links as symlinks" do
+    Given "a fresh git repo whose .venv is a symlink, as dev links it"
+    dir = Dir.mktmpdir("dev-footprint-test-")
+    root = git_repo(dir)
+    FileUtils.mkdir_p(Pathname(dir) / "store-venv")
+    File.symlink((Pathname(dir) / "store-venv").to_s, (root / ".venv").to_s)
+
+    When "ensuring with the default paths"
+    added = Dev::Footprint::Gitignore.new.apply(root)
+
+    Then "the whole footprint is added, nothing is left missing, and the symlink is ignored"
+    added == FULL_FOOTPRINT
+    (root / ".gitignore").read == "#{Dev::Footprint::HEADER}\n#{FULL_FOOTPRINT.join("\n")}\n"
+    Dev::Footprint.missing(root, FULL_FOOTPRINT) == []
+    Dev::Footprint.ignored?(root, ".venv") == true
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure leaves alone a deps path the user's own broader pattern covers" do
+    Given "a repo ignoring build/ wholesale and the venv link by name"
+    dir = Dir.mktmpdir("dev-footprint-test-")
+    root = git_repo(dir)
+    (root / ".gitignore").write("build/\n.venv\n")
+
+    When "ensuring the deps paths"
+    added = Dev::Footprint::Gitignore.new(paths: [".venv", "build/_deps/", "lua_modules/"]).apply(root)
+
+    Then "only the luarocks tree is added; build/_deps/ and .venv were already git-ignored"
+    added == ["lua_modules/"]
+    (root / ".gitignore").read == "build/\n.venv\n\n#{Dev::Footprint::HEADER}\nlua_modules/\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "ensure adds a missing path inside a block under the legacy header, bringing the header current" do
+    Given "a repo whose dev block carries the agent-links header, followed by more user content"
+    dir = Dir.mktmpdir("dev-footprint-test-")
+    root = git_repo(dir)
+    (root / ".gitignore").write("*.log\n\n#{Dev::Footprint::LEGACY_HEADER}\n#{PATHS.join("\n")}\n\n# later\nbuild/\n")
+
+    When "ensuring the venv links"
+    added = Dev::Footprint::Gitignore.new(paths: [".venv", ".venv-container"]).apply(root)
+
+    Then "the links join that block, its header reads the current wording, and no second block opens"
+    added == [".venv", ".venv-container"]
+    (root / ".gitignore").read ==
+      "*.log\n\n#{Dev::Footprint::HEADER}\n#{PATHS.join("\n")}\n.venv\n.venv-container\n\n# later\nbuild/\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "ensure in a repo without a .gitignore writes the block" do

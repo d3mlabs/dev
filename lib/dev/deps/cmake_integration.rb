@@ -42,6 +42,10 @@ module Dev
       # pointing FETCHCONTENT_SOURCE_DIR_<NAME> there finds it.
       SOURCES_DIR = "build/_deps"
       SOURCE_SUFFIX = "-src"
+      # The sources directory as the repo-relative .gitignore line covering
+      # it — beside the path it covers, collected by Dev::Footprint. Every
+      # link in it names a store path on one machine.
+      GITIGNORE_FOOTPRINT = T.let("#{SOURCES_DIR}/".freeze, String)
 
       DEPS_CMAKE_FILE = "deps.cmake"
       TARGETS_CMAKE_FILE = "deps.targets.cmake"

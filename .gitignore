@@ -38,3 +38,9 @@ tmp/
 # Materialized by dev up / dev deps install: skill links from the locked gem
 # set (the dev-managed subtree; anything else under .agents/skills/ is ours)
 .agents/skills/dev/
+
+# dev-managed paths — rematerialized by `dev up` / `dev deps install` / `dev plan`, never committed
+.venv
+.venv-container
+build/_deps/
+lua_modules/
