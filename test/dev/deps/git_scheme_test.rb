@@ -41,7 +41,7 @@ class Dev::Deps::GitSchemeTest < Minitest::Test
 
   test "a range reads the refs that are versions, v prefix aside" do
     Given
-    requirement = Requirement.parse("~> 1.17")
+    requirement = Requirement.parse("^1.17")
 
     Expect
     scheme.satisfies?(pv(SHA, ref: "v1.17.0"), requirement)

@@ -90,10 +90,10 @@ module Dev
       end
 
       # The whole series a requirement covers, when its bounds are series
-      # boundaries and nothing finer (`~> 1`, `>= 1, < 2`, `>= 1`): the
+      # boundaries and nothing finer (`^1`, `>=1 <2`, `>=1`): the
       # shape an adopter's constraint has, which the Resolver resolves
       # through a series head where the universe keeps one. A requirement
-      # with a bound inside a series (`>= 1.4`) names versions, not
+      # with a bound inside a series (`>=1.4`) names versions, not
       # series, and has no span. A channel whose versions have no major to
       # read answers nil for every requirement.
       #

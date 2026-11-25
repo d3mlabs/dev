@@ -19,9 +19,9 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     Dev::Deps::PackageVersion.new(version: version, metadata: metadata)
   end
 
-  test "a family suffix's requirement (~> 18.0) is evaluated over the members' real versions" do
+  test "a family suffix's requirement (~18) is evaluated over the members' real versions" do
     Given "the llvm family as brew reports it"
-    requirement = Requirement.parse("~> 18.0")
+    requirement = Requirement.parse("~18")
 
     Expect "the @18 member's real version satisfies, the others do not"
     scheme.satisfies?(pv("18.1.8", suffix: "18"), requirement)
@@ -39,7 +39,7 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     Where
     version       | expression          | expected
     "3.11.4_1"    | "> 3.11.4"          | true
-    "3.11.4_1"    | "~> 3.11.0"         | true
+    "3.11.4_1"    | "~3.11.0"           | true
     "3.11.4_1"    | "< 3.11.5"          | true
     "3.11.4"      | "= 3.11.4"          | true
     "3.11.4_1"    | "= 3.11.4"          | false
@@ -86,7 +86,7 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     Expect
     scheme.supports?(Requirement::Any.new)
     scheme.supports?(Requirement.parse("= 18.1.8"))
-    scheme.supports?(Requirement.parse("~> 18.0"))
+    scheme.supports?(Requirement.parse("~18"))
     scheme.supports?(Requirement.parse(">= 18, < 20"))
   end
 
@@ -95,13 +95,13 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     family = [pv("3.31.4")]
 
     When "a range is asked of it"
-    message = scheme.refusal(name: "cmake", requirement: Requirement.parse("~> 3.31.0"), versions: family)
+    message = scheme.refusal(name: "cmake", requirement: Requirement.parse("~3.31.0"), versions: family)
 
     Then "the refusal names the one version and both ways to say it"
     message.include?("cmake: brew has one version of it, 3.31.4")
-    message.include?("~> 3.31.0")
+    message.include?("~3.31.0")
     message.include?('brew "cmake"')
-    message.include?('brew "cmake", "= 3.31.4"')
+    message.include?('brew "cmake", "3.31.4"')
   end
 
   test "a one-version family answers Any and its exact version" do
@@ -118,7 +118,7 @@ class Dev::Deps::BrewSchemeTest < Minitest::Test
     family = [pv("21.1.0"), pv("19.1.7", suffix: "19"), pv("18.1.8", suffix: "18")]
 
     Expect
-    scheme.refusal(name: "llvm", requirement: Requirement.parse("~> 18.0"), versions: family).nil?
+    scheme.refusal(name: "llvm", requirement: Requirement.parse("~18"), versions: family).nil?
   end
 
   test "a version brew's ordering cannot read is not a candidate" do

@@ -11,8 +11,8 @@ module Dev
     # NOT semver: the "-1" is a packaging revision that releases *above* its
     # unrevised version (3.4-1 > 3.4), where semver would read it as a
     # prerelease below it. That grammar difference is why luarocks gets its
-    # own ordering instead of riding SemverScheme. dev's `~>` is rockspec's
-    # (rubygems-style): `~> 1.0.5` is `>= 1.0.5, < 1.1`.
+    # own ordering instead of riding SemverScheme. dev's `~` is rockspec's
+    # `~>`: `~1.0.5` is `>= 1.0.5, < 1.1`.
     class RockScheme < RangeScheme
       extend T::Sig
 

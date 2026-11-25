@@ -152,12 +152,15 @@ class Dev::Deps::RequirementTest < Minitest::Test
   end
 
   test "terms keep a shorthand as written while bounds expand it" do
-    Given "a conjunction with a caret term"
-    parsed = Requirement.parse("^1.0 >=1.0.5")
+    Given "conjunctions with a caret term and with a tilde term"
+    caret = Requirement.parse("^1.0 >=1.0.5")
+    tilde = Requirement.parse("~1.2 >=1.2.5")
 
     Expect "terms is what was written, bounds comparators alone"
-    parsed.terms.map(&:to_s) == ["^1.0", ">=1.0.5"]
-    parsed.bounds.map(&:to_s) == [">=1.0.0", "<2.0.0", ">=1.0.5"]
+    caret.terms.map(&:to_s) == ["^1.0", ">=1.0.5"]
+    caret.bounds.map(&:to_s) == [">=1.0.0", "<2.0.0", ">=1.0.5"]
+    tilde.terms.map(&:to_s) == ["~1.2", ">=1.2.5"]
+    tilde.bounds.map(&:to_s) == [">=1.2.0", "<1.3.0", ">=1.2.5"]
   end
 
   test "comparator terms' bounds are themselves" do

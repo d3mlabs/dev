@@ -27,17 +27,15 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
 
     Where
     version  | expression        | expected
-    "1.17.4" | "~> 1.17"         | true
-    "2.0.0"  | "~> 1.17"         | false
+    "1.17.4" | "^1.17"           | true
+    "2.0.0"  | "^1.17"           | false
     "1.17.4" | ">= 1.0, < 2.0"   | true
     "2.1.0"  | ">= 1.0, < 2.0"   | false
     "1.17.4" | "1.17.4"          | true
     "1.17.5" | "1.17.4"          | false
     "1.0.0"  | ">= 1.0.0.beta"   | true
-    "1.0.1"  | "!= 1.0.0"        | true
-    "1.0.0"  | "!= 1.0.0"        | false
-    "1.0.5"  | "~> 1.0, >= 1.0.5" | true
-    "1.0.4"  | "~> 1.0, >= 1.0.5" | false
+    "1.0.5"  | "^1.0 >=1.0.5"    | true
+    "1.0.4"  | "^1.0 >=1.0.5"    | false
   end
 
   test "Any is satisfied by anything" do
@@ -45,19 +43,20 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
     scheme.satisfies?(pv("1.17.4"), Requirement::Any.new)
   end
 
-  test "render translates #{expression.inspect} term for term into a Gem::Requirement" do
+  test "render translates #{expression.inspect} comparator for comparator into a Gem::Requirement" do
     When "rendering for bundler"
     rendered = scheme.render(Requirement.parse(expression))
 
-    Then "the tool's own type carries exactly what was written"
+    Then "the tool's own type carries the comparators the range means"
     rendered == Gem::Requirement.new(gem_terms)
 
     Where
     expression       | gem_terms
-    "~> 1.17"        | ["~> 1.17"]
-    "= 4.0.1"        | ["= 4.0.1"]
-    ">= 1.0, < 2.0"  | [">= 1.0", "< 2.0"]
-    "~> 1.0, != 1.2" | ["~> 1.0", "!= 1.2"]
+    "^1.17"          | [">= 1.17.0", "< 2.0.0"]
+    "~1.17"          | [">= 1.17.0", "< 1.18.0"]
+    "4.0.1"          | ["= 4.0.1"]
+    ">=1.0 <2.0"     | [">= 1.0", "< 2.0"]
+    "^1.0 >=1.0.5"   | [">= 1.0.0", "< 2.0.0", ">= 1.0.5"]
   end
 
   test "render of Any is rubygems' default requirement" do
@@ -69,7 +68,7 @@ class Dev::Deps::GemSchemeTest < Minitest::Test
     Expect
     scheme.supports?(Requirement::Any.new)
     scheme.supports?(Requirement.parse("= 1"))
-    scheme.supports?(Requirement.parse("~> 1"))
+    scheme.supports?(Requirement.parse("^1"))
     scheme.supports?(Requirement.parse(">= 1, < 2"))
   end
 

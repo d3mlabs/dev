@@ -12,7 +12,7 @@ module Dev
   module Lifecycle
     # The gh channel's heads as the forge keeps them: one **series tag**
     # (`v1`, `v2`) per deployed series, pointing at the commit of the
-    # release the series resolves to (`~> 1` in a lock, `@v1` in a
+    # release the series resolves to (`^1` in a lock, `@v1` in a
     # workflow), and GitHub's **latest designation**, the pointer for
     # whoever asks for the newest release.
     # `deploy gh` moves them (Deps::GhPublisher); `release` never does.

@@ -36,10 +36,10 @@ class Dev::Deps::VersionSchemeTest < Minitest::Test
 
     Expect
     scheme.supports?(Requirement::Any.new)
-    scheme.supports?(Requirement.parse("~> 1"))
+    scheme.supports?(Requirement.parse("^1"))
     scheme.supported == "any requirement"
-    scheme.refusal(name: "x", requirement: Requirement.parse("~> 1"), versions: [version]).nil?
-    scheme.unsatisfied(name: "x", requirement: Requirement.parse("~> 1"), versions: [version]).nil?
+    scheme.refusal(name: "x", requirement: Requirement.parse("^1"), versions: [version]).nil?
+    scheme.unsatisfied(name: "x", requirement: Requirement.parse("^1"), versions: [version]).nil?
   end
 
   test "by default no requirement is series-shaped" do
@@ -48,7 +48,7 @@ class Dev::Deps::VersionSchemeTest < Minitest::Test
 
     Expect
     scheme.series_span(Requirement::Any.new).nil?
-    scheme.series_span(Requirement.parse("~> 1")).nil?
+    scheme.series_span(Requirement.parse("^1")).nil?
     scheme.series_span(Requirement.parse(">= 1")).nil?
   end
 end

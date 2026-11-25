@@ -45,7 +45,7 @@ class Dev::Deps::SelectionRuleTest < Minitest::Test
 
     Where
     requirement   | head_major | picked  | said
-    "~> 1"        | 1          | "1.3.0" | "series head v1 → 1.3.0"
+    "^1"          | 1          | "1.3.0" | "series head v1 → 1.3.0"
     ">= 1, < 2"   | 1          | "1.3.0" | "series head v1 → 1.3.0"
     ">= 1"        | 2          | "2.0.0" | "series head v2 → 2.0.0"
     ">= 1.4"      | nil        | "2.0.0" | "greatest satisfying"
@@ -53,12 +53,12 @@ class Dev::Deps::SelectionRuleTest < Minitest::Test
   end
 
   test "a head that is not a candidate does not apply, and the rule says it passed that head over" do
-    Given "v1 pointing at a pre-release ~> 1 does not admit"
+    Given "v1 pointing at a pre-release ^1 does not admit"
     heads = [head(1, "1.0.0-rc.1")]
     candidates = [version("1.0.0"), version("1.1.0")]
 
     When
-    rule = rule_for("~> 1", heads:, candidates:)
+    rule = rule_for("^1", heads:, candidates:)
 
     Then
     rule == Dev::Deps::SelectionRule::Greatest.new(beside: heads)

@@ -15,7 +15,7 @@ two roles.
 | Identity | `PackageId` | Which package: `integration` + `name`, plus `source` for source-addressed deps (a git URL, an `owner/repo` slug, a tap, a Steam app id). Value object, works as a Hash key. Version is deliberately not identity: two versions of one package are related candidates in one universe, never two packages — keeping selection (semver, ranges) possible over them. If a legitimate same-package-twice case ever appears, the fix is per-context resolution in the solver, not versioned identity. |
 | Universe | `Package` → `PackageVersion` | What exists: every version a repository reports, each carrying facts — `platforms`, `digest`, `artifacts` (the published bytes per platform — fetched by dev, or by the tool with dev recording them), `declarations` (its declared-deps claim), and `metadata` (ecosystem facts) — and the package's `heads` (`SeriesHead`: per series, the version the store's pointer names) where the store keeps pointers. Facts are unconditional: nothing in a universe depends on who asked. |
 | Declaration | `Declaration` | The shared atom: name + integration + `requirement` + `options` + optional `source` coordinate + optional `revision` address. The requirement is a `Requirement` — what is asked of the package's versions, in dev's one language (`Any` when nothing is asked); the options are the integration's own vocabulary beside it (a gem's `require:`, a pip `host:`). A revision is a direct address into an ecosystem's continuous space (a git commit SHA, an exact Xcode version) that forgoes resolution entirely — declaring one beside a requirement or options is a loud error. Stated by whoever authored the thing — a project's `dependencies.rb` row or an upstream manifest — and context-free by type: where/when *you* install is not part of what is declared about a package. |
-| Requirement | `Requirement` | The one language every declaration speaks: `Any`, `Exact(v)`, `Pessimistic(v)` or `Bounds([op, v]…)`, parsed from rubygems' requirement syntax (`"4.0.1"`, `"~> 18.0"`, `">= 2, < 3"`). `~> v` means `>= v, < bump(v)` with rubygems' bump, once, for every channel. The version inside is kept as written; what it means is the channel's. |
+| Requirement | `Requirement` | The one language every declaration speaks: `Any`, `Exact(v)`, `Caret(v)`, `Tilde(v)` or `Bounds([op, v]…)`, parsed from semver range syntax (`"4.0.1"`, `"^1.2"`, `"~18"`, `">=2 <3"`). `^v` and `~v` are defined once over semver's version shape (`SemverVersion`), for every channel; bundler's `~>` is refused naming the semver spelling. The version inside a comparator is kept as written; what it means is the channel's. |
 | Scoped declaration | `ScopedDeclaration` | A `Declaration` married to the context it resolves under: a `Scope` (`group`, `host`, `env` — inherited down the walk as one unit) plus the per-row axes that deliberately don't inherit (`platform`, `post_install`, `materialization` — install instructions like asset globs, build recipes, artifact targets). What the DSL produces and the Resolver consumes. Composition, not a subclass: a scoped declaration must never pass where a context-free `Declaration` is expected. |
 | Pin | `Dependency` | What was chosen: exact version, integrity hash, metadata. What the lockfile serializes and integrations install. |
 
@@ -160,7 +160,7 @@ ecosystem's canonical form and validated at the DSL boundary (a cmake
      the highest satisfying version (`sort`) — or, where the universe
      reports series heads (`Package#heads`: a gh repo's `v1` tag at a
      release's commit) and the requirement is series-shaped
-     (`VersionScheme#series_span`: `~> 1`, `>= 1, < 2`, `>= 1`), the
+     (`VersionScheme#series_span`: `^1`, `>=1 <2`, `>=1`), the
      head of the newest covered series among the candidates, so a lock
      and a workflow on `@v1` read one pointer; the rule rides the pin as
      its `rule` and accounts for itself in the lock report
@@ -366,36 +366,41 @@ that needs the absolute path rather than PATH.
 ## Requirement semantics per integration
 
 Every declaration verb takes the same optional positional: a requirement
-in rubygems' syntax (`"4.0.1"`, `"~> 18.0"`, `">= 2, < 3"`), parsed once
-into a `Requirement`. Keyword sugar stays where a channel's own spelling
-is the natural one — brew `version: "18"` and `brew "llvm@18"` both mean
-`"~> 18.0"`, a gh `tag:` or a steam `buildid:` is an `Exact` — and a verb
-given both spellings refuses (`TwoRequirementsError`). What a channel
+in semver range syntax (`"4.0.1"`, `"^1.2"`, `"~18"`, `">=2 <3"`), parsed
+once into a `Requirement`. Keyword sugar stays where a channel's own
+spelling is the natural one — brew `version: "18"` and `brew "llvm@18"`
+both mean `"~18"`, a gh `tag:` or a steam `buildid:` is an `Exact` — and
+a verb given both spellings refuses (`TwoRequirementsError`). What a channel
 does with the requirement is one of three things.
 
 - **Translate** — the channel's tool solves. `GemScheme#render` turns the
-  requirement into a `Gem::Requirement` term for term, and `BundlerLocker`
-  writes that into the Gemfile.
+  requirement's comparator terms into a `Gem::Requirement`, and
+  `BundlerLocker` writes that into the Gemfile — the one place bundler's
+  grammar is written.
 - **Evaluate** — dev picks. The scheme reads `Requirement#bounds` (the
-  comparator terms, `~>` expanded to `>= v, < bump(v)`) against its own
-  ordering of the universe's versions, and the Resolver takes the max —
-  or the series head, where the universe keeps one for a series-shaped
-  requirement ([dependencies.md](dependencies.md#series-heads)); which
-  requirements are series-shaped is the scheme's `series_span`, answered
-  by `TagScheme` and nil elsewhere.
-  `RangeScheme` is this once; a subclass supplies the ordering alone.
+  comparator terms, `^` and `~` expanded to their floor and exclusive
+  ceiling) against its own ordering of the universe's versions, and the
+  Resolver takes the max — or the series head, where the universe keeps
+  one for a series-shaped requirement
+  ([dependencies.md](dependencies.md#series-heads)); which requirements
+  are series-shaped is the scheme's `series_span`, answered by
+  `TagScheme` and nil elsewhere. `RangeScheme` is this once; a subclass
+  supplies the ordering alone, and names what a prerelease is
+  (`prerelease_base`) so node-semver's rule — a prerelease is a candidate
+  only where a term names a prerelease of its release — holds under every
+  ordering.
 - **Refuse** — the channel has nothing to range over. `supports?` names
   the forms it takes, and the Resolver refuses the rest at declaration,
   before any universe is read, with `supported` as the reason.
 
 | Integration | Scheme | What the requirement means |
 | --- | --- | --- |
-| bundler | `GemScheme` | Translated: `render` hands bundler the terms as written. `satisfies?` then confirms the lock's singleton choice. Everything else on the line (`require:`, `git:`, `path:`) is the declaration's options, written as gem options. |
-| ruby | `GemScheme` | Evaluated with rubygems' ordering over the d3mlabs tap's `ruby@X.Y.Z` family (one immutable formula per patch, enumerated from `brew tap-info`): `"4.0.6"` pins, `"~> 4.0"` ranges, a bare minor `"4.0"` is `"~> 4.0.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
-| pip | `Pep440Scheme` | Evaluated with PEP 440 ordering (dev < pre < release < post, epochs). `~>` reads as PEP 440's `~=`. |
+| bundler | `GemScheme` | Translated: `render` hands bundler the comparators the range means. `satisfies?` then confirms the lock's singleton choice. Everything else on the line (`require:`, `git:`, `path:`) is the declaration's options, written as gem options. |
+| ruby | `GemScheme` | Evaluated with rubygems' ordering over the d3mlabs tap's `ruby@X.Y.Z` family (one immutable formula per patch, enumerated from `brew tap-info`): `"4.0.6"` pins, `"~4.0"` ranges, a bare minor `"4.0"` is `"~4.0"`. Resolves, locks (`ruby:`) and installs as a brew pin (`install_alias: :brew`). |
+| pip | `Pep440Scheme` | Evaluated with PEP 440 ordering (dev < pre < release < post, epochs). `~2.0.3` reads as PEP 440's `~=2.0.3`; a pre-release or dev release is excluded unless a term asks for one, as pip excludes them. |
 | luarocks | `RockScheme` | Evaluated over `major.minor[.patch]-revision`; a revision is a release above the unrevised version. |
-| ficsit | `SemverScheme` | Evaluated with semver ordering. The `version:` keyword is ficsit.app's own node-style range (`"^3.12.0"`), translated by `SemverRange` at the DSL boundary; the repository translates the ranges SMR writes on a mod's edges the same way. |
-| brew, python | `BrewScheme` | Evaluated over the formula family's real stable versions — the bare spec's and its versioned siblings' (`llvm` 21.1.0, `llvm@19` 19.1.7, `llvm@18` 18.1.8) — with Homebrew's own ordering (`BrewVersion`: `3.11.4_1` above `3.11.4`, `1.0r3` above `1.0`, `1.0.0-beta` below `1.0.0`). `brew "llvm@18"`, `brew "llvm", version: "18"` and `brew "llvm", "~> 18.0"` are one declaration, named `llvm`; the member chosen rides its `version_suffix` fact into the pin, and `BrewIntegration` installs `llvm@18` from it. The `python` verb's minor is the same sugar over homebrew/core's `python@<minor>`. A family with one version satisfies `Any` or its exact version; a range over it is refused naming that version (`refusal`), rather than satisfied today and unanswerable when brew moves the formula. |
+| ficsit | `SemverScheme` | Evaluated with semver.org's precedence (`SemverVersion`). The `version:` keyword is the positional under the name SMR writes it as (`version: "^3.12.0"`); the ranges SMR writes on a mod's edges parse as any requirement does. |
+| brew, python | `BrewScheme` | Evaluated over the formula family's real stable versions — the bare spec's and its versioned siblings' (`llvm` 21.1.0, `llvm@19` 19.1.7, `llvm@18` 18.1.8) — with Homebrew's own ordering (`BrewVersion`: `3.11.4_1` above `3.11.4`, `1.0r3` above `1.0`, `1.0.0-beta` below `1.0.0`). `brew "llvm@18"`, `brew "llvm", version: "18"` and `brew "llvm", "~18"` are one declaration, named `llvm`; the member chosen rides its `version_suffix` fact into the pin, and `BrewIntegration` installs `llvm@18` from it. The `python` verb's minor is the same sugar over homebrew/core's `python@<minor>`. A family with one version satisfies `Any` or its exact version; a range over it is refused naming that version (`refusal`), rather than satisfied today and unanswerable when brew moves the formula. |
 | cask | `CaskScheme` | Refused: `Any` alone. Homebrew publishes no versions for casks and a versioned cask is its own name (`brew "temurin@21", cask: true`). |
 | gh | `TagScheme` | Evaluated over the repo's releases and tags: `tag:` is an `Exact` matched by name as spelled (`"5.6.1-css-83"`, `"toolchain-2"`); the positional ranges over the tags that are versions, a leading `v` read past, with rubygems' tolerant ordering. A gh declaration never floats to the latest release: it names a requirement, a `tag:` or a `sha:`. `sha:` is a revision (continuous space, `at`), a full 40-hex commit SHA; a commit publishes no release, so a `sha:` pin materializes with `build:` alone. |
 | cmake | `GitScheme` | `TagScheme` over the version's `ref` fact (the enumerated `ls-remote` refs): `tag:`/`branch:` are an `Exact` ref by name, the positional a range over version tags. `commit:` is a revision (continuous space, `at`). |
@@ -403,13 +408,12 @@ does with the requirement is one of three things.
 | url, egs, xcode, wwise, image | — (no scheme) | Refused beyond `Any`, with no options: the address is the whole ask. url's universe is an observable-now singleton (egs, Epic's BuildPatchTool zip, is a url universe under its own symbol so pinning it contributes the `deploy egs` channel); xcode and wwise are revision-addressed (Apple publishes no registry; Audiokinetic's sits behind a login resolution never holds). A url `tag:` is a display label riding materialization; a wwise `integration:` is the companion package's version, an install instruction riding materialization alongside `ue:`. |
 
 The language is dev's; the meaning of a version string is each
-channel's. `Requirement` keeps the version as written (brew's `3.11.4_1`
-is no rubygems version, and parses), and only `~>` demands a version
-rubygems can bump. Repositories translate upstream syntax into the
-language at the `find` seam (ficsit's `^3.12.0` arrives as
-`>= 3.12.0, < 4.0.0`), so a requirement crosses the system boundary
-exactly once. Dev-native territory with no upstream scheme to inherit
-orders by semver (`SemverScheme`).
+channel's. `Requirement` keeps a comparator's version as written (brew's
+`3.11.4_1` is no semver version, and parses), and only `^` and `~`
+demand a version semver can bump. Repositories translate upstream syntax
+into the language at the `find` seam, so a requirement crosses the
+system boundary exactly once. Dev-native territory with no upstream
+scheme to inherit orders by semver (`SemverScheme`).
 
 Scheme failures split by whose fault they are:
 `VersionScheme::InvalidRequirementError` (the requirement names a version

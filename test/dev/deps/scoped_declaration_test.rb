@@ -30,14 +30,14 @@ class Dev::Deps::ScopedDeclarationTest < Minitest::Test
     Given "a scoped declaration"
     scoped = Dev::Deps::ScopedDeclaration.new(
       declaration: atom(
-        name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse("~> 3.6"), options: { "target" => "Windows" },
+        name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse("^3.6"), options: { "target" => "Windows" },
       ),
     )
 
     Expect "name/integration/requirement/options read through to the atom"
     scoped.name == "SML"
     scoped.integration == :ficsit
-    scoped.requirement == Dev::Deps::Requirement.parse("~> 3.6")
+    scoped.requirement == Dev::Deps::Requirement.parse("^3.6")
     scoped.options == { "target" => "Windows" }
   end
 

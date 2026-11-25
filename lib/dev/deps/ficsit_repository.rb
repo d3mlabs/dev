@@ -22,7 +22,6 @@ require_relative "package_id"
 require_relative "package_version"
 require_relative "repository"
 require_relative "requirement"
-require_relative "semver_range"
 
 module Dev
   module Deps
@@ -166,21 +165,18 @@ module Dev
       # @param sleeper [Proc] how the processing wait sleeps (injectable for tests)
       # @param part_size [Integer] bytes per upload part (tests lower it to exercise the chunking)
       # @param ui [Ui] the terminal a first-time API key is onboarded at
-      # @param semver_range [SemverRange] reads SMR's dependency conditions
-      #   into dev's requirement language
       sig do
         params(client: FicsitClient, merger: MultiTargetPluginMerger, api_key: T.nilable(ApiKeySource), sleeper: Sleeper,
-          part_size: Integer, ui: Ui, semver_range: SemverRange).void
+          part_size: Integer, ui: Ui).void
       end
       def initialize(client: FicsitClient.new, merger: MultiTargetPluginMerger.new, api_key: nil,
-                     sleeper: DEFAULT_SLEEPER, part_size: PART_SIZE, ui: NoUi.new, semver_range: SemverRange.new)
+                     sleeper: DEFAULT_SLEEPER, part_size: PART_SIZE, ui: NoUi.new)
         super()
         @client = client
         @merger = merger
         @api_key = T.let(api_key || credential_api_key(ui), ApiKeySource)
         @sleeper = sleeper
         @part_size = part_size
-        @semver_range = semver_range
       end
 
       # Report a mod's published versions from ficsit.app.
@@ -305,18 +301,17 @@ module Dev
       end
 
       # Normalize a ficsit dependency edge into a Declaration: the raw
-      # "condition" (a node-style semver range, possibly absent) becomes
-      # dev's requirement here, at the boundary — upstream syntax crosses
-      # into the system exactly once. The integration is stamped by this
-      # repository: ficsit mods require ficsit mods.
+      # "condition" (a semver range, possibly absent — SMR writes the
+      # grammar dev's requirement reads) becomes dev's requirement here,
+      # at the boundary. The integration is stamped by this repository:
+      # ficsit mods require ficsit mods.
       #
       # @param dependency_data [Hash] one GraphQL dependency object
       # @return [Declaration]
-      # @raise [SemverRange::ParseError] if the condition is not a range this reads
+      # @raise [Requirement::ParseError] if the condition is not a semver range
       sig { params(dependency_data: T::Hash[String, T.untyped]).returns(Declaration) }
       def edge_declaration(dependency_data)
-        condition = dependency_data["condition"].to_s
-        requirement = condition.empty? ? Requirement::Any.new : @semver_range.parse(condition)
+        requirement = Requirement.parse(dependency_data["condition"])
         Declaration.new(name: dependency_data["mod_id"], integration: :ficsit, requirement: requirement)
       end
 

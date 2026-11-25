@@ -296,7 +296,7 @@ module Dev
           # same install_all call, so one activation covers every keg):
           # ruby ranges over the d3mlabs tap's immutable ruby@X.Y.Z family
           # with rubygems ordering; python ranges over core's python@minor
-          # family (`python "3.12"` is `~> 3.12.0`), as any versioned
+          # family (`python "3.12"` is `~3.12`), as any versioned
           # formula. Their own symbols keep the lock legible (`ruby:` /
           # `python:` sections) and let the install step that activates an
           # interpreter key on the pin, not its name.

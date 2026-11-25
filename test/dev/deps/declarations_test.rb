@@ -8,7 +8,7 @@ require "dev/deps/declarations"
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::DeclarationsTest < Minitest::Test
   def atom(name)
-    Dev::Deps::Declaration.new(name: name, integration: :ficsit, requirement: Dev::Deps::Requirement.parse("~> 1.0"))
+    Dev::Deps::Declaration.new(name: name, integration: :ficsit, requirement: Dev::Deps::Requirement.parse("^1.0"))
   end
 
   test "Resolved carries the declared dependency list" do

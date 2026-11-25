@@ -117,7 +117,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.registered_integrations[:wow_curseforge] == "WoWCurseforgeIntegration"
   end
 
-  test "ficsit() version: is ficsit.app's own range syntax, translated into dev's language" do
+  test "ficsit() version: is the requirement under the keyword SMR writes it as" do
     When "defining a ficsit mod dep the way SMR writes the range"
     config = Dev::Deps.define do
       group :app do
@@ -130,26 +130,26 @@ class Dev::Deps::DSLTest < Minitest::Test
     decl.name == "SML"
     decl.integration == :ficsit
     decl.scope.group == :app
-    decl.requirement == Requirement.parse(">= 3.12.0, < 4.0.0")
+    decl.requirement == Requirement.parse("^3.12.0")
   end
 
   test "ficsit() takes the positional in dev's language" do
     When
     config = Dev::Deps.define do
       group :app do
-        ficsit "SML", "~> 3.12"
+        ficsit "SML", "^3.12"
       end
     end
 
     Then
-    config.declarations[0].requirement == Requirement.parse("~> 3.12")
+    config.declarations[0].requirement == Requirement.parse("^3.12")
   end
 
   test "ficsit() refuses the requirement said twice" do
     When "giving both the positional and version:"
     Dev::Deps.define do
       group :app do
-        ficsit "SML", "~> 3.12", version: "^3.12.0"
+        ficsit "SML", "^3.12", version: "^3.12.0"
       end
     end
 
@@ -183,7 +183,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then "which artifact to fetch is an install instruction"
     decl = config.declarations[0]
-    decl.requirement == Requirement.parse(">= 1.0.0, < 2.0.0")
+    decl.requirement == Requirement.parse("^1.0")
     decl.materialization["target"] == "LinuxServer"
     !decl.options.key?("target")
   end
@@ -525,19 +525,19 @@ class Dev::Deps::DSLTest < Minitest::Test
     When
     config = Dev::Deps.define do
       group :app do
-        gh "json", "~> 3.11", github: "nlohmann/json", build: :none
+        gh "json", "^3.11", github: "nlohmann/json", build: :none
       end
     end
 
     Then
-    config.declarations[0].requirement == Requirement.parse("~> 3.11")
+    config.declarations[0].requirement == Requirement.parse("^3.11")
   end
 
   test "gh refuses the requirement said twice" do
     When "giving both the positional and tag:"
     Dev::Deps.define do
       group :app do
-        gh "json", "~> 3.11", github: "nlohmann/json", tag: "v3.11.3", build: :none
+        gh "json", "^3.11", github: "nlohmann/json", tag: "v3.11.3", build: :none
       end
     end
 
@@ -718,7 +718,7 @@ class Dev::Deps::DSLTest < Minitest::Test
       group :app do
         cmake "fmt", github: "fmtlib/fmt", tag: "11.0.2"
         cmake "spdlog", github: "gabime/spdlog", branch: "v1.x"
-        cmake "googletest", "~> 1.17", github: "google/googletest"
+        cmake "googletest", "^1.17", github: "google/googletest"
       end
     end
 
@@ -726,7 +726,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     config.declarations.map(&:requirement) == [
       Requirement::Exact.new(version: "11.0.2"),
       Requirement::Exact.new(version: "v1.x"),
-      Requirement.parse("~> 1.17"),
+      Requirement.parse("^1.17"),
     ]
     config.declarations.map(&:options) == [{}, {}, {}]
   end
@@ -735,7 +735,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     When
     Dev::Deps.define do
       group :app do
-        cmake "fmt", "~> 11.0", github: "fmtlib/fmt", tag: "11.0.2"
+        cmake "fmt", "^11.0", github: "fmtlib/fmt", tag: "11.0.2"
       end
     end
 
@@ -779,22 +779,22 @@ class Dev::Deps::DSLTest < Minitest::Test
     raises Dev::Deps::GroupDSL::EmptyNameError
   end
 
-  test "brew \"llvm@18\", version: \"18\" and \"~> 18.0\" are one declaration" do
+  test "brew \"llvm@18\", version: \"18\" and \"~18\" are one declaration" do
     When "spelling the 18 line three ways"
     config = Dev::Deps.define do
       group :build do
         brew "llvm@18"
         brew "llvm", version: "18"
-        brew "llvm", "~> 18.0"
+        brew "llvm", "~18"
       end
     end
 
-    Then "each is llvm asking ~> 18.0 — the suffix is sugar, never the name"
+    Then "each is llvm asking ~18 — the suffix is sugar, never the name"
     declarations = config.declarations.map(&:declaration)
     declarations.uniq.size == 1
     declarations[0].name == "llvm"
     declarations[0].integration == :brew
-    declarations[0].requirement == Requirement.parse("~> 18.0")
+    declarations[0].requirement == Requirement.parse("~18")
     declarations[0].options == {}
   end
 
@@ -804,7 +804,7 @@ class Dev::Deps::DSLTest < Minitest::Test
 
     Then
     config.declarations[0].name == "python"
-    config.declarations[0].requirement == Requirement.parse("~> 3.12.0")
+    config.declarations[0].requirement == Requirement.parse("~3.12")
   end
 
   test "brew refuses the requirement said twice: #{spelling}" do
@@ -819,8 +819,8 @@ class Dev::Deps::DSLTest < Minitest::Test
     Where
     spelling                  | args                   | kwargs
     "@ suffix and version:"   | ["llvm@18"]            | { version: "18" }
-    "@ suffix and positional" | ["llvm@18", "~> 18.0"] | {}
-    "version: and positional" | ["llvm", "~> 18.0"]    | { version: "18" }
+    "@ suffix and positional" | ["llvm@18", "~18"]     | {}
+    "version: and positional" | ["llvm", "~18"]        | { version: "18" }
   end
 
   test "brew cask: routes to :cask and keeps the name whole — a versioned cask is its own name" do
@@ -849,7 +849,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     Then
     decl = config.declarations[0]
     decl.name == "llvm"
-    decl.requirement == Requirement.parse("~> 18.0")
+    decl.requirement == Requirement.parse("~18")
     decl.source == "d3mlabs/d3mlabs"
     decl.scope.env == "ci"
   end
@@ -1039,8 +1039,8 @@ class Dev::Deps::DSLTest < Minitest::Test
     Where
     description                         | version   | requirement
     "an exact patch pins it"            | "4.0.5"   | "4.0.5"
-    "a requirement passes through"      | "~> 4.0"  | "~> 4.0"
-    "a minor means any patch of it"     | "4.0"     | "~> 4.0.0"
+    "a requirement passes through"      | "^4.0"    | "^4.0"
+    "a minor means any patch of it"     | "4.0"     | "~4.0"
     "a symbol reads as its string"      | :"4.0.6"  | "4.0.6"
   end
 
@@ -1064,7 +1064,7 @@ class Dev::Deps::DSLTest < Minitest::Test
     declaration.name == "python"
     declaration.integration == :python
     declaration.source.nil?
-    declaration.requirement == Requirement.parse("~> 3.12.0")
+    declaration.requirement == Requirement.parse("~3.12")
     config.taps.empty?
   end
 

@@ -38,7 +38,7 @@ class Dev::Deps::SteamSchemeTest < Minitest::Test
     scheme.supports?(Requirement::Any.new)
     scheme.supports?(Requirement.parse("= 15321746"))
     !scheme.supports?(Requirement.parse(">= 15321746"))
-    !scheme.supports?(Requirement.parse("~> 15321746"))
+    !scheme.supports?(Requirement.parse("^15321746"))
     scheme.supported.include?("exact buildid")
   end
 

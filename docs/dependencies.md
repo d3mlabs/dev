@@ -57,7 +57,7 @@ Dev::Deps.define do
 
   group :build do
     brew "cmake"
-    brew "llvm", "~> 22.0"
+    brew "llvm", "~22"
     env :ci do
       brew "ruby"
     end
@@ -82,10 +82,30 @@ end
 ### Directives
 
 Every directive that declares a package takes an optional requirement as
-its second argument, in rubygems' syntax: `"4.0.1"` is exactly that
-version, `"~> 18.0"` is any 18.x, `">= 2, < 3"` is a range. Without one
-the directive asks for any version, and `dev deps update` locks the
-highest the channel publishes. Some directives also take the channel's own
+its second argument, in semver range syntax: `"4.0.1"` is exactly that
+version, `"^1.2"` is any 1.x from 1.2.0, `"~18"` is any 18.x, `">=2 <3"`
+is a range. Without one the directive asks for any version, and
+`dev deps update` locks the highest the channel publishes.
+
+| Range | Means | Reads as |
+|---|---|---|
+| `1.2.3`, `=1.2.3` | exactly 1.2.3 | — |
+| `^1.2.3` | `>=1.2.3 <2.0.0` | compatible: the leftmost non-zero segment holds (`^0.2.3` is `>=0.2.3 <0.3.0`) |
+| `^1`, `^1.2` | `>=1.0.0 <2.0.0`, `>=1.2.0 <2.0.0` | the same, over a partial version |
+| `~1.2.3` | `>=1.2.3 <1.3.0` | patch range: the last written segment's parent holds |
+| `~1`, `~1.2` | `>=1.0.0 <2.0.0`, `>=1.2.0 <1.3.0` | the same, over a partial version |
+| `>=1.0.0 <2.0.0` | both | comparators (`= > >= < <=`), whitespace or a comma between |
+
+A version is semver's — `MAJOR[.MINOR[.PATCH]][-prerelease][+build]` —
+for `^` and `~`, which bump it; a comparator or an exact takes the
+channel's own version shape as written (brew's `3.11.4_1`, pip's
+`3.0rc1`). A prerelease (`2.0.0-rc.1`) is a candidate only where a term
+names a prerelease of that very release (`>=2.0.0-0`); `^1` never picks
+`2.0.0-rc.1`, and a bare directive never picks a prerelease at all.
+bundler's `~>` is not a range here: `dev up` refuses it naming the
+spelling it maps to (`~> 1` → `^1`, `~> 1.2` → `^1.2`, `~> 1.2.3` →
+`~1.2.3`); the Gemfile dev generates is where bundler's grammar is
+written. Some directives also take the channel's own
 spelling as a keyword (`brew "llvm", version: "18"`, `gh ..., tag: "v1.0"`);
 a directive given both refuses.
 
@@ -96,16 +116,16 @@ takes none or that version.
 
 | Directive | Declares | Installed by |
 |---|---|---|
-| `ruby "X.Y.Z"` | The project Ruby. `"4.0.6"` exact, `"~> 4.0"` highest 4.0.x at lock time, `"4.0"` any 4.0.x. | brew, from the d3mlabs tap's `ruby@X.Y.Z` formulae |
+| `ruby "X.Y.Z"` | The project Ruby. `"4.0.6"` exact, `"~4.0"` highest 4.0.x at lock time, `"4.0"` any 4.0.x. | brew, from the d3mlabs tap's `ruby@X.Y.Z` formulae |
 | `python "3.12"` | The project Python and a `.venv` built on it. | brew (`python@3.12`), then `venv` |
-| `gem "name" [, "req"]` | A gem. The requirement is written into the generated `Gemfile` as is; dev generates `Gemfile.lock`. A group becomes a bundler group. Other keywords (`require:`, `git:`) are gem options. | `bundle install` |
-| `brew "name" [, "req"] [, version:]` | A formula, chosen among the versions brew publishes for it and its `name@N` siblings. `brew "llvm", "~> 18.0"`, `brew "llvm", version: "18"` and `brew "llvm@18"` are the same declaration. `cask: true` declares a cask by its whole name (`brew "temurin@21", cask: true`), which takes no requirement. | `brew install` at the locked version |
+| `gem "name" [, "req"]` | A gem. The requirement is written into the generated `Gemfile` as the comparators it means (`"^1.17"` → `">= 1.17.0", "< 2.0.0"`); dev generates `Gemfile.lock`. A group becomes a bundler group. Other keywords (`require:`, `git:`) are gem options. | `bundle install` |
+| `brew "name" [, "req"] [, version:]` | A formula, chosen among the versions brew publishes for it and its `name@N` siblings. `brew "llvm", "~18"`, `brew "llvm", version: "18"` and `brew "llvm@18"` are the same declaration. `cask: true` declares a cask by its whole name (`brew "temurin@21", cask: true`), which takes no requirement. | `brew install` at the locked version |
 | `tap "owner/repo" [, url:]` | A tap formulae may come from. | `brew tap` |
-| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"~> 3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. A requirement that names whole series (`"~> 1"`, `">= 1, < 2"`, `">= 1"`) resolves through the repo's **series head** where it keeps one — the version the series tag `v<major>` points at, what `dev deploy gh` moves and an adopter's `@v1` resolves — and to the greatest satisfying tag where it keeps none; a bound inside a series (`">= 1.4"`) is always the greatest satisfying tag ([Series heads](#series-heads)). `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is installed self-contained ([below](#self-contained-trees)). | download into the store |
+| `gh "name" [, "req"], github: "owner/repo", tag: \| sha:, assets:` or `build:` | A GitHub release by `tag:` (the tag as spelled), by a requirement over the repo's version tags (`"^3.11"`, a leading `v` read past), or a commit by full 40-hex `sha:`. One of the three is required; a gh pin never floats to the latest release. A requirement that names whole series (`"^1"`, `">=1 <2"`, `">=1"`) resolves through the repo's **series head** where it keeps one — the version the series tag `v<major>` points at, what `dev deploy gh` moves and an adopter's `@v1` resolves — and to the greatest satisfying tag where it keeps none; a bound inside a series (`">=1.4"`) is always the greatest satisfying tag ([Series heads](#series-heads)). `assets:` selects prebuilt release assets by glob; `build:` builds from the source archive. A `sha:` pin has no release, so it takes `build:` only. A tree carrying its own `dependencies.rb` and `deps.lock` is installed self-contained ([below](#self-contained-trees)). | download into the store |
 | `cmake "name" [, "req"], github:/url:, tag:/branch:/commit: [, targets:]` | A CMake source dependency, linked at `build/_deps/<name>-src`. `tag:` and `branch:` name a ref; a requirement ranges over the repo's version tags; `commit:` is a full 40-hex SHA. | checkout into the store |
 | `luarocks "name" [, "req"]` | A rock. Transitive deps resolved by luarocks at install. | `luarocks install` |
-| `pip "name" [, "req"]` | A package in the project venv; `~>` reads as pip's `~=`. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
-| `ficsit "ModRef" [, "req"] [, version:]` | A Satisfactory mod from SMR. `version:` takes ficsit.app's own range syntax (`"^3.12.0"`). | download |
+| `pip "name" [, "req"]` | A package in the project venv; `~2.0.3` reads as pip's `~=2.0.3`. Transitive deps resolved by pip at install. Needs `python`. | `pip install` |
+| `ficsit "ModRef" [, "req"] [, version:]` | A Satisfactory mod from SMR. `version:` is the same requirement under the keyword SMR writes it as (`version: "^3.12.0"`). | download |
 | `steam "name" [, "= buildid"], app: [, branch:, buildid:]` | A Steam app or depot via SteamCMD, following `branch:` (default `public`). `buildid:` asserts the branch is still at that build. | `steamcmd` |
 | `egs` | Epic's BuildPatchTool. Pinning it gives the project a `deploy egs` channel. | download |
 | `xcode "26.1.1"` | The Xcode toolchain. macOS only. | `xcodes install`; publishes `DEVELOPER_DIR` |
@@ -248,7 +268,7 @@ A channel whose store keeps a movable pointer per series — a gh repo's
 `v1`, `v2` tags, moved by `dev deploy gh` ([lifecycle.md](lifecycle.md#gh))
 — has a **head** per series: the release the pointer names. A
 requirement that covers whole series and nothing finer is
-**series-shaped**: `~> 1` and `>= 1, < 2` name series 1; `>= 1` names
+**series-shaped**: `^1` and `>=1 <2` name series 1; `>=1` names
 every series from 1 on. On such a channel a series-shaped requirement
 resolves to the head of the newest series it covers that has one — the
 version *and* the commit `v<major>` points at — so the lock reads the
@@ -260,7 +280,7 @@ the operator just rolled away from.
 Where the covered series have no pointer — a repo with no series tags,
 a series released but never deployed — the requirement resolves as every
 requirement does on a derived channel: the greatest satisfying version.
-A requirement with a bound inside a series (`>= 1.4`, `~> 1.2`) names
+A requirement with a bound inside a series (`>=1.4`, `^1.2`) names
 versions, not series, and is the greatest satisfying version on every
 channel; `tag:` and `sha:` are exact. `dev deps update` says which rule
 chose each moved pin:

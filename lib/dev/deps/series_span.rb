@@ -7,11 +7,11 @@ require_relative "../value_equality"
 module Dev
   module Deps
     # The whole series a **series-shaped** requirement covers: from one
-    # series up to, not including, another (`~> 1`, `>= 1, < 2`: series 1
-    # alone) or every series from one on (`>= 1`). The constraint an
+    # series up to, not including, another (`^1`, `>=1 <2`: series 1
+    # alone) or every series from one on (`>=1`). The constraint an
     # adopter writes — this major, any minor or patch — read out of a
     # requirement by the channel's scheme (VersionScheme#series_span); a
-    # requirement whose bounds fall inside a series (`>= 1.4`, `~> 1.2`)
+    # requirement whose bounds fall inside a series (`>=1.4`, `^1.2`)
     # names versions, not series, and has no span.
     #
     # Owns the invariant that a span is not empty: the upper series, when

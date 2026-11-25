@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev/deps/package_version"
 require "dev/deps/requirement"
-require "dev/deps/semver_range"
 require "dev/deps/semver_scheme"
 
 transform!(RSpock::AST::Transformation)
@@ -28,12 +27,12 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
 
     Where
     version       | expression          | expected
-    "3.12.0"      | "~> 3.12.0"         | true
-    "3.12.9"      | "~> 3.12.0"         | true
-    "3.13.0"      | "~> 3.12.0"         | false
-    "3.13.2"      | "~> 3.12"           | true
-    "4.0.0"       | "~> 3.12"           | false
-    "3.11.9"      | "~> 3.12"           | false
+    "3.12.0"      | "~3.12.0"           | true
+    "3.12.9"      | "~3.12.0"           | true
+    "3.13.0"      | "~3.12.0"           | false
+    "3.13.2"      | "^3.12"             | true
+    "4.0.0"       | "^3.12"             | false
+    "3.11.9"      | "^3.12"             | false
     "2.5.0"       | ">= 1.0.0, < 3.0.0" | true
     "3.0.0"       | ">= 1.0.0, < 3.0.0" | false
     "1.0.0"       | "1.0.0"             | true
@@ -44,9 +43,28 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
     "1.0.1"       | "<= 1.0.0"          | false
   end
 
-  test "a translated ficsit range (#{range.inspect}) reads the same as upstream" do
-    When "evaluating the range SMR wrote, translated"
-    result = scheme.satisfies?(pv(version), Dev::Deps::SemverRange.new.parse(range))
+  test "prerelease #{version} against #{expression.inspect} is #{expected}, as node-semver reads it" do
+    When "evaluating a prerelease the comparators alone would admit"
+    result = scheme.satisfies?(pv(version), Requirement.parse(expression))
+
+    Then "a prerelease is a candidate only where a term names a prerelease of its own release"
+    result == expected
+
+    Where
+    version       | expression          | expected
+    "2.0.0-rc.1"  | "^1"                | false
+    "1.5.0-beta"  | "^1"                | false
+    "1.0.0-rc.1"  | ">=1.0.0-0"         | true
+    "1.0.0-rc.1"  | ">=1.0.0-0 <2.0.0"  | true
+    "2.0.0-rc.1"  | ">=1.0.0-0"         | false
+    "1.0.0-rc.2"  | "^1.0.0-rc.1"       | true
+    "1.0.0-rc.2"  | "~1.0.0-rc.1"       | true
+    "1.1.0-rc.1"  | "^1.0.0-rc.1"       | false
+  end
+
+  test "the range SMR writes (#{range.inspect}) reads as upstream reads it" do
+    When "evaluating the range SMR wrote"
+    result = scheme.satisfies?(pv(version), Requirement.parse(range))
 
     Then
     result == expected
@@ -65,9 +83,10 @@ class Dev::Deps::SemverSchemeTest < Minitest::Test
     "2.5.0"       | ">=1.0.0 <3.0.0"   | true
   end
 
-  test "Any is satisfied by anything" do
+  test "Any is satisfied by any release, and by no prerelease" do
     Expect
     scheme.satisfies?(pv("3.12.0"), Requirement::Any.new)
+    !scheme.satisfies?(pv("3.12.0-rc.1"), Requirement::Any.new)
   end
 
   test "sorts semver-correctly, prereleases below their release" do

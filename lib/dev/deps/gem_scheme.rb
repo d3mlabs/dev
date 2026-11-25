@@ -6,9 +6,10 @@ require_relative "requirement"
 
 module Dev
   module Deps
-    # RubyGems requirement semantics (:bundler, :ruby): the channel dev's
-    # language is borrowed from, so the requirement translates to a
-    # Gem::Requirement term for term (`render`) and Gem::Version orders.
+    # RubyGems requirement semantics (:bundler, :ruby): the requirement
+    # translates to a Gem::Requirement comparator for comparator (`render`
+    # — the one place bundler's grammar is written, a `^` or `~` arriving
+    # as the two comparators it means) and Gem::Version orders.
     #
     # bundler is a tool-solved channel: the Locker hands `render`'s output
     # to the Gemfile and bundler picks; `satisfies?` then confirms the
@@ -32,15 +33,16 @@ module Dev
         render(requirement).satisfied_by?(comparison_key(version.version))
       end
 
-      # The requirement in the tool's own type — identity, term for term;
-      # the empty ask is rubygems' default (`>= 0`).
+      # The requirement in the tool's own type — its comparator terms, one
+      # Gem::Requirement term each; the empty ask is rubygems' default
+      # (`>= 0`).
       #
       # @param requirement [Requirement]
       # @return [Gem::Requirement]
       # @raise [InvalidRequirementError] if a requirement version does not parse
       sig { params(requirement: Requirement).returns(Gem::Requirement) }
       def render(requirement)
-        Gem::Requirement.new(requirement.terms.map(&:to_s))
+        Gem::Requirement.new(requirement.bounds.map(&:to_s))
       rescue Gem::Requirement::BadRequirementError
         raise InvalidRequirementError, "not a rubygems requirement: #{requirement.to_s.inspect}"
       end

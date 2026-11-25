@@ -131,15 +131,18 @@ module Dev
       # @return [Integer, nil] nil for anything but a SemverVersion
       sig { params(other: T.anything).returns(T.nilable(Integer)) }
       def <=>(other)
-        return nil unless other.is_a?(SemverVersion)
+        # case/when, not is_a?: T.anything answers no method, and the
+        # pattern's `===` is what narrows it.
+        case other
+        when SemverVersion
+          by_release = release_key <=> other.release_key
+          return by_release unless by_release.zero?
+          return 0 if !prerelease? && !other.prerelease?
+          return 1 if !prerelease?
+          return -1 if !other.prerelease?
 
-        by_release = T.must(release_key <=> other.release_key)
-        return by_release unless by_release.zero?
-        return 0 if !prerelease? && !other.prerelease?
-        return 1 if !prerelease?
-        return -1 if !other.prerelease?
-
-        T.must(prerelease_key <=> other.prerelease_key)
+          prerelease_key <=> other.prerelease_key
+        end
       end
 
       class << self

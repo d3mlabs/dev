@@ -22,7 +22,7 @@ class Dev::Deps::CaskSchemeTest < Minitest::Test
     Expect
     scheme.supports?(Requirement::Any.new)
     !scheme.supports?(Requirement.parse("= 21"))
-    !scheme.supports?(Requirement.parse("~> 21.0"))
+    !scheme.supports?(Requirement.parse("^21.0"))
     !scheme.supports?(Requirement.parse(">= 21"))
   end
 

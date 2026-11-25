@@ -12,13 +12,13 @@ class Dev::Deps::DeclarationTest < Minitest::Test
   test "states a package under a requirement in dev's language" do
     Given "a declaration with an explicit requirement"
     decl = Dev::Deps::Declaration.new(
-      name: "SML", integration: :ficsit, requirement: Requirement.parse("~> 3.6"),
+      name: "SML", integration: :ficsit, requirement: Requirement.parse("^3.6"),
     )
 
     Expect "the atom's facts are readable"
     decl.name == "SML"
     decl.integration == :ficsit
-    decl.requirement == Requirement::Pessimistic.new(version: "3.6")
+    decl.requirement == Requirement::Caret.new(version: "3.6")
   end
 
   test "no requirement is Any, a present empty form; no options is the empty hash" do
@@ -33,18 +33,18 @@ class Dev::Deps::DeclarationTest < Minitest::Test
   test "options are the integration's own vocabulary beside the requirement" do
     Given "a gem with bundler options"
     decl = Dev::Deps::Declaration.new(
-      name: "rake", integration: :bundler, requirement: Requirement.parse("~> 13"), options: { "require" => false },
+      name: "rake", integration: :bundler, requirement: Requirement.parse("^13"), options: { "require" => false },
     )
 
     Expect
-    decl.requirement == Requirement.parse("~> 13")
+    decl.requirement == Requirement.parse("^13")
     decl.options == { "require" => false }
   end
 
   test "is value-equal and hash-stable" do
     Given "two declarations built independently from the same facts"
-    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
-    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
+    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("^1.17"))
+    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("^1.17"))
 
     Expect "they are equal and collapse to one hash key"
     a == b
@@ -62,8 +62,8 @@ class Dev::Deps::DeclarationTest < Minitest::Test
 
   test "a different requirement is a different declaration" do
     Given
-    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.17"))
-    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("~> 1.16"))
+    a = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("^1.17"))
+    b = Dev::Deps::Declaration.new(name: "ffi", integration: :bundler, requirement: Requirement.parse("^1.16"))
 
     Expect
     a != b
