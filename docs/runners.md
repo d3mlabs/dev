@@ -69,7 +69,7 @@ deployed tool among what that checkout needs — ai-flow's `dev`, say — is
 a pin in the checkout's lock, and the job's own `dev up` installs it the
 way it installs every other pin. A host records nothing about which
 release of anything its jobs run: that is the adopter's lock's to say,
-and the adopter's workflow (`uses: …@v<major>`) to carry. Who follows a
+and the adopter's workflow (`uses: …@v<major>`) to carry. Who reads a
 series head is [Lifecycle: the channel contract](lifecycle.md#the-channel-contract); `dev runner` knows no
 head. Its verbs are enrollment acts — a slot's registration, its service,
 its labels, its reach — and nothing more.

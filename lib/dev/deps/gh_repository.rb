@@ -32,12 +32,12 @@ module Dev
     #
     # The tags list also carries the repo's **series tags** — `v1`, `v2`,
     # the per-series heads `dev deploy gh` moves (Lifecycle::GithubHeads)
-    # — each at the commit of the release its followers install. A series
+    # — each at the commit of the release the series resolves to. A series
     # tag is reported twice over: as a version, like any tag (an exact
     # `tag: "v1"` names it), and as the package's head for its series,
     # naming the version tag cut at the same commit. The head and the
     # versions come from one listing, so the fact a lock resolves through
-    # is the one a follower's `@v1` resolves to.
+    # is the one a workflow's `@v1` resolves to.
     #
     # Commit SHAs are unreachable by enumeration (no endpoint lists reachable
     # commits), so a commit pin arrives as the declaration's revision and is

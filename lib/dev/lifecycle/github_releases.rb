@@ -86,7 +86,7 @@ module Dev
       # **immutable** — its tag, assets and existence frozen by the
       # repository's immutable-releases setting at creation, permanently
       # (only the notes and the latest designation stay editable), so a
-      # head pointed at it cannot change under a follower — and whether it
+      # head pointed at it cannot change under its readers — and whether it
       # is a pre-release.
       class Facts < T::Struct
         extend T::Sig

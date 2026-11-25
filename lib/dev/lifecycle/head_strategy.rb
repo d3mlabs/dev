@@ -7,8 +7,8 @@ module Dev
     # rather than inside it: a T::Enum body may hold only its own values.
     class UnknownHeadStrategyError < ArgumentError; end
 
-    # How a channel's destination keeps its **head** — what a follower
-    # installs when it asks for nothing in particular. The rule is dev's
+    # How a channel's destination keeps its **head** — what the channel
+    # answers when asked for a series and nothing finer. The rule is dev's
     # and the same on every channel: `release` never moves a head, `deploy`
     # moves exactly one. The mechanism is the destination's, and each
     # publisher declares which of the two it has (Publisher#head_strategy):

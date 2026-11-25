@@ -15,9 +15,9 @@ module Dev
     # `>= 1`) takes the head of the newest series it covers where the
     # universe keeps one (`Head`); every other ask, and every universe
     # without a head the ask covers, takes the greatest satisfying version
-    # (`Greatest`). A lock and a follower then read the same head: `~> 1`
-    # resolves to what `v1` points at, and a rollback that moves `v1` back
-    # reaches the next re-lock too.
+    # (`Greatest`). A lock and a `@v1` workflow then read the same head:
+    # `~> 1` resolves to what `v1` points at, and a rollback that moves
+    # `v1` back reaches the next re-lock too.
     #
     # The rule owns both halves: `for` decides it from the ask and the
     # universe's facts, `pick` applies it to the candidates, and

@@ -112,7 +112,7 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
     publisher(gh).preview([shipment], channel:, track: Dev::Lifecycle::Track::Live)
   end
 
-  test "deploying a newer release of the newest series moves its series tag by force and hands it the latest designation; the hint names the followers" do
+  test "deploying a newer release of the newest series moves its series tag by force and hands it the latest designation; the hint names what resolves to it" do
     Given "v1 at 1.2.0, the latest"
     gh = forge("1.3.0", tags: { "v1" => SHA_120, "v1.2.0" => SHA_120, "v1.3.0" => SHA_130 }, latest: "v1.2.0")
 
@@ -125,7 +125,7 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
       ["release", "edit", "v1.3.0", "--latest"],
     ]
     receipt.summary == "v1 → v1.3.0 (#{SHA_130[0, 12]}), from v1.2.0 (#{SHA_120[0, 12]}); latest → v1.3.0"
-    receipt.hint == "Followers of v1 (~> 1, @v1) take v1.3.0 from here"
+    receipt.hint == "v1 (~> 1, @v1) resolves to v1.3.0 from here"
   end
 
   test "the first deploy of a series creates its tag; with nothing deployed yet it is the newest series and takes latest" do
@@ -153,7 +153,7 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
     Then
     writes(gh) == [["PATCH", "repos/{owner}/{repo}/git/refs/tags/v1", { "sha" => SHA_130, "force" => true }]]
     receipt.summary == "v1 → v1.3.0 (#{SHA_130[0, 12]}), from v1.2.0 (#{SHA_120[0, 12]}); latest stays v2.0.0 — v2 is the newest series"
-    receipt.hint == "Followers of v1 (~> 1, @v1) take v1.3.0 from here"
+    receipt.hint == "v1 (~> 1, @v1) resolves to v1.3.0 from here"
   end
 
   test "deploying an earlier release of the series again moves the tag back — a rollback is a deploy" do
@@ -206,7 +206,7 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
     Then
     error = raises(Dev::Deps::GhPublisher::MutableReleaseError)
     error.message == "deploy gh refuses v1.3.0: v1.3.0's release is mutable (immutable: false), so its tag and assets could change under " \
-      "every follower of v1 — enable immutable releases on the repository " \
+      "every reader of v1 (~> 1, @v1) — enable immutable releases on the repository " \
       "(#{Dev::Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) before the next `dev release`; a release already cut stays mutable"
     writes(gh) == []
   end
@@ -252,7 +252,7 @@ class Dev::Deps::GhPublisherTest < Minitest::Test
     "nothing deployed yet"      | true      | { "v1.3.0" => SHA_130 }                                                         | nil      | ["Heads: none; latest none", "Candidate: v1 → v1.3.0 (#{SHA_130[0, 12]}), new; latest → v1.3.0"]
     "two series live"           | true      | { "v1" => SHA_120, "v2" => SHA_200, "v1.2.0" => SHA_120, "v2.0.0" => SHA_200 }  | "v2.0.0" | ["Heads: v1 → v1.2.0 (#{SHA_120[0, 12]}), v2 → v2.0.0 (#{SHA_200[0, 12]}); latest v2.0.0", "Candidate: v1 → v1.3.0 (#{SHA_130[0, 12]}), from v1.2.0 (#{SHA_120[0, 12]}); latest stays v2.0.0 — v2 is the newest series"]
     "a pointer at no release"   | true      | { "v1" => SHA_110 }                                                             | nil      | ["Heads: v1 → #{SHA_110[0, 12]}; latest none", "Candidate: v1 → v1.3.0 (#{SHA_130[0, 12]}), from #{SHA_110[0, 12]}; latest → v1.3.0"]
-    "a mutable release"         | false     | { "v1" => SHA_120, "v1.2.0" => SHA_120 }                                        | "v1.2.0" | ["Heads: v1 → v1.2.0 (#{SHA_120[0, 12]}); latest v1.2.0", "Candidate: v1 → v1.3.0 (#{SHA_130[0, 12]}), from v1.2.0 (#{SHA_120[0, 12]}); latest → v1.3.0", "Refused: v1.3.0's release is mutable (immutable: false), so its tag and assets could change under every follower of v1 — enable immutable releases on the repository (#{Dev::Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) before the next `dev release`; a release already cut stays mutable"]
+    "a mutable release"         | false     | { "v1" => SHA_120, "v1.2.0" => SHA_120 }                                        | "v1.2.0" | ["Heads: v1 → v1.2.0 (#{SHA_120[0, 12]}); latest v1.2.0", "Candidate: v1 → v1.3.0 (#{SHA_130[0, 12]}), from v1.2.0 (#{SHA_120[0, 12]}); latest → v1.3.0", "Refused: v1.3.0's release is mutable (immutable: false), so its tag and assets could change under every reader of v1 (~> 1, @v1) — enable immutable releases on the repository (#{Dev::Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) before the next `dev release`; a release already cut stays mutable"]
   end
 
   test "the preview of a working artifact is the same refusal as the deploy's" do

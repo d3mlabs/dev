@@ -5,26 +5,27 @@ require_relative "series"
 
 module Dev
   module Lifecycle
-    # A channel's **head**: what a follower installs when it asks for
-    # nothing in particular. One noun, one rule across channels — `release`
+    # A channel's **head**: what the channel answers when asked for a
+    # series and nothing finer. One noun, one rule across channels — `release`
     # never moves a head, `deploy` moves exactly one — and two mechanisms a
     # publisher declares (HeadStrategy). This module holds the half of the
     # mechanism that is dev's: the rule a derived channel's head is
     # computed by. A pointed channel's head is read from its pointer by its
     # publisher, and dev computes nothing.
     #
-    # A lock and a follower read the same head. A series-shaped
-    # requirement (`~> 1`) on a pointed channel resolves to what the
-    # series' pointer names (Deps::Resolver, through the universe's
-    # Deps::SeriesHead facts), so after a rollback the lock and the `@v1`
-    # follower both sit below the greatest tag; on a derived channel the
+    # A head has two readers, and both read the same pointer: a lock
+    # whose requirement is series-shaped (`~> 1`) resolves on a pointed
+    # channel to what the series' pointer names (Deps::Resolver, through
+    # the universe's Deps::SeriesHead facts), and a workflow's `uses:
+    # …@v1` is resolved by the forge from the same tag, so after a
+    # rollback the lock and the caller both sit below the greatest tag; on a derived channel the
     # head and the greatest satisfying version are one rule. Still,
     # nothing here reads a Requirement or a VersionScheme — the head's
     # vocabulary is a series (`v1`) and the store's own version words, and
     # which requirements reach a head is the resolver's to say.
     module Head
       # Nothing in the store is a non-prerelease version (of the series):
-      # the channel has no head for a follower to install.
+      # the channel has no head to answer with.
       class NoHeadError < RuntimeError; end
 
       class << self
