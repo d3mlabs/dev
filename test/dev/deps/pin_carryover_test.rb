@@ -104,7 +104,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
   test "a bare update carries a brew pin's provenance only when nothing about the pin changed (ADR-0005, per pin)" do
     Given "two core formulae, one moved upstream, one not"
-    declarations = [declared("cmake"), declared("python", integration: :python, requirement: "~> 3.12.0")]
+    declarations = [declared("cmake"), declared("python", integration: :python, requirement: "~3.12")]
     previous = [formula("cmake", version: "4.4.4", commit: OLD), formula("python", integration: :python, version: "3.12.15", suffix: "3.12", commit: OLD)]
     resolved = [formula("cmake", version: "4.4.4", commit: NEW), formula("python", integration: :python, version: "3.12.16", suffix: "3.12", commit: NEW)]
 
@@ -154,7 +154,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   test "update <name> moves the named pin and keeps every unchanged pin the lock records a source for, whatever its channel" do
     Given "a brew formula named, a pip package and a brew interpreter beside it, all newer today"
     declarations = [declared("cmake"), declared("kimimaro", integration: :pip, requirement: ">= 5", group: :app),
-                    declared("python", integration: :python, requirement: "~> 3.12.0")]
+                    declared("python", integration: :python, requirement: "~3.12")]
     kimimaro = pip("kimimaro", "5.8.5")
     previous = [formula("cmake", version: "4.4.4", commit: OLD), kimimaro, formula("python", integration: :python, version: "3.12.15", suffix: "3.12", commit: OLD)]
     resolved = [formula("cmake", version: "4.4.5", commit: NEW), pip("kimimaro", "5.9.0"), formula("python", integration: :python, version: "3.12.16", suffix: "3.12", commit: NEW)]
@@ -221,8 +221,8 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   end
 
   test "update <name> keeps a ranged interpreter at the lock's patch while the range still admits it" do
-    Given "ruby '~> 4.0' locked at 4.0.5, a tap that now carries 4.0.6, and another declaration named"
-    declarations = [declared("ruby", integration: :ruby, requirement: "~> 4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
+    Given "ruby '~4.0' locked at 4.0.5, a tap that now carries 4.0.6, and another declaration named"
+    declarations = [declared("ruby", integration: :ruby, requirement: "~4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
     previous = [formula("ruby", integration: :ruby, version: "4.0.5", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
     resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
 
@@ -250,7 +250,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
 
     Where
     description               | declaration | pin_change
-    "requirement moved to 19" | { requirement: "~> 19.0" }           | {}
+    "requirement moved to 19" | { requirement: "~19" }               | {}
     "tap changed"             | { tap: "d3mlabs/d3mlabs" }           | { tap: "d3mlabs/d3mlabs" }
     "group changed"           | { group: :app }                      | { group: :app }
     "gained a host gate"      | { host: :darwin }                    | { metadata: { "host" => "darwin" } }
@@ -271,8 +271,8 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   end
 
   test "update <name> re-resolves an interpreter pin whose locked version its scheme cannot read" do
-    Given "ruby '~> 4.0' locked at a brew revision (4.0.5_1), which is not a rubygems version"
-    declarations = [declared("ruby", integration: :ruby, requirement: "~> 4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
+    Given "ruby '~4.0' locked at a brew revision (4.0.5_1), which is not a rubygems version"
+    declarations = [declared("ruby", integration: :ruby, requirement: "~4.0", tap: "d3mlabs/d3mlabs", group: :app), declared("cmake")]
     previous = [formula("ruby", integration: :ruby, version: "4.0.5_1", suffix: "4.0.5", tap: "d3mlabs/d3mlabs", group: :app, commit: OLD)]
     resolved = [formula("ruby", integration: :ruby, version: "4.0.6", suffix: "4.0.6", tap: "d3mlabs/d3mlabs", group: :app, commit: NEW)]
 
@@ -389,7 +389,7 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
   test "a move carries the rule that chose its version, and a kept pin carries none" do
     Given "a gh pin the resolution chose as v1's head while the lock has the greater 1.4.0, beside a formula the lock keeps"
     head = Dev::Deps::SelectionRule::Head.new(head: Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0"))
-    declarations = [declared("ai-flow", integration: :gh, requirement: "~> 1", tap: "d3mlabs/ai-flow", group: :app), declared("cmake")]
+    declarations = [declared("ai-flow", integration: :gh, requirement: "^1", tap: "d3mlabs/ai-flow", group: :app), declared("cmake")]
     previous = [gh_pin("1.4.0", "b" * 40), formula("cmake", version: "4.4.4", commit: OLD)]
     greatest = Dev::Deps::SelectionRule::Greatest.new(beside: [])
     resolved = [gh_pin("1.3.0", "a" * 40, rule: head), formula("cmake", version: "4.4.5", commit: NEW, rule: greatest)]

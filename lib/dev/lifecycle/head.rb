@@ -14,7 +14,7 @@ module Dev
     # publisher, and dev computes nothing.
     #
     # A head has two readers, and both read the same pointer: a lock
-    # whose requirement is series-shaped (`~> 1`) resolves on a pointed
+    # whose requirement is series-shaped (`^1`) resolves on a pointed
     # channel to what the series' pointer names (Deps::Resolver, through
     # the universe's Deps::SeriesHead facts), and a workflow's `uses:
     # …@v1` is resolved by the forge from the same tag, so after a

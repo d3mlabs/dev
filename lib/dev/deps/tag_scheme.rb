@@ -13,8 +13,8 @@ module Dev
     # that are versions — a leading `v` dropped (`v3.11.3` is 3.11.3) and
     # Gem::Version's tolerant ordering over the rest — and the tags that
     # are not (`latest`, `toolchain-2`) are simply not candidates for it.
-    # A range whose bounds are series boundaries (`~> 1`, `>= 1, < 2`,
-    # `>= 1`) is series-shaped, and says which series it covers.
+    # A range whose bounds are series boundaries (`^1`, `>=1 <2`,
+    # `>=1`) is series-shaped, and says which series it covers.
     class TagScheme < RangeScheme
       extend T::Sig
 
@@ -50,9 +50,10 @@ module Dev
 
       # The whole series a requirement covers: one `>=` at a series floor
       # (`1`, `1.0`, `1.0.0` — a major and nothing finer), at most one `<`
-      # at a floor above it, and no other term. `Any` covers every series.
-      # An exact ask, or any bound inside a series (`>= 1.4`, `~> 1.2`,
-      # `!= 1.1`), names versions and has no span.
+      # at a floor above it, and no other term — read off the comparator
+      # bounds, so `^1` and `~1` are series 1 as `>=1 <2` is. `Any`
+      # covers every series. An exact ask, or any bound inside a series
+      # (`>=1.4`, `^1.2`, `<=2`), names versions and has no span.
       #
       # @param requirement [Requirement]
       # @return [SeriesSpan, nil]
@@ -88,6 +89,17 @@ module Dev
         Gem::Version.new(version)
       rescue ArgumentError
         raise InvalidVersionError, "not a version tag: #{coordinate.inspect}"
+      end
+
+      # A tag with a letter in it precedes its release as rubygems reads
+      # it (`v2.0.0-rc.1` precedes `2.0.0`), so `^1` never picks a
+      # release candidate of 2.0.0 and `Any` never picks one at all.
+      #
+      # @param key [Gem::Version]
+      # @return [Gem::Version, nil] the release a prerelease precedes
+      sig { override.params(key: Gem::Version).returns(T.nilable(Gem::Version)) }
+      def prerelease_base(key)
+        key.release if key.prerelease?
       end
 
       private

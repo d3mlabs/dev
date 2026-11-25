@@ -10,19 +10,20 @@ module Dev
     # A Homebrew formula spec as a manifest writes it: `name`, or
     # `name@suffix` naming one member of a versioned family (`llvm@18`,
     # `python@3.12`, `openssl@1.1`). The suffix is brew's spelling of "the
-    # 18 line", which in dev's requirement language is `~> 18.0` — the
-    # family member's real versions are what a requirement is evaluated
-    # over, never the suffix itself.
+    # 18 line", which in dev's requirement language is `~18` — the family
+    # member's real versions are what a requirement is evaluated over,
+    # never the suffix itself.
     class FormulaSpec
       extend T::Sig
       include Dev::ValueEquality::Derived
 
-      # The spec is not `name` or `name@<dotted digits>`.
+      # The spec is not `name` or `name@<version line>` (up to three dotted digit groups).
       class InvalidSpecError < StandardError; end
 
-      # A versioned family's suffix is dotted digits: that is the only shape
-      # a requirement can be read off.
-      PATTERN = /\A([^@\s]+)(?:@(\d+(?:\.\d+)*))?\z/
+      # A versioned family's suffix is one to three dotted digit groups —
+      # a partial semver version: that is the only shape a requirement can
+      # be read off.
+      PATTERN = /\A([^@\s]+)(?:@(\d+(?:\.\d+){0,2}))?\z/
 
       # @return [String] the bare formula name
       sig { returns(String) }
@@ -47,15 +48,17 @@ module Dev
         !suffix.nil?
       end
 
-      # The requirement a family suffix stands for: `~> <suffix>.0`, every
-      # version of that line (`@18` → `~> 18.0`, `@3.12` → `~> 3.12.0`).
+      # The requirement a family suffix stands for: `~<suffix>`, every
+      # version of that line — the tilde bumps the suffix's last written
+      # segment (`@18` → `~18`, 18.x; `@3.12` → `~3.12`, 3.12.x).
       #
       # @return [Requirement] Any for a bare spec
       sig { returns(Requirement) }
       def requirement
-        return Requirement::Any.new unless suffix
+        line = suffix
+        return Requirement::Any.new unless line
 
-        Requirement::Pessimistic.new(version: "#{suffix}.0")
+        Requirement::Tilde.new(version: line)
       end
 
       # @return [String] `name` or `name@suffix`

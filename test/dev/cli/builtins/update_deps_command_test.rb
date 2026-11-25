@@ -108,7 +108,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        ruby "~> 4.0"
+        ruby "~4.0"
         gem "rake"
       end
     RUBY
@@ -465,7 +465,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        gh "ai-flow", "~> 1", github: "d3mlabs/ai-flow", assets: "*.zip"
+        gh "ai-flow", "^1", github: "d3mlabs/ai-flow", assets: "*.zip"
         gh "ai-flow-newest", ">= 1.4", github: "d3mlabs/ai-flow", assets: "*.zip"
       end
     RUBY
@@ -479,7 +479,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "~> 1 follows v1 back to 1.3.0 at its commit; >= 1.4 is the greatest tag; the report says which rule chose each"
+    Then "^1 follows v1 back to 1.3.0 at its commit; >= 1.4 is the greatest tag; the report says which rule chose each"
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
     pins == { "ai-flow" => ["1.3.0", "a" * 40], "ai-flow-newest" => ["1.4.0", "b" * 40] }
     $stdout.string.include?("dev: moved ai-flow 1.4.0 → 1.3.0 (series head v1 → 1.3.0)\n")
@@ -577,12 +577,12 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
   end
 
   test "call <name> installs the kept Ruby, not today's, so bundle lock runs under the version the lock keeps" do
-    Given "a lock pinning ruby 4.0.6 within a ~> 4.0 range, a brew that resolves the range to 4.0.9 today, and the gem named"
+    Given "a lock pinning ruby 4.0.6 within a ~4.0 range, a brew that resolves the range to 4.0.9 today, and the gem named"
     root = Pathname.new(Dir.mktmpdir("update-deps-kept-ruby-"))
     File.write(root / "dependencies.rb", <<~RUBY)
       require "dev/deps"
       Dev::Deps.define do
-        ruby "~> 4.0"
+        ruby "~4.0"
         gem "rake"
       end
     RUBY

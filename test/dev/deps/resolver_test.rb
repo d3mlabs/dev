@@ -142,7 +142,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
       "SML" => [version("3.12.0"), version("3.13.1"), version("4.0.0")],
     })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.12"),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "^3.12"),
     ]
 
     When "resolving with SemverScheme"
@@ -185,7 +185,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Where
     requirement   | expected | source  | rule
-    "~> 1"        | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
+    "^1"          | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
     ">= 1, < 2"   | "1.3.0"  | "sha13" | "series head v1 → 1.3.0"
     ">= 1"        | "2.0.0"  | "sha20" | "series head v2 → 2.0.0"
     ">= 1, < 3"   | "2.0.0"  | "sha20" | "series head v2 → 2.0.0"
@@ -199,9 +199,9 @@ class Dev::Deps::ResolverTest < Minitest::Test
     derived = deployed
     one_deployed = deployed(1)
 
-    When "resolving ~> 1 on the derived repo, and >= 1 on the one with v1 alone"
-    on_derived = resolver_for(:gh, derived, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
-    one_series = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
+    When "resolving ^1 on the derived repo, and >= 1 on the one with v1 alone"
+    on_derived = resolver_for(:gh, derived, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("^1")).fetch(0)
+    one_series = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("^1")).fetch(0)
     spanning = resolver_for(:gh, one_deployed, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask(">= 1")).fetch(0)
 
     Then "derived: 1.4.0 by the only rule there is, with nothing to report; v1 alone: its head, for the span too — the undeployed 2.0.0 is not a head"
@@ -215,14 +215,14 @@ class Dev::Deps::ResolverTest < Minitest::Test
   end
 
   test "a head that is not a candidate does not apply: the rule falls back to the greatest satisfying version" do
-    Given "v1 pointing at a pre-release below the series floor, so ~> 1 does not admit it"
+    Given "v1 pointing at a pre-release below the series floor, so ^1 does not admit it"
     repo = StubRepository.new(
       universes: { "ai-flow" => [version("1.0.0-rc.1"), version("1.0.0"), version("1.1.0")] },
       heads: { "ai-flow" => [head(1, "1.0.0-rc.1")] },
     )
 
-    When "resolving ~> 1"
-    pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("~> 1")).fetch(0)
+    When "resolving ^1"
+    pin = resolver_for(:gh, repo, scheme: Dev::Deps::TagScheme.new).resolve(gh_ask("^1")).fetch(0)
 
     Then
     pin.version == "1.1.0"
@@ -249,7 +249,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
       "SML" => [version("not-a-version"), version("3.12.0")],
     })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "^3.0"),
     ]
 
     When "resolving with SemverScheme"
@@ -263,7 +263,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Given "a universe entirely below the requirement"
     repo = StubRepository.new(universes: { "SML" => [version("2.0.0")] })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "^3.0"),
     ]
 
     When "resolving"
@@ -294,8 +294,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Given "the same dep declared with disagreeing requirements"
     repo = StubRepository.new(universes: { "SML" => [version("3.12.0")] })
     declarations = [
-      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "~> 3.0"),
-      declaration(name: "SML", integration: :ficsit, group: :test, requirement: "~> 2.0"),
+      declaration(name: "SML", integration: :ficsit, group: :app, requirement: "^3.0"),
+      declaration(name: "SML", integration: :ficsit, group: :test, requirement: "^2.0"),
     ]
 
     When "resolving"
@@ -335,8 +335,8 @@ class Dev::Deps::ResolverTest < Minitest::Test
       schemes: { bundler: Dev::Deps::SemverScheme.new, brew: Dev::Deps::SemverScheme.new },
     )
     declarations = [
-      declaration(name: "ffi", integration: :bundler, group: :app, requirement: "~> 1.0"),
-      declaration(name: "ffi", integration: :brew, group: :app, requirement: "~> 3.0"),
+      declaration(name: "ffi", integration: :bundler, group: :app, requirement: "^1.0"),
+      declaration(name: "ffi", integration: :brew, group: :app, requirement: "^3.0"),
     ]
 
     When "resolving"
@@ -424,7 +424,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "walks transitive edges, inheriting group, host, and env" do
     Given "a scoped parent whose chosen version has an edge"
     repo = StubRepository.new(universes: {
-      "parent" => [version("1.0.0", dependencies: [edge("child", "~> 2.0")])],
+      "parent" => [version("1.0.0", dependencies: [edge("child", "^2.0")])],
       "child" => [version("2.0.0"), version("3.0.0")],
     })
     declarations = [
@@ -617,7 +617,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     repo = StubRepository.new(universes: { "boost" => [version("")] })
     resolver = Dev::Deps::Resolver.new(repositories: { url: repo }, schemes: {})
     declarations = [
-      declaration(name: "boost", integration: :url, group: :app, requirement: "~> 1.90"),
+      declaration(name: "boost", integration: :url, group: :app, requirement: "^1.90"),
     ]
 
     When "resolving"
@@ -626,7 +626,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     Then "the address is the whole ask — the declaration is wrong, and the repository was never asked"
     error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
     error.message.include?("boost: url takes no requirement")
-    error.message.include?("~> 1.90")
+    error.message.include?("^1.90")
     repo.finds.empty?
   end
 
@@ -659,7 +659,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then "the refusal names the declaration, the ask and what the channel takes; no universe was read"
     error = raises(Dev::Deps::Resolver::UnsupportedRequirementError)
-    error.message.include?("SatisfactoryServer: steam cannot evaluate `>= 26000000`")
+    error.message.include?("SatisfactoryServer: steam cannot evaluate `>=26000000`")
     error.message.include?("exact buildid")
     repo.finds.empty?
   end
@@ -667,7 +667,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
   test "a range over a one-version brew family is refused naming the version there is" do
     Given "a formula brew has one version of"
     repo = StubRepository.new(universes: { "cmake" => [version("3.31.4")] })
-    declarations = [declaration(name: "cmake", integration: :brew, group: :app, requirement: "~> 3.31.0")]
+    declarations = [declaration(name: "cmake", integration: :brew, group: :app, requirement: "~3.31.0")]
 
     When "resolving"
     resolver_for(:brew, repo, scheme: Dev::Deps::BrewScheme.new).resolve(declarations)
@@ -685,7 +685,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
       version("18.1.8", metadata: { "version_suffix" => "18" }),
     ] })
     declarations = [
-      declaration(name: "llvm", integration: :brew, group: :app, requirement: "~> 18.0"),
+      declaration(name: "llvm", integration: :brew, group: :app, requirement: "~18"),
     ]
 
     When "resolving"
@@ -714,10 +714,10 @@ class Dev::Deps::ResolverTest < Minitest::Test
     )
     declarations = [
       declaration(name: "cmake", integration: :brew),
-      declaration(name: "python", integration: :python, requirement: "~> 3.12.0"),
+      declaration(name: "python", integration: :python, requirement: "~3.12"),
       declaration(name: "ruby", integration: :ruby, requirement: "= 4.0.6", source: "d3mlabs/d3mlabs"),
       declaration(name: "UnrealEngine", integration: :gh, requirement: "= 5.6.1-css-83", source: "satisfactorymodding/UnrealEngine"),
-      declaration(name: "rake", integration: :bundler, requirement: "~> 13.0"),
+      declaration(name: "rake", integration: :bundler, requirement: "^13.0"),
     ]
 
     When "resolving"
@@ -811,7 +811,7 @@ class Dev::Deps::ResolverTest < Minitest::Test
     })
     declarations = [
       declaration(name: "SML", integration: :ficsit, group: :app, platform: "LinuxServer",
-        requirement: "~> 3.0"),
+        requirement: "^3.0"),
     ]
 
     When "resolving"

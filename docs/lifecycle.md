@@ -515,7 +515,7 @@ names the series in its `uses:` (`d3mlabs/ai-flow/.github/
 workflows/ai-commands.yml@v1`) and takes whatever `v1` points at on each
 run. A **project's lock** names the series in a **series-shaped**
 requirement — one whose bounds are series boundaries and nothing finer:
-`~> 1`, `>= 1, < 2`, `>= 1` (`gh "d3mlabs/ai-flow", "~> 1"` in its
+`^1`, `>=1 <2`, `>=1` (`gh "d3mlabs/ai-flow", "^1"` in its
 `dependencies.rb`) — and resolves it, on a pointed channel, to the head
 of the newest series it covers: `dev deps update` locks what `v1` points
 at, the version and the commit, from the same pointer the caller's `@v1`
@@ -524,8 +524,8 @@ moves `v1`, and the next re-lock follows it down; nothing re-locks the
 greatest tag the operator just rolled away from — a rollback, which is a
 `deploy`, reaches the caller and the lock alike. A series the channel
 keeps no pointer for, and every derived channel, resolves to the greatest
-satisfying version. A requirement with a bound inside a series (`>= 1.4`,
-`~> 1.2`) names versions, not series, and takes the greatest satisfying
+satisfying version. A requirement with a bound inside a series (`>=1.4`,
+`^1.2`) names versions, not series, and takes the greatest satisfying
 one on every channel; `tag:` and `sha:` are exact. The lock report says
 which rule chose: `series head v1 → v1.3.0` or `greatest satisfying`
 ([dependencies.md](dependencies.md#series-heads)). A runner host follows
@@ -760,7 +760,7 @@ commands:
 ```
 
 The heads are one **series tag** per deployed series — `v1`, `v2`: the
-major, as `gh "owner/repo", "~> 1"` in an adopter's `dependencies.rb`
+major, as `gh "owner/repo", "^1"` in an adopter's `dependencies.rb`
 or `@v1` in a workflow resolves to it; both read the tag, so a deploy
 reaches the adopter's lock on its next `dev deps update` and its
 workflow on its next job — and GitHub's **latest designation**. `dev
@@ -772,7 +772,7 @@ newest series with a tag, its own included. A 1.x patch deployed after
 2.0 is live moves `v1` and leaves latest on 2.0; a pre-release moves its
 series tag and is never designated latest. A release the heads are
 already at writes nothing. Receipt: `v1 → v1.3.0 (0123456789ab), from
-v1.2.0 (fedcba987654); latest → v1.3.0`, with the hint `v1 (~> 1, @v1)
+v1.2.0 (fedcba987654); latest → v1.3.0`, with the hint `v1 (^1, @v1)
 resolves to v1.3.0 from here` when anything moved.
 
 Releases only: a head points at a release, so a store artifact is

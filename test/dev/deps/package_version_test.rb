@@ -48,7 +48,7 @@ class Dev::Deps::PackageVersionTest < Minitest::Test
   test "carries the full fact set when the universe provides one" do
     Given "a version with platforms, digest, per-platform artifacts, and declarations"
     artifact = Dev::Deps::Artifact.new(uri: "https://example.com/sml-linux.zip", digest: "SHA256=abc")
-    edge = Dev::Deps::Declaration.new(name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse("~> 3.0"))
+    edge = Dev::Deps::Declaration.new(name: "SML", integration: :ficsit, requirement: Dev::Deps::Requirement.parse("^3.0"))
     version = Dev::Deps::PackageVersion.new(
       version: "3.12.0",
       platforms: ["Windows", "LinuxServer"],

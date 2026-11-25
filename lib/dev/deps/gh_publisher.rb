@@ -41,7 +41,7 @@ module Dev
     # and a deploy moving a pointer share nothing but the forge.
     #
     # The channel's head is pointed: the series tag is what the series
-    # resolves to (`~> 1` in a project's lock, `@v1` in a workflow), and
+    # resolves to (`^1` in a project's lock, `@v1` in a workflow), and
     # this publisher is what moves it — forward on a deploy, back when
     # an earlier release of the series is deployed again. The latest
     # designation follows the newest deployed series only, so a 1.x patch
@@ -293,7 +293,7 @@ module Dev
       sig { params(candidate: Candidate).returns(String) }
       def mutable_reason(candidate)
         "#{candidate.tag}'s release is mutable (immutable: false), so its tag and assets could change under every reader of " \
-          "#{candidate.series} (~> #{candidate.series.major}, @#{candidate.series}) — enable immutable releases on the repository (#{Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) " \
+          "#{candidate.series} (^#{candidate.series.major}, @#{candidate.series}) — enable immutable releases on the repository (#{Lifecycle::GithubReleases::IMMUTABLE_RELEASES_SETTING}) " \
           "before the next `dev release`; " \
           "a release already cut stays mutable"
       end
@@ -361,7 +361,7 @@ module Dev
       # @return [String] what the move reaches
       sig { params(candidate: Candidate).returns(String) }
       def hint(candidate)
-        "#{candidate.series} (~> #{candidate.series.major}, @#{candidate.series}) resolves to #{candidate.tag} from here"
+        "#{candidate.series} (^#{candidate.series.major}, @#{candidate.series}) resolves to #{candidate.tag} from here"
       end
     end
   end

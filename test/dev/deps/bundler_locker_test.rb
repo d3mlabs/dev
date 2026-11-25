@@ -35,9 +35,9 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     shadowenv_exec.stubs(:capture3).returns(succeeded)
     locker = build_locker(dir, shadowenv_exec, ruby_version: "4.0.9")
     decls = bundler_declarations do
-      gem "ffi", "~> 1.17"
+      gem "ffi", "^1.17"
       group :test do
-        gem "minitest", "~> 5.0", require: false
+        gem "minitest", "~5.0", require: false
       end
     end
 
@@ -45,13 +45,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     locker.lock(decls)
     gemfile = (Pathname(dir) / "Gemfile").read
 
-    Then "the Gemfile names the verb that regenerates it, and pins the source, the locked ruby, default gem, and grouped gem with options"
+    Then "the Gemfile names the verb that regenerates it, and pins the source, the locked ruby, default gem, and grouped gem with options — ranges in bundler's grammar"
     gemfile.include?("run `dev deps update`")
     gemfile.include?(%(source "https://rubygems.org"))
     gemfile.include?(%(ruby "4.0.9"))
-    gemfile.include?(%(gem "ffi", "~> 1.17"))
+    gemfile.include?(%(gem "ffi", ">= 1.17.0", "< 2.0.0"))
     gemfile.include?("group :test do")
-    gemfile.include?(%(  gem "minitest", "~> 5.0", require: false))
+    gemfile.include?(%(  gem "minitest", ">= 5.0.0", "< 5.1.0", require: false))
 
     Cleanup
     FileUtils.rm_rf(dir)

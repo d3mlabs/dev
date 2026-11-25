@@ -11,7 +11,6 @@ require_relative "formula_spec"
 require_relative "requirement"
 require_relative "scope"
 require_relative "scoped_declaration"
-require_relative "semver_range"
 require_relative "steam_branch"
 
 module Dev
@@ -92,7 +91,7 @@ module Dev
       # activates in the project shadowenv. The locked version is also the
       # generated Gemfile's `ruby` directive.
       #
-      # `"4.0.5"` pins that patch; `"~> 4.0"` takes the highest 4.0.x the tap
+      # `"4.0.5"` pins that patch; `"~4.0"` takes the highest 4.0.x the tap
       # has at `dev deps update` (a patch upgrade is a re-lock); a bare minor
       # `"4.0"` means any patch of it, as `python "3.12"` does.
       #
@@ -120,8 +119,8 @@ module Dev
 
       # Declare the project's Python: a :python declaration ranging over
       # homebrew/core's `python@<minor>` family — the minor is a formula
-      # family suffix, `"3.12"` meaning `~> 3.12.0` exactly as `brew "llvm",
-      # version: "18"` means `~> 18.0` — locked and installed through brew
+      # family suffix, `"3.12"` meaning `~3.12` exactly as `brew "llvm",
+      # version: "18"` means `~18` — locked and installed through brew
       # like any formula; dev builds the project's venv on the locked keg
       # in the store (one per side of the build container, linked as
       # `.venv` on the host and `.venv-container` inside), and pip deps
@@ -268,15 +267,15 @@ module Dev
       end
 
       # The requirement a `ruby` argument means: a bare minor ("4.0") is any
-      # patch of it; anything else — an exact patch, an explicit requirement
-      # — is taken as written.
+      # patch of it (`~4.0`); anything else — an exact patch, an explicit
+      # requirement — is taken as written.
       #
       # @param version [String] the argument, stripped
       # @return [Requirement]
       # @raise [Requirement::ParseError] if the argument is not a requirement
       sig { params(version: String).returns(Requirement) }
       def ruby_requirement(version)
-        Requirement.parse(version.match?(/\A\d+\.\d+\z/) ? "~> #{version}.0" : version)
+        Requirement.parse(version.match?(/\A\d+\.\d+\z/) ? "#{Requirement::TILDE}#{version}" : version)
       end
     end
 
@@ -477,9 +476,9 @@ module Dev
     # spec's name is the package, `tap:` is the source coordinate, `cask:`
     # routes to the :cask integration (a separate universe), and the
     # requirement is whichever one form was given — the positional
-    # (`brew "llvm", "~> 18.0"`), `version:` (brew's family suffix, `"18"`
-    # meaning `~> 18.0`), or the spec's own `@` (`brew "llvm@18"`), the
-    # three spellings of one ask. What remains rides as options.
+    # (`brew "llvm", "~18"`), `version:` (brew's family suffix, `"18"`
+    # meaning `~18`), or the spec's own `@` (`brew "llvm@18"`), the three
+    # spellings of one ask. What remains rides as options.
     class BrewAsk
       extend T::Sig
 
@@ -666,7 +665,6 @@ module Dev
         @host = host
         @declarations = T.let([], T::Array[ScopedDeclaration])
         @registered_methods = registered_methods
-        @semver_range = T.let(SemverRange.new, SemverRange)
       end
 
       # Declare a CMake dependency. Expands github: shorthand if present.
@@ -675,7 +673,7 @@ module Dev
       #   - repo:/github: — a git universe under :cmake. The requirement
       #     selects over the remote's enumerated refs: `tag:` and `branch:`
       #     are an exact ref by name, the positional a range over the refs
-      #     that are versions (`"~> 1.3"`); commit: is a revision — an
+      #     that are versions (`"~1.3"`); commit: is a revision — an
       #     address into the continuous space, full 40-char SHA only.
       #   - url: — an artifact universe under :url. The URL is the entire
       #     address, so nothing selects: a tag: here is a display label
@@ -729,7 +727,7 @@ module Dev
       # Declare a Ruby gem scoped to this group (group name -> bundler group).
       #
       # @param name [String, Symbol] gem name
-      # @param requirement [String, nil] requirement (e.g. "~> 1.17")
+      # @param requirement [String, nil] requirement (e.g. "^1.17")
       # @param spec [Hash] additional bundler options (e.g. require:, git:)
       # @return [void]
       # @raise [Requirement::ParseError] if the requirement does not parse
@@ -755,7 +753,7 @@ module Dev
       # top-level packages you depend on need declaring — mirroring luarocks.
       #
       # @param name [String, Symbol] distribution name (e.g. "totalsegmentator")
-      # @param requirement [String, nil] requirement (e.g. ">= 2.0", "2.0.5"; `~>` reads as PEP 440's `~=`)
+      # @param requirement [String, nil] requirement (e.g. ">=2.0", "2.0.5"; `~2.0.3` reads as PEP 440's `~=2.0.3`)
       # @param spec [Hash] additional options (e.g. host:)
       # @return [void]
       # @raise [Requirement::ParseError] if the requirement does not parse
@@ -766,9 +764,9 @@ module Dev
 
       # Declare a Satisfactory mod dependency from ficsit.app.
       #
-      # The requirement is the positional, in dev's language, or `version:`,
-      # in ficsit.app's own node-style range syntax (`"^3.12.0"`) — the
-      # keyword is sugar for what SMR writes, translated at this boundary.
+      # The requirement is the positional or `version:`, the keyword SMR's
+      # own pages write a mod's constraint under — the same semver range
+      # syntax, so the keyword is the positional under ficsit.app's name.
       #
       # target: is an install instruction — which of the mod's artifacts to
       # fetch when no group platform says otherwise — so it rides the
@@ -776,12 +774,12 @@ module Dev
       # (the target every ficsit mod publishes for players).
       #
       # @param mod_reference [String, Symbol] mod reference (e.g. "SML", "AreaActions")
-      # @param requirement [String, nil] requirement (e.g. "~> 3.12", ">= 1.0")
-      # @param version [String, nil] a node-style semver range (e.g. "^3.12.0")
+      # @param requirement [String, nil] requirement (e.g. "^3.12", ">=1.0")
+      # @param version [String, nil] the same requirement, as SMR writes it (e.g. "^3.12.0")
       # @param spec [Hash] additional options (target:, etc.)
       # @return [void]
       # @raise [TwoRequirementsError] if both the positional and version: are given
-      # @raise [SemverRange::ParseError] if version: is not a semver range
+      # @raise [Requirement::ParseError] if either is not a requirement
       sig do
         params(
           mod_reference: T.any(String, Symbol),
@@ -791,7 +789,7 @@ module Dev
         ).void
       end
       def ficsit(mod_reference, requirement = nil, version: nil, **spec)
-        asked = one_requirement("ficsit", mod_reference.to_s, requirement, "version:", version && @semver_range.parse(version))
+        asked = one_requirement("ficsit", mod_reference.to_s, requirement, "version:", version && Requirement.parse(version))
         target = spec.delete(:target) || FICSIT_DEFAULT_TARGET
         add_declaration(mod_reference, :ficsit, spec, requirement: asked, materialization: { "target" => target.to_s })
       end
@@ -1057,8 +1055,8 @@ module Dev
       # `cask:` routes to the :cask integration (a separate universe —
       # Homebrew publishes no versions or bottle digests for casks), and
       # the requirement over the family's real versions is the positional
-      # (`brew "llvm", "~> 18.0"`), `version:` (`"18"`, the family suffix)
-      # or the spec's own `@` (`brew "llvm@18"`) — one of them.
+      # (`brew "llvm", "~18"`), `version:` (`"18"`, the family suffix) or
+      # the spec's own `@` (`brew "llvm@18"`) — one of them.
       #
       # @param name [String, Symbol] formula spec (`llvm`, `llvm@18`) or cask name
       # @param requirement [String, nil] a requirement over the family's versions
@@ -1178,7 +1176,8 @@ module Dev
 
       # The one requirement a verb was given, out of its two spellings: the
       # positional in dev's language, or the keyword that is the verb's
-      # sugar for it (`tag:` an Exact, ficsit's `version:` a semver range).
+      # sugar for it (`tag:` an Exact, ficsit's `version:` the positional
+      # under SMR's name).
       #
       # @param verb [String] the DSL verb, for the message
       # @param name [String] the declaration name

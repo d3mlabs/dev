@@ -20,7 +20,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     When
     config = Dev::Deps.define do
       gem "cli-ui"
-      gem "rake", "~> 13.0"
+      gem "rake", "^13.0"
     end
 
     Then
@@ -30,14 +30,14 @@ class Dev::Deps::ConfigTest < Minitest::Test
     gems[0].scope.group == Dev::Deps::DSL::DEFAULT_GROUP
     gems[0].requirement.any?
     gems[1].name == "rake"
-    gems[1].requirement == Requirement.parse("~> 13.0")
+    gems[1].requirement == Requirement.parse("^13.0")
   end
 
   test "define registers group-scoped gems with the group as bundler group" do
     When
     config = Dev::Deps.define do
       group :test do
-        gem "minitest", "~> 5.0"
+        gem "minitest", "^5.0"
       end
     end
 
@@ -45,7 +45,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decl = config.declarations.find { |d| d.name == "minitest" }
     decl.integration == :bundler
     decl.scope.group == :test
-    decl.requirement == Requirement.parse("~> 5.0")
+    decl.requirement == Requirement.parse("^5.0")
   end
 
   test "define registers taps as Tap objects" do
@@ -95,7 +95,7 @@ class Dev::Deps::ConfigTest < Minitest::Test
     decls.all? { |d| d.integration == :brew && d.scope.group == :build }
     decls[0].requirement.any?
     decls[0].source.nil?
-    decls[2].requirement == Requirement.parse("~> 7.4.0.0")
+    decls[2].requirement == Requirement.parse("~7.4.0")
     decls[2].source == "d3mlabs/d3mlabs"
   end
 

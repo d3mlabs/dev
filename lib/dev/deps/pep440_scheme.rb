@@ -6,8 +6,9 @@ require_relative "range_scheme"
 module Dev
   module Deps
     # PEP 440 ordering (:pip): dev's requirement evaluated over Python
-    # package versions with pip's comparison rules. `~>` reads as PEP 440's
-    # `~=` (`~> 2.0.3` is `>= 2.0.3, < 2.1`), `=` as `==`.
+    # package versions with pip's comparison rules. `~2.0.3` reads as PEP
+    # 440's `~=` (`>=2.0.3 <2.1.0`), `=` as `==`; a pre-release or dev
+    # release is excluded unless asked for, as pip excludes them.
     #
     # Version grammar: [epoch!]release[{a|b|rc}N][.postN][.devN]; local
     # version labels ("+cpu") are accepted and ignored for ordering.
@@ -38,6 +39,10 @@ module Dev
         { "a" => 0, "alpha" => 0, "b" => 1, "beta" => 1, "c" => 2, "pre" => 2, "preview" => 2, "rc" => 2 }.freeze,
         T::Hash[String, Integer],
       )
+      # The pre-key of a version with no phase: above every phase rank.
+      RELEASE_PRE_KEY = T.let([3].freeze, T::Array[Integer])
+      # The dev-key of a version with no dev segment: above any dev release.
+      RELEASE_DEV_KEY = T.let([1].freeze, T::Array[Integer])
 
       protected
 
@@ -63,12 +68,23 @@ module Dev
         elsif post.nil? && dev
           [-1] # dev-only releases sort below every prerelease
         else
-          [3]
+          RELEASE_PRE_KEY
         end
         post_key = post ? [0, post.to_i] : [-1]
-        dev_key = dev ? [0, dev.to_i] : [1]
+        dev_key = dev ? [0, dev.to_i] : RELEASE_DEV_KEY
 
         [epoch, release, pre_key, post_key, dev_key]
+      end
+
+      # A phase (`a1`, `rc2`) or a dev segment makes the version precede
+      # its release; the release is the key's epoch and release segments.
+      #
+      # @param key [Array] a PEP 440 comparison key
+      # @return [Array, nil] `[epoch, release]` for a pre-release or dev release
+      sig { override.params(key: T::Array[T.untyped]).returns(T.nilable(T::Array[T.untyped])) }
+      def prerelease_base(key)
+        pre_key, _post_key, dev_key = key.last(3)
+        key.first(2) if pre_key != RELEASE_PRE_KEY || dev_key != RELEASE_DEV_KEY
       end
     end
   end

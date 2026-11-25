@@ -29,8 +29,8 @@ class Dev::Deps::BrewCaskRepositoryTest < Minitest::Test
     scheme = Dev::Deps::CaskScheme.new
 
     Expect "the channel takes Any alone; its one entry satisfies nothing else"
-    !scheme.supports?(Dev::Deps::Requirement.parse("~> 21.0"))
+    !scheme.supports?(Dev::Deps::Requirement.parse("^21.0"))
     scheme.satisfies?(package.versions.first, Dev::Deps::Requirement::Any.new)
-    !scheme.satisfies?(package.versions.first, Dev::Deps::Requirement.parse("~> 21.0"))
+    !scheme.satisfies?(package.versions.first, Dev::Deps::Requirement.parse("^21.0"))
   end
 end

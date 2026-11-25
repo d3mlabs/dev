@@ -26,30 +26,33 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
     result == expected
 
     Where
-    version    | expression     | expected
-    "2.0.5"    | ">= 2.0"       | true
-    "1.9"      | ">= 2.0"       | false
-    "2.0.5"    | "2.0.5"        | true
-    "2.0.6"    | "2.0.5"        | false
-    "2.0.5"    | "~> 2.0.3"     | true
-    "2.1.0"    | "~> 2.0.3"     | false
-    "3.5"      | "~> 3.0"       | true
-    "4.0"      | "~> 3.0"       | false
-    "2.0.0rc1" | ">= 2.0.0"     | false
-    "2.0.0"    | "!= 2.0.0"     | false
-    "2.0.1"    | "!= 2.0.0"     | true
-    "2.5"      | ">= 2.0, < 3.0" | true
-    "3.0"      | ">= 2.0, < 3.0" | false
-    "2.0"      | "= 2.0.0"      | true
-    "2.1"      | "> 2.0"        | true
-    "2.0"      | "> 2.0"        | false
-    "2.0"      | "<= 2.0"       | true
-    "2.1"      | "<= 2.0"       | false
+    version      | expression      | expected
+    "2.0.5"      | ">= 2.0"        | true
+    "1.9"        | ">= 2.0"        | false
+    "2.0.5"      | "2.0.5"         | true
+    "2.0.6"      | "2.0.5"         | false
+    "2.0.5"      | "~2.0.3"        | true
+    "2.1.0"      | "~2.0.3"        | false
+    "3.5"        | "^3.0"          | true
+    "4.0"        | "^3.0"          | false
+    "2.0.0rc1"   | ">= 2.0.0"      | false
+    "2.0.0rc1"   | "^1"            | false
+    "2.0.0.dev1" | "^1"            | false
+    "2.0.0rc1"   | ">= 2.0.0a1"    | true
+    "2.0.0rc1"   | ">= 2.0.0.dev1" | true
+    "2.0.1"      | ">= 2.0.0a1"    | true
+    "2.5"        | ">= 2.0, < 3.0" | true
+    "3.0"        | ">= 2.0, < 3.0" | false
+    "2.0"        | "= 2.0.0"       | true
+    "2.1"        | "> 2.0"         | true
+    "2.0"        | "> 2.0"         | false
+    "2.0"        | "<= 2.0"        | true
+    "2.1"        | "<= 2.0"        | false
   end
 
-  test "~> reads as PEP 440's compatible release (~=)" do
+  test "~ reads as PEP 440's compatible release (~=)" do
     Given "the ~= 2.0.3 spread"
-    requirement = Requirement.parse("~> 2.0.3")
+    requirement = Requirement.parse("~2.0.3")
 
     Expect
     scheme.satisfies?(pv("2.0.3"), requirement)

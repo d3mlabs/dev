@@ -23,9 +23,9 @@ class Dev::Deps::FormulaSpecTest < Minitest::Test
     Where
     spec            | name      | suffix | requirement
     "llvm"          | "llvm"    | nil    | ""
-    "llvm@18"       | "llvm"    | "18"   | "~> 18.0"
-    "python@3.12"   | "python"  | "3.12" | "~> 3.12.0"
-    "openssl@1.1"   | "openssl" | "1.1"  | "~> 1.1.0"
+    "llvm@18"       | "llvm"    | "18"   | "~18"
+    "python@3.12"   | "python"  | "3.12" | "~3.12"
+    "openssl@1.1"   | "openssl" | "1.1"  | "~1.1"
   end
 
   test "a bare spec asks for Any" do
@@ -46,6 +46,7 @@ class Dev::Deps::FormulaSpecTest < Minitest::Test
     "llvm@"
     "llvm@latest"
     "llvm@18@19"
+    "llvm@1.2.3.4"
     "llvm 18"
   end
 

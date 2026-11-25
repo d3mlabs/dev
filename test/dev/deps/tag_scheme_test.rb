@@ -26,14 +26,16 @@ class Dev::Deps::TagSchemeTest < Minitest::Test
     result == expected
 
     Where
-    tag          | expression   | expected
-    "v3.11.3"    | ">= 3.11"    | true
-    "v3.11.3"    | "~> 3.11.0"  | true
-    "3.11.3"     | "~> 3.11.0"  | true
-    "v3.12.0"    | "~> 3.11.0"  | false
-    "v3.11.3"    | "< 3.11.3"   | false
-    "V2"         | ">= 2"       | true
-    "v3.11.3"    | "= 3.11.3"   | true
+    tag           | expression     | expected
+    "v3.11.3"     | ">= 3.11"      | true
+    "v3.11.3"     | "~3.11.0"      | true
+    "3.11.3"      | "~3.11.0"      | true
+    "v3.12.0"     | "~3.11.0"      | false
+    "v3.11.3"     | "< 3.11.3"     | false
+    "V2"          | ">= 2"         | true
+    "v3.11.3"     | "= 3.11.3"     | true
+    "v2.0.0-rc.1" | "^1"           | false
+    "v2.0.0-rc.1" | ">=2.0.0-rc.1" | true
   end
 
   test "an exact tag matches by name as spelled, whatever its shape" do
@@ -55,20 +57,23 @@ class Dev::Deps::TagSchemeTest < Minitest::Test
 
     Where
     expression      | span
-    "~> 1"          | "v1"
+    "^1"            | "v1"
+    "~1"            | "v1"
     ">= 1, < 2"     | "v1"
+    ">=1 <2"        | "v1"
     ">= 1.0.0, < 2" | "v1"
     ">= 1, < 3"     | "v1..v3"
     ">= 1"          | "v1.."
     ">= 0"          | "v0.."
     nil             | "v0.."
     ">= 1.4"        | nil
-    "~> 1.2"        | nil
-    "~> 1.2.3"      | nil
+    "^1.2"          | nil
+    "~1.2"          | nil
+    "~1.2.3"        | nil
     "> 0"           | nil
     ">= 1, <= 2"    | nil
     ">= 1, < 2.1"   | nil
-    ">= 1, != 1.1"  | nil
+    ">= 1, > 1.1"   | nil
     ">= 1.0.0-rc.1" | nil
     "= 1.3.0"       | nil
     "1.3.0"         | nil
@@ -91,7 +96,7 @@ class Dev::Deps::TagSchemeTest < Minitest::Test
     Expect
     scheme.supports?(Requirement::Any.new)
     scheme.supports?(Requirement::Exact.new(version: "latest"))
-    scheme.supports?(Requirement.parse("~> 3.11"))
+    scheme.supports?(Requirement.parse("^3.11"))
   end
 
   test "sort places tags that are not versions below the version tags, in reported order" do

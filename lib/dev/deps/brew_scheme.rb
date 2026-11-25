@@ -10,7 +10,7 @@ module Dev
     # the formula family's real stable versions — the bare spec's and its
     # versioned siblings' (llvm 21.1.0, llvm@19 19.1.7, llvm@18 18.1.8), as
     # BrewRepository enumerates them. The `@18` suffix is not a version:
-    # the DSL reads `brew "llvm@18"` and `version: "18"` as `~> 18.0`, and
+    # the DSL reads `brew "llvm@18"` and `version: "18"` as `~18`, and
     # that is what 18.1.8 is matched against.
     #
     # Brew versions are tolerant of shape — `3.11.4_1` (a bottle revision,
@@ -45,7 +45,7 @@ module Dev
 
         only = T.must(versions.first).version
         "#{name}: brew has one version of it, #{only}, and a range (`#{requirement}`) cannot pick among one — " \
-          "declare `brew \"#{name}\"` to follow brew, or `brew \"#{name}\", \"= #{only}\"` to hold it"
+          "declare `brew \"#{name}\"` to follow brew, or `brew \"#{name}\", \"#{only}\"` to hold it"
       end
 
       protected

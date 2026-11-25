@@ -8,7 +8,7 @@ module Dev
   module Lifecycle
     # A release **series**: every version of one major, named `v<major>`
     # as the plan names a series tag. What a series-shaped requirement
-    # (`~> 1`) and a workflow's `@v1` name, and what a head is kept per: a pointed
+    # (`^1`) and a workflow's `@v1` name, and what a head is kept per: a pointed
     # channel holds one pointer per series, a derived channel's head within
     # a series is the greatest non-prerelease version of that major
     # (Head.derive). A major is never crossed by a deploy: a 2.0.0 deploy
