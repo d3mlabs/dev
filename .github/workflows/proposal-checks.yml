@@ -24,7 +24,10 @@ permissions:
 
 jobs:
   origin-firing:
-    uses: d3mlabs/ai-flow/.github/workflows/origin-firing.yml@main
+    # @v1: the gh channel's series head — the `^1` constraint in the one
+    # syntax Actions resolves, moved only by `dev deploy gh` from an immutable
+    # release, never by a merge to main (plans#76). A major bump is an edit here.
+    uses: d3mlabs/ai-flow/.github/workflows/origin-firing.yml@v1
     secrets:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       AI_FLOW_APP_ID: ${{ secrets.AI_FLOW_APP_ID }}
