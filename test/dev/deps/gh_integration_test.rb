@@ -718,8 +718,9 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     bundle_env = File.read(File.join(dir, "bundle-env.txt")).lines(chomp: true).to_h { |line| line.split("=", 2) }
     bundle_env.fetch("BUNDLE_GEMFILE").match?(%r{#{staging}/Gemfile\z})
     bundle_env.fetch("BUNDLE_PATH").match?(%r{#{staging}/vendor/bundle\z})
-    bundle_env.slice("BUNDLE_FROZEN", "BUNDLE_DISABLE_SHARED_GEMS", "BUNDLE_GLOBAL_GEM_CACHE", "BUNDLE_USER_CACHE") == {
+    bundle_env.slice("BUNDLE_FROZEN", "BUNDLE_WITHOUT", "BUNDLE_DISABLE_SHARED_GEMS", "BUNDLE_GLOBAL_GEM_CACHE", "BUNDLE_USER_CACHE") == {
       "BUNDLE_FROZEN" => "true",
+      "BUNDLE_WITHOUT" => "development:test",
       "BUNDLE_DISABLE_SHARED_GEMS" => "true",
       "BUNDLE_GLOBAL_GEM_CACHE" => "true",
       "BUNDLE_USER_CACHE" => "#{dir}/tool-caches/bundler",
