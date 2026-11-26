@@ -364,6 +364,27 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
+  test "install_all raises ExtractionError when the zip does not unpack" do
+    Given "an asset named as a zip whose bytes are not one"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    zip_path = Pathname(File.join(dir, "ai-flow-1.1.0.zip"))
+    zip_path.binwrite("not actually a zip")
+    dep = build_dependency([zip_path], asset_pattern: "*.zip")
+    integration = build_integration([zip_path], dir)
+
+    When "installing"
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all([dep])
+    end
+
+    Then "the per-dep failure is the extraction, naming the archive"
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::ExtractionError)
+    error.message.include?("extraction failed for ai-flow-1.1.0.zip")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
   test "install_all raises UnsupportedArchiveError for an archive in neither form the packager writes" do
     Given "a downloaded asset that is neither a zip nor a zstd tarball"
     dir = Dir.mktmpdir("dev-gh-int-test-")
