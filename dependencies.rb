@@ -14,6 +14,12 @@ Dev::Deps.define do
   # by `dev deps install` and activated in the project shadowenv.
   # No gem declarations — the hand-written Gemfile stays bundler-managed.
   ruby "4.0.6"
+
+  # The ai-flow dispatcher the reusable workflows run on this repo's jobs:
+  # a 1.x release, resolved through the series head `v1` — the same ref the
+  # caller workflows' `uses: …@v1` resolves. A major bump edits this line
+  # and both callers.
+  gh "d3mlabs/ai-flow", "^1", assets: "ai-flow-*.zip"
 end
 
 BUNDLER_VERSION = ">= 2.1" unless defined?(BUNDLER_VERSION)
