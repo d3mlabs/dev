@@ -6,6 +6,14 @@ require "dev/runner_user"
 require "dev/ui"
 
 module Dev
+  # STOPGAP — retired by plans#70 step 3 (dev#719). This class exists
+  # because a Mac's enrollment is still the operator's LaunchAgent, the
+  # thing plans#70 ends: once the runner service there runs as a runner
+  # user, the credential on every host is that user's own `gh auth`
+  # login, as on the box, and this class, its `status` fact and the
+  # `.env` line it writes are deleted (register removes a leftover line).
+  # Build nothing on it: no second caller, no second key.
+  #
   # The gh credential a slot's jobs fetch with, on a host whose
   # enrollments are the operator's own — a Mac, where the runner service
   # is a per-user LaunchAgent and no runner user exists. The operator's

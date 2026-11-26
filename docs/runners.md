@@ -342,6 +342,13 @@ Macs have no runner user: the service is your LaunchAgent.
 
 ### Mac: the jobs' gh credential
 
+**Stopgap.** This section describes [dev#718](https://github.com/d3mlabs/dev/pull/718),
+which [plans#70](https://github.com/d3mlabs/plans/issues/70) retires
+([dev#719](https://github.com/d3mlabs/dev/issues/719)): once the Mac's
+runner service runs as a runner user, the credential there is that user's
+gh login, as on Linux, and the `GH_TOKEN` line below is removed by
+register. Nothing else should come to depend on it.
+
 On a Mac the enrollment is yours, and so is the gh login — but it lives
 in the login keychain, which a process launchd spawns cannot read: a
 job's `gh auth token` answers nothing, and the `d3mlabs/dev/up` action
@@ -596,8 +603,8 @@ is in the checkout: `dev.yml` and the lock. It runs, in order:
 The job supplies gh's credential. On a hosted runner that is `GH_TOKEN` in
 the job's `env`, a token that can read every private pin the lock names.
 On a box it is the [runner user's gh login](#linux-the-runner-user), and
-the job sets nothing. On a Mac it is the `GH_TOKEN` register wrote into
-the [slot's `.env`](#mac-the-jobs-gh-credential), and the job sets
+the job sets nothing. On a Mac it is, until plans#70, the `GH_TOKEN` register wrote
+into the [slot's `.env`](#mac-the-jobs-gh-credential), and the job sets
 nothing either.
 
 #### Which verb: `dev up` or `dev deps install`
