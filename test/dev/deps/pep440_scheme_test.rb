@@ -36,6 +36,9 @@ class Dev::Deps::Pep440SchemeTest < Minitest::Test
     "3.5"        | "^3.0"          | true
     "4.0"        | "^3.0"          | false
     "2.0.0rc1"   | ">= 2.0.0"      | false
+    "0.27.0rc1"  | ">= 0.22"       | false
+    "0.26.0"     | ">= 0.22"       | true
+    "0.27.0rc1"  | ">= 0.27.0rc1"  | true
     "2.0.0rc1"   | "^1"            | false
     "2.0.0.dev1" | "^1"            | false
     "2.0.0rc1"   | ">= 2.0.0a1"    | true

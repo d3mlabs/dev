@@ -6,7 +6,7 @@ require "dev/deps/pip_repository"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::PipRepositoryTest < Minitest::Test
-  test "find reports every PyPI release with its sdist digest" do
+  test "find reports every installable PyPI release with its sdist digest" do
     Given "a stubbed PyPI JSON API response with two releases"
     repo = Dev::Deps::PipRepository.new
     project = {
@@ -18,7 +18,6 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
         "2.1.0" => [
           { "packagetype" => "bdist_wheel", "digests" => { "sha256" => "onlywheel" } },
         ],
-        "1.9.0" => [],
       },
     }
     response = stub(body: JSON.generate(project))
@@ -28,12 +27,43 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
     When "finding the package"
     package = repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "totalsegmentator"))
 
-    Then "sdist digest preferred, wheel fallback, nil for file-less releases"
-    package.versions.map(&:version).sort == ["1.9.0", "2.0.5", "2.1.0"]
+    Then "sdist digest preferred, wheel fallback"
+    package.versions.map(&:version).sort == ["2.0.5", "2.1.0"]
     package.version("2.0.5").digest == "SHA256=sdistsha"
     package.version("2.1.0").digest == "SHA256=onlywheel"
-    package.version("1.9.0").digest.nil?
+    package.version("2.0.5").source == "totalsegmentator==2.0.5"
     package.version("2.0.5").declarations == Dev::Deps::Declarations::ToolOwned.new
+  end
+
+  test "find leaves out the releases pip has nothing to install from: yanked and file-less (dev#349)" do
+    Given "a project whose 0.20.0rc2 is yanked, whose 0.9.2 has no files, and whose 0.21.0 has one yanked wheel beside a live sdist"
+    repo = Dev::Deps::PipRepository.new
+    project = {
+      "releases" => {
+        "0.9.2" => [],
+        "0.20.0rc2" => [
+          { "packagetype" => "sdist", "yanked" => true, "digests" => { "sha256" => "yankedsdist" } },
+          { "packagetype" => "bdist_wheel", "yanked" => true, "digests" => { "sha256" => "yankedwheel" } },
+        ],
+        "0.21.0" => [
+          { "packagetype" => "bdist_wheel", "yanked" => true, "digests" => { "sha256" => "brokenwheel" } },
+          { "packagetype" => "sdist", "yanked" => false, "digests" => { "sha256" => "livesdist" } },
+        ],
+        "0.26.0" => [
+          { "packagetype" => "sdist", "yanked" => false, "digests" => { "sha256" => "sdist26" } },
+        ],
+      },
+    }
+    response = stub(body: JSON.generate(project))
+    response.stubs(:is_a?).with(Net::HTTPSuccess).returns(true)
+    repo.stubs(:get_project).with("scikit-image").returns(response)
+
+    When "finding the package"
+    package = repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "scikit-image"))
+
+    Then "the universe is what pip can install; a partly yanked release stays, digested from a live file"
+    package.versions.map(&:version).sort == ["0.21.0", "0.26.0"]
+    package.version("0.21.0").digest == "SHA256=livesdist"
   end
 
   test "find raises ProjectNotFoundError, a PackageNotFoundError, on 404" do
