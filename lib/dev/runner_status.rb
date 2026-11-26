@@ -635,6 +635,7 @@ module Dev
     # (JobGhToken) — the keychain login is unreadable from the service.
     # A slot without it is drift register repairs. On the Linux rule the
     # runner user's own login is the credential and nothing is read here.
+    # Stopgap with the class: goes with plans#70 step 3 (dev#719).
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
     # @param findings [Array<String>] facts that do not hold, appended to

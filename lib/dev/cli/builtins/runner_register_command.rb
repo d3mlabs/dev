@@ -165,7 +165,8 @@ module Dev
         # Builds the jobs' gh credential for a host whose enrollments are
         # the operator's own (JobGhToken: `GH_TOKEN` in each slot's `.env`,
         # since the keychain login is unreadable from the service), asking
-        # and speaking on the Ui; injected for tests.
+        # and speaking on the Ui; injected for tests. A stopgap seam: goes
+        # with the class under plans#70 step 3 (dev#719).
         JobTokenFactory = T.type_alias { T.proc.params(ui: Ui).returns(Dev::JobGhToken) }
 
         sig do
@@ -396,6 +397,8 @@ module Dev
             same machine user's token the first time a slot lacks it, checks it through
             gh, writes it (owner-only) and bounces the service; `dev runner status`
             names a slot without it. Headless it prints the lines to add and stops.
+            This is a stopgap (dev#718) until the Mac's service runs as a runner user
+            too (plans#70), when the credential there is that user's gh login as here.
 
             Inside a WSL2 distro, register also converges what a runner there needs to
             survive a reboot: WSL stops a distro ~20 s after its last client
