@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   ai-commands:
-    # @v1: the gh channel's series head — the `~> 1` constraint in the one
+    # @v1: the gh channel's series head — the `^1` constraint in the one
     # syntax Actions resolves, moved only by `dev deploy gh` from an immutable
     # release, never by a merge to main (plans#76). A major bump is an edit here.
     uses: d3mlabs/ai-flow/.github/workflows/ai-commands.yml@v1
