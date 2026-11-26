@@ -197,7 +197,7 @@ takes these:
 |---|---|---|---|---|
 | `format` | `zip` \| `tar` | no | `zip` | `tar` writes `<build>.tar.zst`; needs `zstd` on PATH |
 | `split` | size (`2GiB`) | no | none | `tar` only; cuts into `.00`, `.01`, … under the size plus a `<build>.MANIFEST` of SHA-256s; refused with `zip` |
-| `vendor` | boolean | no | `false` | a frozen `bundle install` into the stage's `vendor/bundle` before archiving; requires `dependencies.rb` and `deps.lock` in the stage |
+| `vendor` | boolean | no | `false` | a frozen `bundle install` of the runtime groups (`BUNDLE_WITHOUT=development:test`) into the stage's `vendor/bundle` before archiving; requires `dependencies.rb` and `deps.lock` in the stage |
 | `files` | list of gitignore-syntax patterns | no | the whole stage | applied in order, `!` negating; a bare directory means its contents; paths unchanged; an empty selection is refused with the patterns named |
 
 `split:` alone selects the tar format: `{ archive: { split: 2GiB } }` is

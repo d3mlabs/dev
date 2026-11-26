@@ -65,6 +65,7 @@ class Dev::Lifecycle::VendoredPackagerTest < Minitest::Test
         "BUNDLE_GEMFILE" => "#{stage}/Gemfile",
         "BUNDLE_PATH" => "#{stage}/vendor/bundle",
         "BUNDLE_FROZEN" => "true",
+        "BUNDLE_WITHOUT" => "development:test",
         "BUNDLE_DISABLE_SHARED_GEMS" => "true",
       },
     ]]

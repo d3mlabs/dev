@@ -446,7 +446,10 @@ the Ruby it **pins** through brew, runs a frozen `bundle install` so the
 gems are **vendored** into the tree's own `vendor/bundle` under that
 keg's bundler, and writes a **binstub**-shaped launcher per executable.
 The vendored gems live and are collected with the tree; no project gem
-home is touched.
+home is touched. Only the Gemfile's runtime groups are vendored
+(`BUNDLE_WITHOUT=development:test`): the installed tree is a deployed
+tool, and its `development` and `test` groups are the producer's checkout
+tooling, never run from the tree.
 
 The launcher is `bin/dev`'s sh half and nothing more: it unsets the
 harness activation (`RUBYOPT`, `RUBYLIB`, `BUNDLE_*`, `BUNDLER_*` — the

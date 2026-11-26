@@ -262,13 +262,14 @@ class Dev::Deps::SelfContainedTreeTest < Minitest::Test
     When
     gem_bundle(tree).vendor!(exec:, cache: root / "tool-caches/bundler")
 
-    Then "one bundle install, on the tree's own Gemfile, into its own path, frozen, sharing nothing, caching in the store"
+    Then "one bundle install, on the tree's own Gemfile, into its own path, frozen, runtime groups only, sharing nothing, caching in the store"
     exec.calls == [[
       ["bundle", "install"],
       {
         "BUNDLE_GEMFILE" => "#{tree}/Gemfile",
         "BUNDLE_PATH" => "#{tree}/vendor/bundle",
         "BUNDLE_FROZEN" => "true",
+        "BUNDLE_WITHOUT" => "development:test",
         "BUNDLE_DISABLE_SHARED_GEMS" => "true",
         "BUNDLE_GLOBAL_GEM_CACHE" => "true",
         "BUNDLE_USER_CACHE" => "#{root}/tool-caches/bundler",
@@ -290,7 +291,7 @@ class Dev::Deps::SelfContainedTreeTest < Minitest::Test
 
     Then
     exec.calls.size == 1
-    exec.calls[0][1].keys == %w[BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_FROZEN BUNDLE_DISABLE_SHARED_GEMS]
+    exec.calls[0][1].keys == %w[BUNDLE_GEMFILE BUNDLE_PATH BUNDLE_FROZEN BUNDLE_WITHOUT BUNDLE_DISABLE_SHARED_GEMS]
 
     Cleanup
     FileUtils.rm_rf(root)

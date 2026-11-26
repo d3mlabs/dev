@@ -214,6 +214,9 @@ module Dev
         # `ruby/<RbConfig::CONFIG["ruby_version"]>` — a gem home — which is
         # the path the executable selects in-process (see the class comment).
         VENDOR_DIR = "vendor/bundle"
+        # The Gemfile groups a vendored tree leaves out, in `BUNDLE_WITHOUT`
+        # syntax: bundler's conventional names for a checkout's own tooling.
+        WITHOUT_GROUPS = "development:test"
 
         # What a launcher unsets before it execs, as a tool's entrypoint
         # does (bin/dev's own `unset` line; bin_dev_test keeps that list
@@ -283,6 +286,14 @@ module Dev
         # Gemfile.lock, under the toolchain the seam runs. A tree without a
         # Gemfile has no gems to vendor and this does nothing.
         #
+        # Runtime groups only ({WITHOUT_GROUPS}): the installed tree is a
+        # deployed tool, and its Gemfile's development and test groups are
+        # the producer's checkout tooling (linters, type checkers, test
+        # frameworks), never run from the tree. Vendoring them is also what
+        # made installs need a C toolchain: ai-flow's own gems are pure
+        # Ruby, and the one native extension in its lock came in through
+        # rubocop.
+        #
         # @param exec [ToolchainExec] the Ruby to bundle under
         # @param cache [Pathname, nil] bundler's download cache (the store's
         #   bundler tool cache); nil leaves bundler its own
@@ -299,6 +310,7 @@ module Dev
               "BUNDLE_GEMFILE" => (@tree.root / GEMFILE).to_s,
               "BUNDLE_PATH" => (@tree.root / VENDOR_DIR).to_s,
               "BUNDLE_FROZEN" => "true",
+              "BUNDLE_WITHOUT" => WITHOUT_GROUPS,
               "BUNDLE_DISABLE_SHARED_GEMS" => "true",
             },
             T::Hash[String, T.nilable(String)],
