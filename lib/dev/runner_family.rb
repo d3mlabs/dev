@@ -22,13 +22,15 @@ module Dev
 
     # One slot: the local enrollment and GitHub's record of it — nil when
     # GitHub has lost it, or when GitHub could not be asked (`query_error`
-    # says why).
+    # says why) — and, for a listed org slot, the group GitHub has it in
+    # (`group`; nil when no group lists it, or GitHub was not asked).
     class Slot < T::Struct
       extend T::Sig
 
       const :enrollment, RunnerDiscovery::Enrollment
       const :runner, T.nilable(RunnerRegistry::Runner)
       const :query_error, T.nilable(String)
+      const :group, T.nilable(RunnerRegistry::Group), default: nil
 
       # Whether GitHub lists the slot.
       sig { returns(T::Boolean) }
@@ -44,14 +46,17 @@ module Dev
       end
 
       # The role the slot plays among the roles declared at hand: by its
-      # record's pool and, when GitHub lists it, its labels
-      # (RunnerRole.for_slot).
+      # pool and, when GitHub lists it, its labels (RunnerRole.for_slot).
+      # The pool is the group GitHub has the slot in when that was read;
+      # else the `.runner` record's — the group config.sh registered into,
+      # which a slot since moved between groups (RunnerGroups#place!)
+      # still names.
       #
       # @param declared [Hash{String => Dev::RunnerRole}] the roles declared at hand, by name
       # @return [Dev::RunnerRole]
       sig { params(declared: T::Hash[String, RunnerRole]).returns(RunnerRole) }
       def role(declared)
-        RunnerRole.for_slot(pool: enrollment.pool, labels: runner&.custom_labels, declared: declared)
+        RunnerRole.for_slot(pool: group&.name || enrollment.pool, labels: runner&.custom_labels, declared: declared, registered: enrollment.pool)
       end
 
       # The slot's number among its family's names: 1 for `<base>`, n for

@@ -255,6 +255,22 @@ class Dev::RunnerRoleTest < Minitest::Test
     "a lost slot in an unknown pool is pooled without labels" | "ue-hosted"       | nil                 | {}                   | Dev::RunnerRole.pooled(pool: "ue-hosted", labels: [])
   end
 
+  # GitHub's group and the record's pool answer different questions: the
+  # group a declared role is matched by is the one GitHub has the slot in
+  # now (register moves slots after config.sh; the record keeps the old
+  # name), while "registered into no group" — a build host — is the
+  # record's to say, wherever a human has moved the slot since.
+  test "for a slot GitHub has in one group and the record in another: #{description}" do
+    Expect
+    Dev::RunnerRole.for_slot(pool: pool, labels: labels, declared: declared, registered: registered) == expected
+
+    Where
+    description                                                          | pool              | registered | labels              | declared | expected
+    "the group GitHub has it in names the role, not the stale record"    | "ai-orchestrator" | "ai-flow"  | ["ai-orchestrator"] | { "agent" => AGENT, "orchestrator" => ORCHESTRATOR } | ORCHESTRATOR
+    "a build host moved into a human's group is a build host still"      | "ue-hosted"       | "Default"  | ["ue-engine"]       | { "agent" => AGENT } | Dev::RunnerRole.build_host(labels: ["ue-engine"])
+    "a slot dev registered into an undeclared group is pooled" | "ue-hosted" | "ue-hosted" | ["ue-engine"] | { "agent" => AGENT } | Dev::RunnerRole.pooled(pool: "ue-hosted", labels: ["ue-engine"])
+  end
+
   test "a pooled role is named for its pool, sits in an unpinned group, and judges nothing" do
     Given
     role = Dev::RunnerRole.pooled(pool: "ai-orchestrator", labels: ["ai-orchestrator"])
