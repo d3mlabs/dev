@@ -210,7 +210,13 @@ At creation the container gets:
   is mounted over `.shadowenv.d/` inside: the container's `dev up`
   writes its lisps there, and the host never reads them. Both
   directories are created on the host before the mount, so docker never
-  creates them as root.
+  creates them as root. The mount sits inside the mounted checkout, so
+  the host can delete the directory under a running container
+  (`actions/checkout`'s `git clean -ffdx`, a developer's); before reusing
+  a running container, `dev up` asks it whether `.shadowenv.d/` is still
+  a mount point and restarts it when not, which re-binds the mount over
+  the recreated directory. Without that the container's lisps would land
+  in the host's `.shadowenv.d/`.
 - **The host's dev at the host's exact version**, installed through
   Linuxbrew into the prefix volume on first use and whenever the version
   differs.

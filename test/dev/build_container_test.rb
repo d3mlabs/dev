@@ -560,7 +560,65 @@ class BuildContainerTest < Minitest::Test
     1 * bc.container_exists?(name) >> true
     1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
     1 * bc.container_running?(name) >> true
+    1 * bc.shadowenv_mount_live?(name, root) >> true
     0 * bc.start_container(name)
+    0 * bc.restart_container(name)
+  end
+
+  # The container's shadowenv directory is a bind mount *inside* the
+  # mounted checkout, over `.shadowenv.d`. The host can delete that
+  # directory under a running container — actions/checkout's `git clean
+  # -ffdx`, a developer's — and the mount stays on the deleted entry: the
+  # recreated `.shadowenv.d` has no mount on it, and the container's lisp
+  # writers write straight through to the host's directory, putting
+  # Linuxbrew paths on the host's project PATH (cellbound-3d#345, job
+  # 140103141315).
+  test "ensure_service! restarts a running container whose shadowenv mount is dead, so docker re-binds it over the recreated directory" do
+    Given "a running container whose shadowenv mount the host pulled from under it"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+    root = @checkout
+    name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container
+
+    When "ensuring the service"
+    bc.ensure_service!(tag, project_root: root)
+
+    Then "both shadowenv directories are back on the host and the container is restarted, not recreated"
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> true
+    1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
+    1 * bc.container_running?(name) >> true
+    1 * bc.shadowenv_mount_live?(name, root) >> false
+    1 * bc.restart_container(name) >> true
+    0 * bc.start_container(name)
+    0 * bc.create_service_container(name, tag, project_root: root, volumes: [])
+    (root / ".shadowenv.d").directory?
+    (root / ".shadowenv.d-container").directory?
+  end
+
+  test "shadowenv_mount_live? asks the container whether the checkout's .shadowenv.d is a mount point, by path, and reports the engine's verdict: #{what}" do
+    Given
+    engine = FakeContainerEngine.new { |_args| live }
+    bc = build_container(engine: engine)
+    root = @checkout
+    name = "dev-x"
+
+    When
+    verdict = bc.shadowenv_mount_live?(name, root)
+
+    Then "one docker exec, the mount point handed to the script as its argument rather than spliced into it"
+    verdict == live
+    engine.runs.size == 1
+    engine.runs[0][0, 2] == ["exec", name]
+    engine.runs[0].last == "#{root}/.shadowenv.d"
+    engine.runs[0][2, 2] == ["sh", "-c"]
+    engine.runs[0][4].include?("/proc/self/mountinfo")
+    !engine.runs[0][4].include?(root.to_s)
+
+    Where
+    what           | live
+    "a live mount" | true
+    "a dead mount" | false
   end
 
   # A container's mounts are fixed at creation. One created before the
@@ -584,6 +642,7 @@ class BuildContainerTest < Minitest::Test
     recreated * bc.remove_container(name) >> true
     recreated * bc.create_service_container(name, tag, project_root: root, volumes: []) >> true
     reused * bc.container_running?(name) >> true
+    reused * bc.shadowenv_mount_live?(name, root) >> true
 
     Where
     what                        | mounted                   | recreated | reused
@@ -953,6 +1012,7 @@ class BuildContainerTest < Minitest::Test
     When "invoking every one-command wrapper"
     exists = bc.container_exists?("dev-x")
     bc.start_container("dev-x")
+    bc.restart_container("dev-x")
     bc.remove_container("dev-x")
     local = bc.local_image?("img:tag")
     pulled = bc.pull("img:tag")
@@ -964,6 +1024,7 @@ class BuildContainerTest < Minitest::Test
     engine.runs == [
       ["container", "inspect", "dev-x"],
       ["start", "dev-x"],
+      ["restart", "dev-x"],
       ["rm", "-f", "dev-x"],
       ["image", "inspect", "img:tag"],
       ["pull", "img:tag"],

@@ -633,14 +633,25 @@ module Dev
       end
 
       if exists
-        # A restart re-binds the mounts recorded at creation; a bind source
-        # that has gone since (the checkout recreated — a fresh clone over a
-        # checkpointed runner's container, a cleaned tree) would be made by
-        # docker, as root, and the container's user could not write its
-        # shadowenv directory. The same directories are made first, as at
-        # creation.
+        # A (re)start re-binds the mounts recorded at creation; a bind
+        # source that has gone since (the checkout recreated — a fresh clone
+        # over a checkpointed runner's container, a cleaned tree) would be
+        # made by docker, as root, and the container's user could not write
+        # its shadowenv directory. The same directories are made first, as
+        # at creation.
         make_shadowenv_dirs(project_root)
-        start_container(name) unless container_running?(name)
+        if !container_running?(name)
+          start_container(name)
+        elsif !shadowenv_mount_live?(name, project_root)
+          # The shadowenv mount sits *inside* the mounted checkout, over
+          # `.shadowenv.d`, which the host can delete under a running
+          # container (actions/checkout's `git clean -ffdx`, a developer's).
+          # The mount stays on the deleted entry; the recreated directory
+          # has none, and the container's lisp writers would write straight
+          # through to the host's `.shadowenv.d` — Linuxbrew paths on the
+          # host's project PATH. A restart re-binds it over the new one.
+          restart_container(name)
+        end
       else
         create_service_container(name, image_tag, project_root:, volumes:)
       end
@@ -861,6 +872,31 @@ module Dev
     sig { params(name: String).void }
     def start_container(name)
       @engine.run(["start", name], out: File::NULL, err: File::NULL)
+    end
+
+    # Stop and start the container: docker re-binds its recorded mounts
+    # on the way up, over whatever the host has at their paths now.
+    sig { params(name: String).void }
+    def restart_container(name)
+      @engine.run(["restart", name], out: File::NULL, err: File::NULL)
+    end
+
+    # Whether the running container still has its shadowenv directory
+    # mounted (see CONTAINER_SHADOWENV_DIR): the checkout's `.shadowenv.d`,
+    # at its container path, is a mount point in the container's own
+    # `/proc/self/mountinfo`. A mount whose directory the host deleted
+    # shows there under the deleted entry's name, not the path, so a
+    # recreated directory with no mount on it reads as dead. The path is
+    # the script's argument, never spliced into it.
+    #
+    # @param name [String] the running service container
+    # @param project_root [Pathname] the checkout
+    # @return [Boolean]
+    sig { params(name: String, project_root: Pathname).returns(T::Boolean) }
+    def shadowenv_mount_live?(name, project_root)
+      mount_point = Pathname(self.class.workspace_path(project_root)) / SHADOWENV_DIR
+      script = "awk -v p=\"$1\" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo"
+      @engine.run(["exec", name, "sh", "-c", script, "sh", mount_point.to_s], out: File::NULL, err: File::NULL)
     end
 
     # Create the detached, idle service container: its own data root, the
