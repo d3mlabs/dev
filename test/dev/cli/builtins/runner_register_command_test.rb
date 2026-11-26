@@ -9,6 +9,7 @@ require "dev/engine_resources"
 require "dev/enrolled_runner"
 require "dev/environment_image"
 require "dev/host_reach"
+require "dev/job_gh_token"
 require "dev/lifecycle/project_version"
 require "dev/runner_discovery"
 require "dev/runner_registry"
@@ -1551,6 +1552,47 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     harness.hook_users == [runner_user]
   end
 
+  # The jobs' gh credential on a host whose enrollments are the operator's
+  # own (JobGhToken): the keychain login is unreadable from the runner
+  # service, so register gives every slot it touches `GH_TOKEN` in its
+  # `.env` — after the slot is enrolled or amended, after the hook is
+  # cleaned. On the Linux rule the runner user's own login is the
+  # credential, and nothing is asked.
+  test "on a Mac register ensures the jobs' gh token on every slot's dir, amended and fresh alike, after the retired hook is cleaned" do
+    Given "one slot already enrolled online, --slots 2"
+    farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu])
+    home = Dir.mktmpdir
+    existing = write_runner(home, "actions-runner-ue-farm", scope: "d3mlabs/cellbound-3d", name: "mac1-ue-farm", agent_id: 7)
+    registry = FakeRegistry.new(
+      runners: { ["d3mlabs/cellbound-3d", "mac1-ue-farm"] => Dev::RunnerRegistry::Runner.new(id: 7, custom_labels: %w[ue gpu], status: "online") },
+    )
+    harness = build_harness(home: home, registry: registry, scope: "d3mlabs/cellbound-3d", hostname: "mac1")
+    context = harness.build_context(name: "Cellbound3D", root: declaring_checkout(version: "2.3.0"), runner_roles: { "ue-farm" => farm })
+
+    When
+    harness.command.call(args: parsed_args(harness.command, ["--role", "ue-farm", "--slots", "2"]), context: context)
+
+    Then "each dir was given the token, once the hook was cleaned; one token object served the family, speaking on the command's Ui"
+    fresh = File.join(home, "actions-runner-ue-farm-2")
+    harness.token_ensured == [existing, fresh]
+    harness.hook_removals == [existing, fresh]
+    harness.slot_order == [[:hook, existing], [:token, existing], [:hook, fresh], [:token, fresh]]
+    harness.token_uis == [harness.ui]
+  end
+
+  test "on the Linux rule no job token is built: the runner user's login is the credential" do
+    Given
+    runner_user = runner_user_mock(name: "ci", home: Dir.mktmpdir)
+    harness = build_harness(runner_user: runner_user, scope: "d3mlabs/cellbound-3d")
+
+    When
+    harness.command.call(args: no_args, context: harness.build_context(name: "Cellbound3D"))
+
+    Then
+    harness.token_uis == []
+    harness.token_ensured == []
+  end
+
   test "a grouped role whose checkout keeps no VERSION is refused before anything converges: the pin has no series to take" do
     Given
     farm = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], group: "ue-farm", workflows: [".github/workflows/build.yml"])
@@ -2022,7 +2064,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["ue-engine"])), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
     # The WSL runner host is answered at its platform seam too, so the run never converges Windows-side on a WSL host.
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil)
+    # No runner user: the jobs' credential is JobGhToken's, stubbed at its seam here (its own default is tested below).
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(data_root_provisioner: nil, wsl_runner_host: nil, job_token_factory: ->(_ui) { no_op_job_token })
 
     When "running register with --as, the host rule's one input"
     command.call(args: parsed_args(command, ["--labels", "ue-engine", "--as", "ci"]), context: context)
@@ -2085,7 +2128,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     context = build_context(name: "Cellbound3D")
     Dev::RunnerSetup.expects(:new)
       .with(config: Dev::RunnerSetupConfig.new(role: Dev::RunnerRole.build_host(labels: ["cellbound-3d"])), repo: nil, org: false, as_user: nil, home: nil, path: nil, ui: context.ui).returns(setup)
-    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil)
+    command = Dev::Cli::Builtins::RunnerRegisterCommand.new(runner_user_factory: ->(_name, _ui) { nil }, data_root_provisioner: nil, wsl_runner_host: nil, job_token_factory: ->(_ui) { no_op_job_token })
 
     When "running bare register inside a checkout whose dev.yml name differs"
     command.call(args: no_args, context: context)
@@ -2106,6 +2149,10 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     identity.expects(:converge!).once
     identity.expects(:after_enroll!).once.with(runner_dir: "/tmp/runner-dir", slot: 1)
     Dev::JobIdentity.expects(:for_host).once.with(user: "ue-builder", runner_user: nil, ui: context.ui).returns(identity)
+    # The jobs' credential, the default wiring's other Mac-side construction (JobGhToken).
+    token = typed_mock(Dev::JobGhToken)
+    token.expects(:ensure!).once.with(runner_dir: "/tmp/runner-dir")
+    Dev::JobGhToken.expects(:new).once.with(ui: context.ui).returns(token)
     registry = typed_mock(Dev::RunnerRegistry)
     registry.stubs(:repository).returns(Dev::RunnerRegistry::Repository.new(id: 1, full_name: "owner/repo", visibility: "private"))
     registry.expects(:find).once.with(scope: "owner/repo", name: "").returns(nil)
@@ -2136,7 +2183,7 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   private
 
   Harness = Struct.new(:command, :wirings, :events, :out, :engine, :torn_down, :ui, :as_names, :factory_uis, :reach_roots, :identities,
-    :hook_removals, :hook_users, :references, keyword_init: true) do
+    :hook_removals, :hook_users, :token_ensured, :token_uis, :slot_order, :references, keyword_init: true) do
     # A project context carrying this harness's Ui — the terminal the
     # command asks at — and the runner roles its dev.yml declares.
     def build_context(name:, engine: nil, root: "/tmp/runner-test", runner_roles: {})
@@ -2181,6 +2228,10 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     identities = []
     hook_removals = []
     hook_users = []
+    token_ensured = []
+    token_uis = []
+    # The per-slot steps in the order they ran, hook and token interleaved.
+    slot_order = []
     out = StringIO.new
     # A setup double per dir: the default one for a config naming none,
     # one resolving to the config's dir otherwise (a further slot's, or a
@@ -2241,8 +2292,16 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
       retired_hook_factory: ->(hook_user, _ui) {
         hook_users << hook_user
         hook = typed_mock(Dev::RetiredJobHook)
-        hook.stubs(:remove!).with { |runner_dir:| hook_removals << runner_dir || true }
+        hook.stubs(:remove!).with { |runner_dir:| (hook_removals << runner_dir) && (slot_order << [:hook, runner_dir]) }
         hook
+      },
+      # The jobs' gh credential (JobGhToken): built once per run on a Mac,
+      # never on the Linux rule; which slot dirs it was asked to ensure.
+      job_token_factory: ->(ui) {
+        token_uis << ui
+        token = typed_mock(Dev::JobGhToken)
+        token.stubs(:ensure!).with { |runner_dir:| (token_ensured << runner_dir) && (slot_order << [:token, runner_dir]) }
+        token
       },
       # What a referenced role (dev#701) resolves to; the default answers
       # nothing, so a test about a reference says what it reads.
@@ -2250,7 +2309,8 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
     )
     Harness.new(command: command, wirings: wirings, events: events, out: out, engine: engine,
       torn_down: torn_down, ui: ui, as_names: as_names, factory_uis: factory_uis, reach_roots: reach_roots, identities: identities,
-      hook_removals: hook_removals, hook_users: hook_users, references: referenced_role_loader)
+      hook_removals: hook_removals, hook_users: hook_users, token_ensured: token_ensured, token_uis: token_uis, slot_order: slot_order,
+      references: referenced_role_loader)
   end
 
   # The referenced-role loader's seam: answers each reference with the
@@ -2328,6 +2388,14 @@ class Dev::Cli::Builtins::RunnerRegisterCommandTest < Minitest::Test
   end
 
   # The runner user as register sees it: a name and a home; the converge
+  # A jobs' credential that does nothing: for tests about another seam
+  # on a host with no runner user, where the real one would ask.
+  def no_op_job_token
+    token = typed_mock(Dev::JobGhToken)
+    token.stubs(:ensure!)
+    token
+  end
+
   # and login steps are mocha expectations each test may script (silent
   # tests tolerate any call).
   def runner_user_mock(name:, home:)

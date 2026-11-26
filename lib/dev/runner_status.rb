@@ -22,6 +22,7 @@ require "dev/runner_family"
 require "dev/runner_registry"
 require "dev/runner_role"
 require "dev/runner_slots"
+require "dev/job_gh_token"
 require "dev/runner_user"
 require "dev/settings"
 require "dev/ui"
@@ -58,8 +59,9 @@ module Dev
   # evidence under a ✗.
   #
   # **Slot facts fold**: online on GitHub, service installed, who runs
-  # it, no job-started hook left from dev 0.9.x (RetiredJobHook), and for
-  # a slot whose role has a job identity its `_work` tree — identical across a
+  # it, no job-started hook left from dev 0.9.x (RetiredJobHook), on the
+  # Mac rule the jobs' gh token in its `.env` (JobGhToken), and for a
+  # slot whose role has a job identity its `_work` tree — identical across a
   # family's slots → one line naming the slots; a slot that deviates
   # breaks out as its own ✗ line with its dir.
   #
@@ -596,6 +598,7 @@ module Dev
       runner_user = runner_user_name
       enrollment.owner == runner_user ? held << "runs as #{runner_user}" : findings << "runs as #{enrollment.owner}, not #{runner_user}"
       retired_hook_fact(enrollment, findings)
+      job_token_fact(enrollment, findings)
       job_identity = family.role.job_identity
       if job_identity
         group = DataRoot::GROUP
@@ -625,6 +628,22 @@ module Dev
       return unless RetiredJobHook.present?(enrollment.dir)
 
       findings << "job-started hook left from dev 0.9.x (#{RetiredJobHook::SCRIPT}) — jobs run the checkout's lock, not a head"
+    end
+
+    # On a host whose enrollments are the operator's own (no runner user:
+    # a Mac), a slot's jobs fetch with `GH_TOKEN` in its `.env`
+    # (JobGhToken) — the keychain login is unreadable from the service.
+    # A slot without it is drift register repairs. On the Linux rule the
+    # runner user's own login is the credential and nothing is read here.
+    #
+    # @param enrollment [Dev::RunnerDiscovery::Enrollment]
+    # @param findings [Array<String>] facts that do not hold, appended to
+    sig { params(enrollment: RunnerDiscovery::Enrollment, findings: T::Array[String]).void }
+    def job_token_fact(enrollment, findings)
+      return if @host_identity
+      return if JobGhToken.present?(enrollment.dir)
+
+      findings << "jobs have no gh credential (no #{JobGhToken::KEY} in #{JobGhToken::ENV_FILE}; the keychain login is unreadable from the service)"
     end
 
     # What GitHub says of the slot: online, and labels as the role's. A

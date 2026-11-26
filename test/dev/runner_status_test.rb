@@ -485,8 +485,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     ui = RecordingUi.new
     home = Dir.mktmpdir
     write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
-    stale = write_runner(home, "actions-runner-orchestrator-2", scope: "d3mlabs", name: "box-orchestrator-2")
-    File.write(File.join(stale, ".env"), env) if env
+    stale = write_runner(home, "actions-runner-orchestrator-2", scope: "d3mlabs", name: "box-orchestrator-2", env: env)
     File.write(File.join(stale, "dev-job-started.sh"), "#!/usr/bin/env bash\n") if script
     registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
     status = build_status(ui: ui, home: home, registry: registry)
@@ -500,17 +499,16 @@ class Dev::RunnerStatusTest < Minitest::Test
                              "jobs run the checkout's lock, not a head (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator-2` to retire it)", 1])
 
     Where
-    what               | env                                                                                           | script
-    "both keys"        | "ACTIONS_RUNNER_HOOK_JOB_STARTED=/x/dev-job-started.sh\nDEV_STREAM=d3mlabs/ai-flow@gh ~> 1\n" | false
-    "the script alone" | nil                                                                                           | true
+    what               | env | script
+    "both keys"        | "GH_TOKEN=x\nACTIONS_RUNNER_HOOK_JOB_STARTED=/x/dev-job-started.sh\nDEV_STREAM=d3mlabs/ai-flow@gh ~> 1\n" | false
+    "the script alone" | "GH_TOKEN=x\n" | true
   end
 
   test "a slot whose .env holds only the runner's own lines is not a hook finding" do
     Given
     ui = RecordingUi.new
     home = Dir.mktmpdir
-    dir = write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
-    File.write(File.join(dir, ".env"), "LANG=C\n")
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator", env: "LANG=C\nGH_TOKEN=x\n")
     registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
     status = build_status(ui: ui, home: home, registry: registry)
 
@@ -519,6 +517,46 @@ class Dev::RunnerStatusTest < Minitest::Test
 
     Then
     ui.rows.include?([:note, "{{v}} box-orchestrator — online · service installed · runs as #{ME}", 1])
+  end
+
+  # --- the jobs' gh credential on the Mac rule (JobGhToken) -----------------
+
+  test "on the Mac rule a slot whose .env carries no GH_TOKEN is a finding: its jobs cannot read the keychain login — #{what}" do
+    Given "two slots, the second without the jobs' credential"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator")
+    write_runner(home, "actions-runner-orchestrator-2", scope: "d3mlabs", name: "box-orchestrator-2", env: env)
+    registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
+    status = build_status(ui: ui, home: home, registry: registry)
+
+    When
+    status.report
+
+    Then "the carrying slot holds; the bare one names the credential, with register as the remedy"
+    ui.rows.include?([:note, "{{v}} box-orchestrator — online · service installed · runs as #{ME}", 1])
+    ui.rows.include?([:note, "{{x}} box-orchestrator-2 (~/actions-runner-orchestrator-2) — jobs have no gh credential (no GH_TOKEN in .env; " \
+                             "the keychain login is unreadable from the service) (re-run `dev runner register` to repair, or `dev runner unregister ~/actions-runner-orchestrator-2` to retire it)", 1])
+
+    Where
+    what                     | env
+    "the runner's own lines" | "LANG=C\n"
+    "no .env"                | nil
+  end
+
+  test "on the Linux rule the runner user's login is the credential: a slot without GH_TOKEN in .env is not a finding" do
+    Given "a Linux host whose runner user owns the slot, its .env the runner's own"
+    ui = RecordingUi.new
+    runner_home = Dir.mktmpdir
+    write_runner(runner_home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator", env: "LANG=C\n")
+    registry = CannedRegistry.new(group: CannedRegistry::ORCHESTRATOR_GROUP) { |_scope, _name| Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: ["ai-orchestrator"], status: "online") }
+    status = build_status(ui: ui, home: Dir.mktmpdir, registry: registry, host_identity: host_identity(ME, home: runner_home), host_os: "linux")
+
+    When
+    status.report
+
+    Then
+    ui.rows.none? { |_kind, text, _depth| text.include?("no gh credential") }
   end
 
   test "an agent family's group drifted to every repo: the from clause names the expected shape" do
@@ -1586,13 +1624,17 @@ class Dev::RunnerStatusTest < Minitest::Test
 
   # A .runner record the way config.sh writes it (UTF-8 BOM + JSON), with
   # svc.sh's `.service` marker unless `service: false`.
-  def write_runner(home, dir_name, scope:, name:, pool: nil, service: true)
+  # A converged slot's dir. On the Mac rule (the default host here) its
+  # `.env` carries the jobs' gh token (JobGhToken); `env:` replaces the
+  # whole file, nil leaves none.
+  def write_runner(home, dir_name, scope:, name:, pool: nil, service: true, env: "LANG=C\nGH_TOKEN=ghp_machine\n")
     dir = File.join(home, dir_name)
     FileUtils.mkdir_p(dir)
     record = { "agentId" => 1, "agentName" => name, "gitHubUrl" => "https://github.com/#{scope}" }
     record["poolName"] = pool if pool
     File.write(File.join(dir, ".runner"), "\uFEFF#{JSON.generate(record)}")
     File.write(File.join(dir, ".service"), "actions.runner.#{scope.tr("/", "-")}.#{name}.service") if service
+    File.write(File.join(dir, ".env"), env) if env
     dir
   end
 

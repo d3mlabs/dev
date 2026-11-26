@@ -19,8 +19,10 @@
 # a container) runs `dev deps install` instead, never this action.
 #
 # The calling job provides gh's credential: GH_TOKEN on a hosted runner, the
-# runner user's gh login on a box. `dev up` fetches private pins through it,
-# and the check below fails the job up front when it is missing.
+# runner user's gh login on a box, the GH_TOKEN `dev runner register` wrote
+# into the slot's .env on a Mac (a keychain login is unreadable from the
+# service). `dev up` fetches private pins through it, and the check below
+# fails the job up front when it is missing.
 name: dev up
 description: >-
   Install Homebrew and dev when the host has none, upgrade dev when it has

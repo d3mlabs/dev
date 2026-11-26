@@ -75,13 +75,18 @@ module Dev
       #   scripts are invoked relative to their install dir)
       # @param stdin [String, nil] what the command reads on stdin (a
       #   secret rides here, never argv)
+      # @param env [Hash{String => String}] variables set for the child
+      #   alone (a secret rides here too, never argv)
       # @return [Array(String, String, Boolean)] stdout, stderr, success?
-      sig { params(argv: String, chdir: T.nilable(String), stdin: T.nilable(String)).returns([String, String, T::Boolean]) }
-      def capture(*argv, chdir: nil, stdin: nil)
+      sig do
+        params(argv: String, chdir: T.nilable(String), stdin: T.nilable(String), env: T::Hash[String, String])
+          .returns([String, String, T::Boolean])
+      end
+      def capture(*argv, chdir: nil, stdin: nil, env: {})
         opts = {}
         opts[:chdir] = chdir if chdir
         opts[:stdin_data] = stdin if stdin
-        out, err, status = T.unsafe(Open3).capture3(Lifecycle::Gh::CAPTURE_ENV, *argv, **opts)
+        out, err, status = T.unsafe(Open3).capture3(Lifecycle::Gh::CAPTURE_ENV.merge(env), *argv, **opts)
         [out, err, status.success?]
       rescue Errno::ENOENT => e
         ["", e.message, false]

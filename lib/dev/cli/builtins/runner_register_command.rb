@@ -21,6 +21,7 @@ require "dev/runner_group_contract"
 require "dev/runner_groups"
 require "dev/runner_registry"
 require "dev/reach"
+require "dev/job_gh_token"
 require "dev/retired_job_hook"
 require "dev/runner_role"
 require "dev/runner_role_aliases"
@@ -161,6 +162,12 @@ module Dev
         # enrollments), speaking on the Ui; injected for tests.
         RetiredHookFactory = T.type_alias { T.proc.params(runner_user: T.nilable(Dev::RunnerUser), ui: Ui).returns(Dev::RetiredJobHook) }
 
+        # Builds the jobs' gh credential for a host whose enrollments are
+        # the operator's own (JobGhToken: `GH_TOKEN` in each slot's `.env`,
+        # since the keychain login is unreadable from the service), asking
+        # and speaking on the Ui; injected for tests.
+        JobTokenFactory = T.type_alias { T.proc.params(ui: Ui).returns(Dev::JobGhToken) }
+
         sig do
           params(
             runner_setup_factory: RunnerSetupFactory,
@@ -178,6 +185,7 @@ module Dev
             groups: T.nilable(Dev::RunnerGroups),
             refresher: Dev::OperatorAccess::Refresher,
             retired_hook_factory: RetiredHookFactory,
+            job_token_factory: JobTokenFactory,
             referenced_role_loader: ReferencedRoleLoader,
           ).void
         end
@@ -209,6 +217,7 @@ module Dev
           # How the operator's login is widened when the pre-flight offers it.
           refresher: Dev::OperatorAccess::DEFAULT_REFRESHER,
           retired_hook_factory: ->(runner_user, ui) { Dev::RetiredJobHook.new(as_user: runner_user&.name, ui: ui) },
+          job_token_factory: ->(ui) { Dev::JobGhToken.new(ui: ui) },
           # Reads a referenced role's declaration from the declaring repo at
           # the version this checkout's lock pins.
           referenced_role_loader: ReferencedRoleLoader.new
@@ -233,6 +242,7 @@ module Dev
           @pins_reader = pins_reader
           @reach_factory = reach_factory
           @retired_hook_factory = retired_hook_factory
+          @job_token_factory = job_token_factory
           @referenced_role_loader = referenced_role_loader
         end
 
@@ -380,6 +390,12 @@ module Dev
             and enroll fresh as the runner user. On macOS the enrollment is yours (a
             per-user LaunchAgent); a job identity is the second identity there, and its
             own brew user — register has it trust the deployment's tap the same way.
+            Your gh login lives in the keychain, which a job spawned by launchd cannot
+            read, so on a Mac the jobs' credential is #{Dev::JobGhToken::KEY} in each slot's
+            #{Dev::JobGhToken::ENV_FILE} (the runner exports it to every job): register asks for the
+            same machine user's token the first time a slot lacks it, checks it through
+            gh, writes it (owner-only) and bounces the service; `dev runner status`
+            names a slot without it. Headless it prints the lines to add and stops.
 
             Inside a WSL2 distro, register also converges what a runner there needs to
             survive a reboot: WSL stops a distro ~20 s after its last client
@@ -580,6 +596,9 @@ module Dev
           retire_surplus!(scope, by_slot.select { |slot, _dirs| slot > count }.values.flatten, yes: yes, ui: context.ui)
 
           retired_hook = @retired_hook_factory.call(runner_user, context.ui)
+          # The jobs' credential where the operator owns the enrollments:
+          # on the Linux rule the runner user's own login is it.
+          job_token = runner_user ? nil : @job_token_factory.call(context.ui)
           (1..count).each do |slot|
             enrollment = by_slot[slot]&.first
             runner = enrollment && runners[enrollment.name]
@@ -588,6 +607,7 @@ module Dev
               @groups.place!(group, runner, org: scope, ui: context.ui) if group
               identity&.after_enroll!(runner_dir: enrollment.dir, slot: slot)
               retired_hook.remove!(runner_dir: enrollment.dir)
+              job_token&.ensure!(runner_dir: enrollment.dir)
               next
             end
 
@@ -611,6 +631,7 @@ module Dev
             slot_setup.run
             identity&.after_enroll!(runner_dir: slot_setup.resolve_dir, slot: slot)
             retired_hook.remove!(runner_dir: slot_setup.resolve_dir)
+            job_token&.ensure!(runner_dir: slot_setup.resolve_dir)
           end
 
           converge_access!(scope, group, repo, ui: context.ui) if org

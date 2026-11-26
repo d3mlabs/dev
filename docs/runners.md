@@ -340,6 +340,26 @@ on the next `dev runner register`.
 
 Macs have no runner user: the service is your LaunchAgent.
 
+### Mac: the jobs' gh credential
+
+On a Mac the enrollment is yours, and so is the gh login — but it lives
+in the login keychain, which a process launchd spawns cannot read: a
+job's `gh auth token` answers nothing, and the `d3mlabs/dev/up` action
+stops at its toolchain check. The jobs' credential is therefore
+`GH_TOKEN` in each slot's `.env`, the file the runner exports to every
+job; gh reads the variable before any stored login. The token is a
+machine user's, the same one the Linux rule hands to the runner user's
+`gh auth login` — never yours.
+
+Register ensures it for every slot it enrolls or amends: a slot whose
+`.env` carries the key is settled; for one without, register asks for
+the token once (hidden input), checks it through gh with the variable set
+as a job would see it, appends the line, makes the file owner-only and
+bounces the service, since the runner reads `.env` at start. Headless it
+prints the two commands to run by hand and stops. `dev runner status`
+names a slot without the key as drift (`jobs have no gh credential`),
+with register as the remedy.
+
 ### WSL2
 
 A WSL2 distro stops ~20 s after its last client session ends, and systemd
@@ -443,7 +463,9 @@ orchestrator · 2 slots · d3mlabs
 A slot still carrying the job-started hook dev 0.9.x wrote ([What a slot
 runs](#what-a-slot-runs)) breaks out as a red slot with the finding
 `job-started hook left from dev 0.9.x (dev-job-started.sh)`; the next
-`dev runner register` removes it.
+`dev runner register` removes it. On a Mac, a slot whose `.env` carries no
+`GH_TOKEN` ([the jobs' gh credential](#mac-the-jobs-gh-credential)) breaks
+out the same way, with `jobs have no gh credential`; register writes it.
 
 The mechanism behind the reach — the group's name, its visibility, its
 workflow pins, a repo registration — is not a fact of its own: it is
@@ -454,8 +476,8 @@ unpinned `Default` group and a grouped role whose group lost its workflow
 pin each render that way; a
 registration at a public repo renders as `exposed:` with the cause and no
 remedy, since the exposure sentence says what to do. Slot facts (online,
-service installed, who it runs as, no leftover hook, the `_work` grant
-for agents) fold into
+service installed, who it runs as, no leftover hook, the jobs' token on a
+Mac, the `_work` grant for agents) fold into
 one line while uniform, and a deviating slot breaks out on its own ✗ line
 with its directory and the findings. A red slot's remedy names both ways
 out — `re-run dev runner register to repair, or dev runner unregister
@@ -574,7 +596,9 @@ is in the checkout: `dev.yml` and the lock. It runs, in order:
 The job supplies gh's credential. On a hosted runner that is `GH_TOKEN` in
 the job's `env`, a token that can read every private pin the lock names.
 On a box it is the [runner user's gh login](#linux-the-runner-user), and
-the job sets nothing.
+the job sets nothing. On a Mac it is the `GH_TOKEN` register wrote into
+the [slot's `.env`](#mac-the-jobs-gh-credential), and the job sets
+nothing either.
 
 #### Which verb: `dev up` or `dev deps install`
 
