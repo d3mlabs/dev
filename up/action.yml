@@ -84,15 +84,33 @@ runs:
     # the host the new one — a release that fixes provisioning fixes it on
     # this job, not the one after.
     #
-    # Two slots of one box can reach this step at once: brew serializes
-    # them on its own locks (`brew update` on the git checkouts, `brew
-    # upgrade` on the formula), so the later one waits and then sees dev
-    # current.
+    # Two slots of one box can reach this step at once. brew does not
+    # queue behind its own locks (`brew update` on the git checkouts,
+    # `brew upgrade` on the formula): the second process fails outright
+    # with "Another `brew update` process is already running" or "A `brew
+    # upgrade` process has already locked dev". The later slot waits for
+    # that and tries again; by then the first has usually done its work
+    # and the retry is the no-op. Any other brew error fails the step.
+    # BREW_WAIT_SECONDS is the pause between tries; the action's test
+    # sets it to 0.
     - name: Upgrade dev
       shell: bash
       run: |
-        brew update
-        brew upgrade d3mlabs/d3mlabs/dev
+        brew_when_free() {
+          local tries=0 err
+          err=$(mktemp)
+          until brew "$@" 2>"$err"; do
+            if ! grep -q 'already' "$err" || [ $((tries += 1)) -ge 24 ]; then
+              cat "$err" >&2
+              rm -f "$err"
+              return 1
+            fi
+            sleep "${BREW_WAIT_SECONDS:-5}"
+          done
+          rm -f "$err"
+        }
+        brew_when_free update
+        brew_when_free upgrade d3mlabs/d3mlabs/dev
 
     # Fail up front, naming the missing piece, rather than mid-provision:
     # `dev up` pulls private pins through gh's token.

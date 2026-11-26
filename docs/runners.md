@@ -588,7 +588,10 @@ is in the checkout: `dev.yml` and the lock. It runs, in order:
    skips this step.
 2. **Upgrade dev**: `brew update`, then `brew upgrade d3mlabs/d3mlabs/dev`.
    A dev release reaches every runner on its next job; a no-op when dev is
-   current.
+   current. When two slots of one box reach this step together, brew
+   refuses the second (`Another `brew update` process is already
+   running`); that slot retries every five seconds, up to two minutes,
+   and any other brew error fails the step.
 3. **Check the toolchain**: `dev` and `gh` on PATH, and `gh auth token`
    answering. A missing credential fails the job here, named, rather than
    partway through provisioning.
