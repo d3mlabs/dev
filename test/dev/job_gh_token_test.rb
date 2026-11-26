@@ -5,6 +5,7 @@ require "fileutils"
 require "test_helper"
 require "tmpdir"
 require "dev/job_gh_token"
+require "support/answering_ui"
 require "support/recording_ui"
 
 # The command boundary: svc.sh and gh answer as the test says, and every
@@ -31,29 +32,13 @@ class RecordingJobTokenExecutor
   end
 end
 
-# A Ui that answers the one secret question with what the test gave it.
-class AnsweringUi < RecordingUi
-  attr_reader :questions
-
-  def initialize(secret)
-    super()
-    @secret = secret
-    @questions = []
-  end
-
-  def ask_secret(question)
-    @questions << question
-    @secret
-  end
-end
-
 transform!(RSpock::AST::Transformation)
 class Dev::JobGhTokenTest < Minitest::Test
   test "a slot without the token gets it: asked once, checked through gh's env, written 0600 beside the runner's own lines, the service bounced in the OS's svc.sh dialect: #{platform}" do
     Given "an enrolled slot with its service and no credential for its jobs"
     dir = runner_dir(env: "LANG=C\n", service: true)
     exec = RecordingJobTokenExecutor.new
-    ui = AnsweringUi.new("ghp_machine\n")
+    ui = AnsweringUi.new(secret: "ghp_machine\n")
 
     When
     Dev::JobGhToken.new(executor: exec, host_platform: platform, ui: ui).ensure!(runner_dir: dir)
@@ -66,9 +51,9 @@ class Dev::JobGhTokenTest < Minitest::Test
     exec.captures == [[["gh", "auth", "status"], { "GH_TOKEN" => "ghp_machine" }]]
     exec.systems == [[stop, dir], [start, dir]]
     # the question named what the token is for and what it must carry
-    ui.questions.length == 1
-    ui.questions.fetch(0).include?("every job on this host fetches with it")
-    ui.questions.fetch(0).include?(Dev::RunnerUser.token_hint)
+    ui.secrets_asked.length == 1
+    ui.secrets_asked.fetch(0).include?("every job on this host fetches with it")
+    ui.secrets_asked.fetch(0).include?(Dev::RunnerUser.token_hint)
     ui.rows.any? { |kind, text, _depth| kind == :step && text.start_with?("Giving the jobs of #{dir} a gh credential") }
 
     Where
@@ -82,7 +67,7 @@ class Dev::JobGhTokenTest < Minitest::Test
     first = runner_dir(env: "LANG=C\n", service: true)
     second = runner_dir(env: "LANG=C\n", service: true)
     exec = RecordingJobTokenExecutor.new
-    ui = AnsweringUi.new("ghp_machine")
+    ui = AnsweringUi.new(secret: "ghp_machine")
     token = Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: ui)
 
     When
@@ -90,7 +75,7 @@ class Dev::JobGhTokenTest < Minitest::Test
     token.ensure!(runner_dir: second)
 
     Then
-    ui.questions.length == 1
+    ui.secrets_asked.length == 1
     exec.captures.length == 1
     File.read(File.join(second, ".env")) == "LANG=C\nGH_TOKEN=ghp_machine\n"
   end
@@ -99,14 +84,14 @@ class Dev::JobGhTokenTest < Minitest::Test
     Given
     dir = runner_dir(env: "LANG=C\nGH_TOKEN=ghp_old\n", service: true)
     exec = RecordingJobTokenExecutor.new
-    ui = AnsweringUi.new("ghp_new")
+    ui = AnsweringUi.new(secret: "ghp_new")
 
     When
     Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: ui).ensure!(runner_dir: dir)
 
     Then
     File.read(File.join(dir, ".env")) == "LANG=C\nGH_TOKEN=ghp_old\n"
-    ui.questions.empty?
+    ui.secrets_asked.empty?
     exec.captures.empty?
     exec.systems.empty?
     ui.rows.empty?
@@ -118,7 +103,7 @@ class Dev::JobGhTokenTest < Minitest::Test
     exec = RecordingJobTokenExecutor.new
 
     When
-    Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new("ghp_machine")).ensure!(runner_dir: dir)
+    Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new(secret: "ghp_machine")).ensure!(runner_dir: dir)
 
     Then
     File.read(File.join(dir, ".env")) == "GH_TOKEN=ghp_machine\n"
@@ -151,7 +136,7 @@ class Dev::JobGhTokenTest < Minitest::Test
 
     When
     error = assert_raises(Dev::JobGhToken::TokenRequiredError) do
-      Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new("bad")).ensure!(runner_dir: dir)
+      Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new(secret: "bad")).ensure!(runner_dir: dir)
     end
 
     Then
@@ -169,7 +154,7 @@ class Dev::JobGhTokenTest < Minitest::Test
 
     When
     error = assert_raises(Dev::JobGhToken::ServiceRestartError) do
-      Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new("ghp_machine")).ensure!(runner_dir: dir)
+      Dev::JobGhToken.new(executor: exec, host_platform: "osx-arm64", ui: AnsweringUi.new(secret: "ghp_machine")).ensure!(runner_dir: dir)
     end
 
     Then
