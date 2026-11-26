@@ -116,6 +116,17 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     parts
   end
 
+  def build_zip_archive(dir, name)
+    content_dir = File.join(dir, "content")
+    FileUtils.mkdir_p(File.join(content_dir, "Engine"))
+    File.write(File.join(content_dir, "Engine", "engine.txt"), "engine payload")
+    File.write(File.join(content_dir, "README.md"), "readme payload")
+
+    archive = Pathname(File.join(dir, name))
+    system("zip", "-r", "-q", archive.to_s, ".", chdir: content_dir) || raise("fixture build failed")
+    archive
+  end
+
   def build_dependency(parts, tag: "5.6.1-css-83", sha256_overrides: {},
                        asset_pattern: "*.tar.zst.*")
     assets = parts.map do |part|
@@ -333,22 +344,63 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "install_all raises UnsupportedArchiveError for non-zstd archives" do
-    Given "a downloaded asset that is not a zstd tarball"
+  test "install_all extracts a zip asset — the archive packager's default form — into the version dir" do
+    Given "a release asset `dev package` wrote as a zip"
     dir = Dir.mktmpdir("dev-gh-int-test-")
-    zip_path = Pathname(File.join(dir, "engine.zip"))
-    zip_path.binwrite("not actually a zip")
+    zip_path = build_zip_archive(dir, "ai-flow-1.1.0.zip")
     tree_dir = File.join(dir, "gh", "satisfactorymodding", "UnrealEngine")
     dep = build_dependency([zip_path], asset_pattern: "*.zip")
     integration = build_integration([zip_path], dir)
+
+    When "installing"
+    integration.install_all([dep])
+
+    Then "the tree is the zip's contents, published like a tarball's"
+    File.read(File.join(tree_dir, "5.6.1-css-83", "Engine", "engine.txt")) == "engine payload"
+    File.read(File.join(tree_dir, "5.6.1-css-83", "README.md")) == "readme payload"
+    File.read(File.join(tree_dir, "5.6.1-css-83", ".dev-gh-release")) == "5.6.1-css-83"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises ExtractionError when the zip does not unpack" do
+    Given "an asset named as a zip whose bytes are not one"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    zip_path = Pathname(File.join(dir, "ai-flow-1.1.0.zip"))
+    zip_path.binwrite("not actually a zip")
+    dep = build_dependency([zip_path], asset_pattern: "*.zip")
+    integration = build_integration([zip_path], dir)
+
+    When "installing"
+    error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
+      integration.install_all([dep])
+    end
+
+    Then "the per-dep failure is the extraction, naming the archive"
+    error.failures[0][1].is_a?(Dev::Deps::GhIntegration::ExtractionError)
+    error.message.include?("extraction failed for ai-flow-1.1.0.zip")
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "install_all raises UnsupportedArchiveError for an archive in neither form the packager writes" do
+    Given "a downloaded asset that is neither a zip nor a zstd tarball"
+    dir = Dir.mktmpdir("dev-gh-int-test-")
+    gz_path = Pathname(File.join(dir, "engine.tar.gz"))
+    gz_path.binwrite("not actually a tarball")
+    dep = build_dependency([gz_path], asset_pattern: "*.tar.gz")
+    integration = build_integration([gz_path], dir)
 
     When "installing the unsupported archive"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
       integration.install_all([dep])
     end
 
-    Then "the per-dep failure is the archive rejection"
+    Then "the per-dep failure is the archive rejection, naming both forms"
     error.failures[0][1].is_a?(Dev::Deps::GhIntegration::UnsupportedArchiveError)
+    error.message.include?(".zip or .tar.zst[.NN]")
 
     Cleanup
     FileUtils.rm_rf(dir)

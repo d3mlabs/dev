@@ -26,7 +26,7 @@ module Dev
     #   1. Skip when the marker file already records the locked tag (idempotent)
     #   2. Download assets via `gh release download` into a staging dir
     #   3. Verify each asset's SHA256 against the digest locked at resolve time
-    #   4. Extract (concatenating split .tar.zst.* archives) and publish
+    #   4. Extract (a zip, or a .tar.zst — split parts concatenated) and publish
     #
     # Build from source (declared with build:, e.g. stock UE which Epic ships as
     # source only) — the only shape a commit pin (sha:) can take, since a bare
@@ -443,7 +443,8 @@ module Dev
           "— check the assets: glob, or run dev deps update"
       end
 
-      # Extract all downloaded archives into extracted_dir. Split archives
+      # Extract all downloaded archives into extracted_dir: the two forms
+      # the archive packager writes, a zip or a zstd tarball. Split tarballs
       # (name.tar.zst.00, .01, ...) are grouped by base name and concatenated
       # in part order before decompression.
       #
@@ -453,8 +454,25 @@ module Dev
       def extract_archives(archives_dir, extracted_dir)
         groups = archives_dir.children.select(&:file?).group_by { |path| archive_base_name(path) }
         groups.each do |base_name, parts|
-          extract_zstd_tarball(base_name, parts.sort, extracted_dir)
+          if base_name.end_with?(".zip")
+            extract_zip(T.must(parts.first), extracted_dir)
+          else
+            extract_zstd_tarball(base_name, parts.sort, extracted_dir)
+          end
         end
+      end
+
+      # Unzip one asset into dest_dir, keeping symlinks as the packager
+      # wrote them.
+      #
+      # @param archive [Pathname]
+      # @param dest_dir [Pathname]
+      # @raise [ExtractionError] if unzip fails
+      sig { params(archive: Pathname, dest_dir: Pathname).void }
+      def extract_zip(archive, dest_dir)
+        return if system("unzip", "-q", "-o", archive.to_s, "-d", dest_dir.to_s)
+
+        raise ExtractionError, "extraction failed for #{archive.basename}"
       end
 
       # Strip a numeric split suffix: "x.tar.zst.01" → "x.tar.zst".
@@ -473,13 +491,13 @@ module Dev
       # @param base_name [String] logical archive name (for error messages)
       # @param parts [Array<Pathname>] archive parts in concatenation order
       # @param dest_dir [Pathname] extraction destination
-      # @raise [UnsupportedArchiveError] for non-zstd archives
+      # @raise [UnsupportedArchiveError] for an archive in neither form
       # @raise [ExtractionError] if the pipeline fails
       sig { params(base_name: String, parts: T::Array[Pathname], dest_dir: Pathname).void }
       def extract_zstd_tarball(base_name, parts, dest_dir)
         unless base_name.end_with?(".tar.zst")
           raise UnsupportedArchiveError,
-            "unsupported archive #{base_name} — only .tar.zst[.NN] is supported"
+            "unsupported archive #{base_name} — only .zip or .tar.zst[.NN] is supported"
         end
 
         pipeline = "cat #{parts.map(&:to_s).shelljoin} | zstd -d | " \
