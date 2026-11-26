@@ -81,9 +81,11 @@ class CannedRegistry
     @responder ? @responder.call(scope, name) : nil
   end
 
-  def group_of(org:, runner_id:)
-    @group_asks << [org, runner_id]
-    @groups_by_runner.fetch(runner_id, @group)
+  # Every runner's group at the org, as the registry reads it in one pass
+  # over the groups: `groups_by_runner`'s, else `group`.
+  def runner_groups(org:)
+    @group_asks << [org]
+    Hash.new(@group).merge(@groups_by_runner)
   end
 
   def group_repositories(org:, group_id:)
@@ -223,9 +225,45 @@ class Dev::RunnerStatusTest < Minitest::Test
       [:note, "posture: 6 slots · 13 facts · 0 drifted", 0],
     ]
 
-    # the host frame is first, and the group was asked once per family, for slot 1
+    # the host frame is first, and the org's groups were read once, for every slot
     ui.rows.fetch(0) == [:frame, "box · linux · systemd", 0]
-    registry.group_asks == [["d3mlabs", 1], ["d3mlabs", 11]]
+    registry.group_asks == [["d3mlabs"]]
+  end
+
+  # `.runner` records the group config.sh registered into; `dev runner
+  # register` moves a slot between groups through the API afterwards
+  # (RunnerGroups#place!) and the record keeps the old name. The box's
+  # ten orchestrator slots read as a thirteen-slot agent family held
+  # against the agent's labels (plans#79 step 4, 2026-11-26).
+  test "a slot whose record names the group it was registered into is filed under the group GitHub has it in now" do
+    Given "an orchestrator slot whose record says ai-flow, sitting in ai-orchestrator on GitHub, beside an agent slot"
+    ui = RecordingUi.new
+    home = Dir.mktmpdir
+    write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "box-agent", pool: "ai-flow")
+    write_runner(home, "actions-runner-orchestrator", scope: "d3mlabs", name: "box-orchestrator", pool: "ai-flow")
+    ids = { "box-agent" => 1, "box-orchestrator" => 11 }
+    labels = { "box-agent" => AGENT_LABELS, "box-orchestrator" => ["ai-orchestrator"] }
+    responder = ->(_scope, name) { Dev::RunnerRegistry::Runner.new(id: ids.fetch(name), custom_labels: labels.fetch(name), status: "online") }
+    registry = CannedRegistry.new(
+      groups_by_runner: { 1 => CannedRegistry::AI_FLOW_GROUP, 11 => CannedRegistry::ORCHESTRATOR_GROUP },
+      repos: { 7 => ["d3mlabs/dev"] }, &responder
+    )
+    executor = CannedStatusExecutor.new(probe_results: ALL_GREEN_PROBES, capture_results: cooperative_work_trees(home, "actions-runner-agent"))
+    status = build_status(ui: ui, home: home, registry: registry, executor: executor, host: "box", host_os: "linux")
+
+    When
+    status.report
+
+    Then "two families of one slot each, the orchestrator's green against its own role"
+    ui.rows.select { |kind, _text, _depth| kind == :frame }.map { |_kind, text, _depth| text }.drop(1) ==
+      ["agent · 1 slot · d3mlabs", "orchestrator · 1 slot · d3mlabs"]
+    rows_from(ui, "orchestrator · 1 slot · d3mlabs").take(5) == [
+      [:frame, "orchestrator · 1 slot · d3mlabs", 0],
+      [:note, "{{v}} reach: jobs from every d3mlabs repo", 1],
+      [:note, "#{INDENT}via #{PINS_CLAUSE}", 1],
+      [:note, "#{INDENT}runs-on ai-orchestrator", 1],
+      [:note, "{{v}} box-orchestrator — online · service installed · runs as #{ME}", 1],
+    ]
   end
 
   test "a deviating slot breaks out of the fold as its own ✗ line, its dir beside its name — #{what}" do
@@ -688,7 +726,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     write_runner(home, "actions-runner-agent", scope: "d3mlabs", name: "box-agent")
     responder = ->(_scope, _name) { Dev::RunnerRegistry::Runner.new(id: 1, custom_labels: AGENT_LABELS, status: "online") }
     registry = CannedRegistry.new(&responder)
-    registry.define_singleton_method(:group_of) { |org:, runner_id:| raise Dev::RunnerRegistry::QueryError, "HTTP 502 from api.github.com" }
+    registry.define_singleton_method(:runner_groups) { |org:| raise Dev::RunnerRegistry::QueryError, "HTTP 502 from api.github.com" }
     status = build_status(ui: ui, home: home, registry: registry, executor: CannedStatusExecutor.new(capture_results: cooperative_work_trees(home, "actions-runner-agent")))
 
     When

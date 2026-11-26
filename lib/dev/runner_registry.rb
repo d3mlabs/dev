@@ -273,11 +273,25 @@ module Dev
     # @raise [QueryError]
     sig { params(org: String, runner_id: Integer).returns(T.nilable(Group)) }
     def group_of(org:, runner_id:)
-      groups(org).find do |group|
+      runner_groups(org: org)[runner_id]
+    end
+
+    # Every runner's group at the org, by runner id, from one pass over
+    # the groups (each group's runners listed once). A runner no group
+    # lists is absent. What `dev runner status` files a host's org slots
+    # by: the `.runner` record names the group config.sh registered into,
+    # and a slot since moved (RunnerGroups#place!) keeps the old name there.
+    #
+    # @param org [String]
+    # @return [Hash{Integer => Group}]
+    # @raise [QueryError]
+    sig { params(org: String).returns(T::Hash[Integer, Group]) }
+    def runner_groups(org:)
+      groups(org).each_with_object({}) do |group, by_runner|
         out, err, ok = @exec.capture("gh", "api", "--paginate", "orgs/#{org}/actions/runner-groups/#{group.id}/runners", "--jq", ".runners[].id")
         raise QueryError, "could not list the runners of group #{group.name} at #{org}: #{err.strip}" unless ok
 
-        out.each_line.map { |line| Integer(line.strip) }.include?(runner_id)
+        out.each_line { |line| by_runner[Integer(line.strip)] = group }
       end
     end
 

@@ -368,28 +368,42 @@ module Dev
         new(name: pool, labels: labels, group: RunnerGroupContract.new(name: pool), job_identity: nil, kind: Kind::Pooled)
       end
 
-      # The role a slot plays, from its `.runner` record's pool and GitHub's
-      # labels, among the roles declared at hand: a declared role whose
-      # group is the pool (an org slot), else one that claims the labels
-      # (a declared role registered at its repo joins no group; a shared
-      # label keeps a slot whose labels drifted in its family, where the
-      # drift is a finding rather than a family that vanished); with no
-      # declaration matching, a build host for a slot in Default, else a
+      # The role a slot plays, from its pool and GitHub's labels, among
+      # the roles declared at hand: a declared role whose group is the
+      # pool (an org slot), else one that claims the labels (a declared
+      # role registered at its repo joins no group; a shared label keeps a
+      # slot whose labels drifted in its family, where the drift is a
+      # finding rather than a family that vanished); with no declaration
+      # matching, a build host for a slot registered into no group, else a
       # pooled role. A lost slot has no labels left to read — GitHub was
       # their home.
       #
-      # @param pool [String] the record's `poolName`
+      # Two pools, because they answer different questions. `pool` is the
+      # group GitHub has the slot in (falling back to the record's when
+      # GitHub was not read): the group a declared role is matched by,
+      # since `dev runner register` moves a slot between groups after
+      # config.sh (RunnerGroups#place!) and the `.runner` record keeps the
+      # name it was registered into. `registered` is that record's pool:
+      # what dev registered the slot as — a build host names no group, so
+      # one a human moved into a group of their own is a build host still,
+      # not a role known by its pool alone.
+      #
+      # @param pool [String] the group GitHub has the slot in, else the record's `poolName`
       # @param labels [Array<String>, nil] GitHub's labels; nil when GitHub has lost the slot
       # @param declared [Hash{String => Dev::RunnerRole}] the roles declared at hand, by name
+      # @param registered [String] the record's `poolName` (defaults to `pool`)
       # @return [Dev::RunnerRole]
-      sig { params(pool: String, labels: T.nilable(T::Array[String]), declared: T::Hash[String, RunnerRole]).returns(RunnerRole) }
-      def for_slot(pool:, labels:, declared: {})
+      sig do
+        params(pool: String, labels: T.nilable(T::Array[String]), declared: T::Hash[String, RunnerRole], registered: String)
+          .returns(RunnerRole)
+      end
+      def for_slot(pool:, labels:, declared: {}, registered: pool)
         by_pool = pool == DEFAULT_POOL ? nil : declared.values.find { |role| role.pool_name == pool }
         return by_pool if by_pool
 
         by_labels = labels && declared.values.find { |role| role.claims?(labels) }
         return by_labels if by_labels
-        return build_host(labels: labels || []) if pool == DEFAULT_POOL
+        return build_host(labels: labels || []) if registered == DEFAULT_POOL
 
         pooled(pool: pool, labels: labels || [])
       end

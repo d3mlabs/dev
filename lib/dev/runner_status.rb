@@ -114,7 +114,7 @@ module Dev
     SUFFIX_RUN_COLLAPSE = 3
 
     # @param discovery [Dev::RunnerDiscovery] this host's enrollments
-    # @param registry [#find, #group_of, #group_repositories, #repository] the GitHub-side reader (never mutates here)
+    # @param registry [#find, #runner_groups, #group_repositories, #repository] the GitHub-side reader (never mutates here)
     # @param ui [Dev::Ui] where the report is rendered: a frame per subject, a note per fact
     # @param executor [#quiet?, #capture] probe seam (never mutates)
     # @param operator [String] who is running status — the account the
@@ -188,6 +188,9 @@ module Dev
       @facts = T.let(0, Integer)
       @drifted = T.let(0, Integer)
       @reaches = T.let({}, T::Hash[RunnerFamily, Reach])
+      # Each org's runner → group map, read once per report; the error
+      # when the read failed (raised again at the reach, see #group_of).
+      @runner_groups = T.let({}, T::Hash[String, T.any(T::Hash[Integer, RunnerRegistry::Group], RunnerRegistry::QueryError)])
     end
 
     class << self
@@ -299,16 +302,53 @@ module Dev
     # --- slots and families ------------------------------------------------
 
     # An enrollment with GitHub's record of it: the runner, nil when
-    # GitHub has lost it, and the error when GitHub could not be asked.
+    # GitHub has lost it, and the error when GitHub could not be asked;
+    # for a listed org slot, the group GitHub has it in — what files the
+    # slot in its family, since the `.runner` record names the group it
+    # was registered into, not the one register has since moved it to.
+    # A group lookup that fails leaves the group unread (the reach line
+    # reports the error) and the record's pool stands in.
     #
     # @param enrollment [Dev::RunnerDiscovery::Enrollment]
     # @return [Dev::RunnerFamily::Slot]
     sig { params(enrollment: RunnerDiscovery::Enrollment).returns(RunnerFamily::Slot) }
     def slot_of(enrollment)
       runner = @registry.find(scope: enrollment.scope, name: enrollment.name)
-      RunnerFamily::Slot.new(enrollment: enrollment, runner: runner, query_error: nil)
+      group = runner && !enrollment.scope.include?("/") ? group_of(enrollment.scope, runner.id) : nil
+      RunnerFamily::Slot.new(enrollment: enrollment, runner: runner, query_error: nil, group: group)
     rescue RunnerRegistry::QueryError => e
       RunnerFamily::Slot.new(enrollment: enrollment, runner: nil, query_error: e.message)
+    end
+
+    # The group GitHub has a runner in at the org, from the org's groups
+    # read once per report (RunnerRegistry#runner_groups). nil when no
+    # group lists it, or the read failed — the failure is kept and raised
+    # again where the reach is reported, so the family's line says why.
+    #
+    # @param org [String]
+    # @param runner_id [Integer]
+    # @return [Dev::RunnerRegistry::Group, nil]
+    sig { params(org: String, runner_id: Integer).returns(T.nilable(RunnerRegistry::Group)) }
+    def group_of(org, runner_id)
+      @runner_groups[org] ||= begin
+        @registry.runner_groups(org: org)
+      rescue RunnerRegistry::QueryError => e
+        e
+      end
+      by_runner = @runner_groups.fetch(org)
+      by_runner.is_a?(RunnerRegistry::QueryError) ? nil : by_runner[runner_id]
+    end
+
+    # #group_of's read for the reach: the group, or the read's error raised.
+    #
+    # @raise [RunnerRegistry::QueryError]
+    sig { params(org: String, runner_id: Integer).returns(T.nilable(RunnerRegistry::Group)) }
+    def group_for_reach(org, runner_id)
+      group = group_of(org, runner_id)
+      cached = @runner_groups.fetch(org)
+      raise cached if cached.is_a?(RunnerRegistry::QueryError)
+
+      group
     end
 
     # One family's frame: its reach, then its slots. The title ends with
@@ -376,7 +416,7 @@ module Dev
         return compare_reach(family.role, target, observed, ReachFact::RepoRegistration.new(repo: family.scope))
       end
 
-      group = @registry.group_of(org: family.scope, runner_id: runner.id)
+      group = group_for_reach(family.scope, runner.id)
       return nil if group.nil?
 
       repos = group.selected? ? Set.new(@registry.group_repositories(org: family.scope, group_id: group.id).map(&:full_name)) : Reach::ALL

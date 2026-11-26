@@ -207,12 +207,15 @@ Runner names are `<hostname>-<role>` for grouped and dev.yml roles
 (`mac1-agent`, `mac1-agent-2`, `mac1-orchestrator`) and the bare hostname
 for a build host; directories are `~/actions-runner-<role>[-n]`. A family
 that is already enrolled keeps the names it has; `--name` and `--dir`
-override slot 1's. Which role an enrollment plays is read from its labels
-on GitHub — an enrollment sharing a label with the role is the role's, so
-a label set that drifted is amended in place and one with nothing in
-common is another family's — or, for an enrollment GitHub has lost, from
-the runner group its `.runner` record names. Never from its name or
-directory.
+override slot 1's. Which role an enrollment plays is read from the runner
+group GitHub has it in (an org slot) and its labels on GitHub — an
+enrollment sharing a label with the role is the role's, so a label set
+that drifted is amended in place and one with nothing in common is
+another family's — or, for an enrollment GitHub has lost, from the
+runner group its `.runner` record names. The record names the group
+config.sh registered into; `register` moves a slot between groups
+afterwards and the record keeps the old name, which is why GitHub's
+group is read first. Never from its name or directory.
 
 ### Runner groups
 

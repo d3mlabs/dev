@@ -297,6 +297,32 @@ class Dev::RunnerRegistryTest < Minitest::Test
     registry.group_of(org: "d3mlabs", runner_id: 99).nil?
   end
 
+  test "runner_groups reads every group's runners once and answers each runner's group by id; a runner no group lists has none" do
+    Given "two groups, three runners between them"
+    groups = [
+      JSON.generate({ "id" => 1, "name" => "Default", "visibility" => "selected" }),
+      JSON.generate({ "id" => 3, "name" => "ue-hosted", "visibility" => "selected" }),
+    ].join("\n")
+    asked = []
+    responder = lambda do |argv|
+      asked << argv.find { |word| word.start_with?("orgs/") }
+      next [groups, "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups")
+      next ["7\n", "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups/1/runners")
+      next ["42\n9\n", "", true] if argv.include?("orgs/d3mlabs/actions/runner-groups/3/runners")
+
+      ["", "", true]
+    end
+    registry = Dev::RunnerRegistry.new(executor: RecordingExecutor.new(&responder))
+
+    When
+    by_runner = registry.runner_groups(org: "d3mlabs")
+
+    Then
+    by_runner.transform_values(&:name) == { 7 => "Default", 42 => "ue-hosted", 9 => "ue-hosted" }
+    by_runner[99].nil?
+    asked == ["orgs/d3mlabs/actions/runner-groups", "orgs/d3mlabs/actions/runner-groups/1/runners", "orgs/d3mlabs/actions/runner-groups/3/runners"]
+  end
+
   test "group_repositories lists a group's selection as id + full name" do
     Given
     lines = [
