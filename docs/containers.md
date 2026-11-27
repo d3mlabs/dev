@@ -216,7 +216,11 @@ At creation the container gets:
   Nothing is mounted over anything: when the host deletes the directory
   under a running container (`actions/checkout`'s `git clean -ffdx`, a
   developer's), the container's next `dev deps install` rewrites it, as
-  the host's does its own.
+  the host's does its own. A container created by dev before 0.9.13
+  still binds the host's `.shadowenv.d-container/` over `.shadowenv.d`
+  inside; `dev up` recreates it once, as it does a container on another
+  user's prefix volume, since docker makes a missing bind source as root
+  on every start and that is now the container's own shadowenv parent.
 - **The host's dev at the host's exact version**, installed through
   Linuxbrew into the prefix volume on first use and whenever the version
   differs.
