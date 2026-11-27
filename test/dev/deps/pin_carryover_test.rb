@@ -413,6 +413,25 @@ class Dev::Deps::PinCarryoverTest < Minitest::Test
     )
   end
 
+  test "a named declaration that re-resolves to the lock's version is unchanged, with the rule that chose it; a bare update names none" do
+    Given "a gh pin the resolution chose as v1's head, which is what the lock has, beside a formula the lock keeps"
+    head = Dev::Deps::SelectionRule::Head.new(head: Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0"))
+    declarations = [declared("ai-flow", integration: :gh, requirement: "^1", tap: "d3mlabs/ai-flow", group: :app), declared("cmake")]
+    previous = [gh_pin("1.3.0", "a" * 40), formula("cmake", version: "4.4.4", commit: OLD)]
+    resolved = [gh_pin("1.3.0", "a" * 40, rule: head), formula("cmake", version: "4.4.4", commit: OLD)]
+
+    When "dev deps update ai-flow, and a bare update"
+    subset = carryover.apply(declarations:, previous:, resolved:, unlock: update("ai-flow"))
+    bare = carryover.apply(declarations:, previous:, resolved:, unlock: Dev::Deps::UnlockSet.all)
+
+    Then "the named pin is unchanged and says which rule confirmed it; nothing moved; the bare update has nothing to say"
+    subset.moved.empty?
+    subset.unchanged.map { |pin| [pin.name, pin.version, pin.rule] } == [["ai-flow", "1.3.0", head]]
+    subset.kept.map(&:name) == ["cmake"]
+    bare.moved.empty?
+    bare.unchanged.empty?
+  end
+
   test "a kept pin takes this resolution's provenance" do
     Given "a lock pin nobody needed, now needed by the xcode integration, with another declaration named"
     declarations = [declared("xcodes", tap: "xcodesorg/made", group: :app), declared("cmake")]

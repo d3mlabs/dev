@@ -94,8 +94,10 @@ touches.
   `dev runner unregister --yes` with nothing named is refused.
 
 **A mutation says what it changed.** Its last line names the outcome:
-`dev: lockfiles updated — now run dev up to install.`, `pushed <file> to
-<issue>`. A stale state found on the way to something else is a message
+`dev: lockfiles updated — now run dev up to install.` (or `dev: deps.lock
+is current.` when nothing changed), `pushed <file> to <issue>`. What it
+lists is what changed, not what it left alone — a lock's kept pins are
+not enumerated. A stale state found on the way to something else is a message
 naming the verb that fixes it — `dependencies.rb changed since the
 lockfiles were generated — run dev deps update` — never that verb run on
 the user's behalf.

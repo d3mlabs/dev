@@ -93,11 +93,16 @@ module Dev
 
       # What the lock being written holds, and how it got there: the pins,
       # which of them are the lock on disk's (kept, and kept because the
-      # universe did not answer), and which moved.
+      # universe did not answer), which moved, and which the author named
+      # that re-resolved to the version the lock already had (unchanged,
+      # carrying the rule that confirmed it — the one answer a named
+      # declaration that did not move owes its author; a bare update's
+      # unmoved pins are not listed, "nothing moved" says it).
       class Outcome < T::Struct
         const :pins, T::Array[Dependency]
         const :kept, T::Array[Dependency]
         const :moved, T::Array[Move]
+        const :unchanged, T::Array[Dependency]
         const :unreachable, T::Array[Unreachable]
       end
 
@@ -106,6 +111,7 @@ module Dev
         const :pin, Dependency
         const :kept, T::Boolean, default: false
         const :move, T.nilable(Move), default: nil
+        const :unchanged, T::Boolean, default: false
         const :unreachable, T.nilable(StandardError), default: nil
       end
 
@@ -159,6 +165,7 @@ module Dev
           pins: decisions.map(&:pin),
           kept: decisions.select(&:kept).map(&:pin),
           moved: decisions.filter_map(&:move),
+          unchanged: decisions.select(&:unchanged).map(&:pin),
           unreachable: decisions.filter_map do |decision|
             error = decision.unreachable
             Unreachable.new(pin: decision.pin, error:) if error
@@ -206,7 +213,7 @@ module Dev
       end
       def decide(dep, prior, ask, floats:, unlock:)
         return Decision.new(pin: dep, move: Move.new(name: dep.name, from: nil, to: dep.version, reason: "new", rule: dep.rule)) if prior.nil?
-        return re_resolved(dep, prior, reason: unlock.subset? ? "named" : nil) if floats
+        return re_resolved(dep, prior, reason: unlock.subset? ? "named" : nil, named: unlock.subset?) if floats
         return re_resolved(dep, prior, reason: "declaration changed") unless ask && declaration_unchanged?(prior, ask)
         return Decision.new(pin: carried(dep, prior), kept: true) if prior.source
 
@@ -244,17 +251,22 @@ module Dev
       # The resolution's pin, moved when its version differs from the
       # lock's, and carrying the lock's provenance when nothing else about
       # it changed (a source at which the pin was what the lock says is as
-      # good as today's, and does not move the lock).
+      # good as today's, and does not move the lock). A pin the author
+      # named that lands on the lock's version is unchanged — an answer, not
+      # silence.
       #
       # @param dep [Dependency] the resolved pin
       # @param prior [Dependency] the lock's pin
       # @param reason [String, nil] why it floated; nil when the bare verb asked
+      # @param named [Boolean] whether the author named this declaration (a
+      #   subset re-lock); only a named pin is reported unchanged
       # @return [Decision]
-      sig { params(dep: Dependency, prior: Dependency, reason: T.nilable(String)).returns(Decision) }
-      def re_resolved(dep, prior, reason:)
+      sig { params(dep: Dependency, prior: Dependency, reason: T.nilable(String), named: T::Boolean).returns(Decision) }
+      def re_resolved(dep, prior, reason:, named: false)
         pin = facts(dep) == facts(prior) ? with_provenance(dep, prior) : dep
-        move = dep.version == prior.version ? nil : Move.new(name: dep.name, from: prior.version, to: dep.version, reason:, rule: dep.rule)
-        Decision.new(pin:, move:)
+        return Decision.new(pin:, unchanged: named) if dep.version == prior.version
+
+        Decision.new(pin:, move: Move.new(name: dep.name, from: prior.version, to: dep.version, reason:, rule: dep.rule))
       end
 
       # The resolution's pin with the lock's provenance, where the lock has

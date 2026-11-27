@@ -144,10 +144,19 @@ module Dev
           # Record the manifest digest so the staleness check can tell whether
           # dependencies.rb changed after this resolution (Dev::Deps::Staleness).
           manifest_digest = deps_rb.exist? ? Digest::SHA256.file(deps_rb.to_s).hexdigest : nil
+          lock_path = project_root / Dev::Deps::Lockfile::DEPS_LOCK_FILE
+          before = lock_path.exist? ? lock_path.read : nil
           lockfile.lock(resolved, manifest_digest:)
           report_moves(outcome)
           preflight_bottles(resolved)
-          puts "dev: lockfiles updated — now run dev up to install."
+          # The lock may change without a move — a pin gaining the source it
+          # lacked, a manifest digest — so the file, not the move list, says
+          # whether there is anything for dev up to install.
+          if lock_path.exist? && lock_path.read == before
+            puts "dev: deps.lock is current."
+          else
+            puts "dev: lockfiles updated — now run dev up to install."
+          end
         end
 
         private
@@ -193,18 +202,23 @@ module Dev
           $stderr.puts "dev: warning: #{e.message} — resolving against the index brew has"
         end
 
-        # Say which pins moved and which the lock on disk kept. A bare
-        # update moves whatever is newer; a subset re-lock says why each
-        # move it made beyond the names given (a changed declaration, a pin
-        # the lock could not keep), so a move the author did not name is
-        # visible with its cause. A move says which rule chose the version
-        # where another rule could have — the series head (`v1 → v1.3.0`)
-        # or, beside heads the ask did not cover, the greatest satisfying
-        # tag — so a pin that followed a rolled-back head reads as what it
-        # is; the rule accounts for itself (SelectionRule#explanation). A pin kept
-        # because its registry did not answer is named with the registry's
-        # refusal: the lock is right, but the next re-lock that needs that
-        # registry will want what the message asks for.
+        # Say what moved, and nothing about what did not: a lock has as many
+        # pins as the project has dependencies, and listing the kept ones
+        # grows with it while saying nothing. A bare update moves whatever
+        # is newer; a subset re-lock says why each move it made beyond the
+        # names given (a changed declaration, a pin the lock could not
+        # keep), so a move the author did not name is visible with its
+        # cause. A move says which rule chose the version where another
+        # rule could have — the series head (`v1 → v1.3.0`) or, beside
+        # heads the ask did not cover, the greatest satisfying tag — so a
+        # pin that followed a rolled-back head reads as what it is; the rule
+        # accounts for itself (SelectionRule#explanation). The one unmoved
+        # pin that gets a line is one the author named: silence would read
+        # as "ignored", so it is said unchanged, with the rule that
+        # confirmed it. A pin kept because its registry did not answer is
+        # named with the registry's refusal: the lock is right, but the
+        # next re-lock that needs that registry will want what the message
+        # asks for.
         #
         # @param outcome [Dev::Deps::PinCarryover::Outcome]
         # @return [void]
@@ -219,13 +233,13 @@ module Dev
               puts "dev: moved #{move.name} #{move.from} → #{move.to}#{detail}"
             end
           end
+          outcome.unchanged.each do |pin|
+            explanation = pin.rule&.explanation
+            puts "dev: #{pin.name} #{pin.version} unchanged#{explanation ? " (#{explanation})" : ""}"
+          end
           outcome.unreachable.each do |kept|
             puts "dev: kept (registry unreachable): #{kept.pin.name} #{kept.pin.version} — #{kept.error.message}"
           end
-          return if outcome.kept.empty?
-
-          puts "dev: kept #{outcome.kept.size} pin#{"s" unless outcome.kept.size == 1} from deps.lock: " \
-            "#{outcome.kept.map(&:name).uniq.join(", ")}"
         end
 
         # Install the resolved interpreter pins through the brew integration —
