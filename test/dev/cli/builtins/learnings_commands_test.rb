@@ -12,8 +12,7 @@ require "support/recording_ui"
 require "tmpdir"
 
 # The four `learnings` verbs share one shape (a per-call accessor factory
-# fed the context's ui, one verb call), so one Where-driven file covers
-# them; `invariants` alone keeps an `out:` — its block is a payload, not
+# fed the context's ui, one verb call), so one file covers them; `invariants` alone keeps an `out:` — its block is a payload, not
 # the Ui's.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::LearningsCommandsTest < Minitest::Test
@@ -44,13 +43,48 @@ class Dev::Cli::Builtins::LearningsCommandsTest < Minitest::Test
     LEAVES[3] | 0
   end
 
-  test "#{klass} builds the accessor per call over the context's ui and forwards to #{verb} with #{expected_kwargs}" do
-    Given "an expecting accessor behind a factory recording the ui it was handed"
+  test "sync builds the accessor per call over the context's ui and forwards to sync" do
+    Given "an accessor behind a factory recording the ui it was handed"
     ui = RecordingUi.new
     accessor = typed_mock(Dev::Learnings::Accessor)
-    accessor.expects(verb).with(**expected_kwargs).once
     factory_uis = []
-    command = klass.new(accessor_factory: lambda { |factory_ui|
+    command = LEAVES[0].new(accessor_factory: lambda { |factory_ui|
+      factory_uis << factory_ui
+      accessor
+    })
+
+    When "calling the leaf in a projectless context"
+    command.call(args: parsed_args(command, []), context: build_context(ui))
+
+    Then "the factory was consulted once, with the context's ui, and the verb forwarded"
+    1 * accessor.sync
+    factory_uis == [ui]
+  end
+
+  test "status builds the accessor per call over the context's ui and forwards to status" do
+    Given "an accessor behind a factory recording the ui it was handed"
+    ui = RecordingUi.new
+    accessor = typed_mock(Dev::Learnings::Accessor)
+    factory_uis = []
+    command = LEAVES[1].new(accessor_factory: lambda { |factory_ui|
+      factory_uis << factory_ui
+      accessor
+    })
+
+    When "calling the leaf in a projectless context"
+    command.call(args: parsed_args(command, []), context: build_context(ui))
+
+    Then "the factory was consulted once, with the context's ui, and the verb forwarded"
+    1 * accessor.status
+    factory_uis == [ui]
+  end
+
+  test "init #{args.inspect} builds the accessor per call over the context's ui and forwards org: #{org}, gitignore_only: #{gitignore_only}" do
+    Given "an accessor behind a factory recording the ui it was handed"
+    ui = RecordingUi.new
+    accessor = typed_mock(Dev::Learnings::Accessor)
+    factory_uis = []
+    command = LEAVES[3].new(accessor_factory: lambda { |factory_ui|
       factory_uis << factory_ui
       accessor
     })
@@ -58,16 +92,15 @@ class Dev::Cli::Builtins::LearningsCommandsTest < Minitest::Test
     When "calling the leaf in a projectless context"
     command.call(args: parsed_args(command, args), context: build_context(ui))
 
-    Then "the factory was consulted once, with the context's ui"
+    Then "the factory was consulted once, with the context's ui, and the flags forwarded"
+    1 * accessor.init(org: org, gitignore_only: gitignore_only)
     factory_uis == [ui]
 
     Where
-    klass     | verb    | args            | expected_kwargs
-    LEAVES[0] | :sync   | []              | {}
-    LEAVES[1] | :status | []              | {}
-    LEAVES[3] | :init   | []              | { org: false, gitignore_only: false }
-    LEAVES[3] | :init   | ["--org"]       | { org: true, gitignore_only: false }
-    LEAVES[3] | :init   | ["--gitignore"] | { org: false, gitignore_only: true }
+    args            | org   | gitignore_only
+    []              | false | false
+    ["--org"]       | true  | false
+    ["--gitignore"] | false | true
   end
 
   test "invariants hands the accessor its own out — the prompt block is a payload, never the Ui's" do
@@ -75,13 +108,13 @@ class Dev::Cli::Builtins::LearningsCommandsTest < Minitest::Test
     out = StringIO.new
     ui = RecordingUi.new
     accessor = typed_mock(Dev::Learnings::Accessor)
-    accessor.expects(:invariants).with(out: out).once
     command = LEAVES[2].new(accessor_factory: ->(_ui) { accessor }, out: out)
 
     When "calling the leaf"
     command.call(args: no_args, context: build_context(ui))
 
-    Then "nothing reached the seam"
+    Then "the block went to the leaf's out and nothing reached the seam"
+    1 * accessor.invariants(out: out)
     ui.rows == []
   end
 

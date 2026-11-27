@@ -96,17 +96,16 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     )
   end
 
-  def fake_dependency_service
-    dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:guard!)
-    dependency_service.stubs(:lock!)
-    dependency_service
+  # The dependency service for tests not about the guard or the stamp: the
+  # real null one, whose guard! and lock! are honest no-ops.
+  def null_dependency_service
+    Dev::Cli::NoProjectDependencyService.new
   end
 
   test "execute fetches the command, dispatches it, and passes args and context through" do
     Given "a service over one builtin"
     builtin = FakeBuiltin.new(staleness_exempt: true)
-    service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "deps" => builtin }, dependency_service: null_dependency_service)
     context = fake_context
 
     When "executing the command"
@@ -118,7 +117,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
 
   test "execute raises CommandNotFoundError (the repository's own) for an unknown name" do
     Given "a service over one builtin"
-    service = build_service(builtins: { "deps" => FakeBuiltin.new }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "deps" => FakeBuiltin.new }, dependency_service: null_dependency_service)
 
     When "executing an unknown command"
     service.execute(["nonexistent"], context: fake_context)
@@ -130,7 +129,6 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
   test "execute guards staleness before a non-exempt command" do
     Given "a non-exempt builtin and an expecting dependency service"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).once
     service = build_service(
       builtins: { "build" => FakeBuiltin.new(staleness_exempt: false) },
       dependency_service: dependency_service,
@@ -139,15 +137,13 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     When "executing"
     service.execute(["build"], context: fake_context)
 
-    Then "the expectation on the guard holds"
-    true
+    Then "the guard was consulted once"
+    1 * dependency_service.guard!
   end
 
   test "execute skips the guard for a staleness-exempt command" do
     Given "an exempt builtin (it IS the remediation) and a strict dependency service"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).never
-    dependency_service.stubs(:lock!)
     service = build_service(
       builtins: { "update-deps" => FakeBuiltin.new(staleness_exempt: true) },
       dependency_service: dependency_service,
@@ -157,14 +153,13 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     service.execute(["update-deps"], context: fake_context)
 
     Then "the guard was never consulted"
-    true
+    0 * dependency_service.guard!
+    _ * dependency_service.lock!
   end
 
   test "execute records the installed stamp after a stamping command succeeds" do
     Given "a stamping builtin and an expecting dependency service"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:guard!)
-    dependency_service.expects(:lock!).once
     service = build_service(
       builtins: { "install-deps" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
@@ -174,14 +169,13 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     service.execute(["install-deps"], context: fake_context)
 
     Then "the stamp was recorded"
-    true
+    _ * dependency_service.guard!
+    1 * dependency_service.lock!
   end
 
   test "execute never stamps for a non-stamping command" do
     Given "a plain builtin and a strict dependency service"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:guard!)
-    dependency_service.expects(:lock!).never
     service = build_service(
       builtins: { "deps" => FakeBuiltin.new },
       dependency_service: dependency_service,
@@ -191,16 +185,14 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     service.execute(["deps"], context: fake_context)
 
     Then "no stamp was recorded"
-    true
+    _ * dependency_service.guard!
+    0 * dependency_service.lock!
   end
 
   test "a failed execution skips the stamp" do
     Given "a stamping command whose executor raises the child's failure"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:guard!)
-    dependency_service.expects(:lock!).never
     executor = typed_mock(Dev::Cli::CommandExecutor)
-    executor.stubs(:execute).raises(Dev::Cli::CommandRunner::CommandFailedError.new(exit_status: 7))
     service = build_service(
       builtins: { "up" => FakeBuiltin.new(staleness_exempt: true, stamps: true) },
       dependency_service: dependency_service,
@@ -211,6 +203,9 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     service.execute(["up"], context: fake_context)
 
     Then "the failure bubbled and the stamp was skipped"
+    _ * dependency_service.guard!
+    _ * executor.execute >> raises(Dev::Cli::CommandRunner::CommandFailedError.new(exit_status: 7))
+    0 * dependency_service.lock!
     raises Dev::Cli::CommandRunner::CommandFailedError
   end
 
@@ -218,7 +213,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     Given "a service over a deps group with a path child"
     path = FakeBuiltin.new(staleness_exempt: true)
     group = build_group(children: { "path" => path })
-    service = build_service(builtins: { "deps" => group }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "deps" => group }, dependency_service: null_dependency_service)
     context = fake_context
 
     When "executing the full path"
@@ -233,15 +228,15 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     parent = FakeBuiltin.new(staleness_exempt: false, stamps: true, flags: [Dev::Cli::Flag.new("--fast")])
       .with_children({ "unit" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).once
-    dependency_service.expects(:lock!).once
     service = build_service(builtins: { "test" => parent }, dependency_service: dependency_service)
     context = fake_context
 
     When "executing it bare with a flag"
     service.execute(["test", "--fast"], context: context)
 
-    Then "it ran with the flag; the guard and stamp expectations hold"
+    Then "it ran with the flag, guarded and stamped once each"
+    1 * dependency_service.guard!
+    1 * dependency_service.lock!
     parent.calls == [[parsed(["--fast"], switches: ["--fast"]), context]]
   end
 
@@ -249,18 +244,17 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     Given "a group and an executor expecting the group node"
     group = build_group(children: { "path" => FakeBuiltin.new })
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).never
-    dependency_service.expects(:lock!).never
     executor = typed_mock(Dev::Cli::CommandExecutor)
     context = fake_context
-    executor.expects(:execute).with(group, args: no_args, context: context).once
     service = build_service(builtins: { "deps" => group }, dependency_service: dependency_service, executor: executor)
 
     When "executing the group bare"
     service.execute(["deps"], context: context)
 
-    Then "the expectations hold"
-    true
+    Then "the executor got the group node; neither guard nor stamp was touched"
+    1 * executor.execute(group, args: no_args, context: context)
+    0 * dependency_service.guard!
+    0 * dependency_service.lock!
   end
 
   # --- the flag vocabulary gate (#217) --------------------------------------
@@ -271,10 +265,9 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     without_flags = FakeBuiltin.new(staleness_exempt: true)
     project = Dev::Cli::ProjectCommand.new(run: "./bin/test.sh")
     project_executor = typed_mock(Dev::Cli::ProjectExecutor)
-    forwarded = []
-    project_executor.stubs(:exec_into).with { |_command, args:|
-      forwarded << args
-      true }
+    # The argv the project seam receives, once, on a project row; no other
+    # shape reaches it.
+    forwarded = shape == "project command" ? [expected.words] : []
     executor = Dev::Cli::CommandExecutor.new(
       builtin_executor: Dev::Cli::BuiltinExecutor.new,
       group_executor: Dev::Cli::GroupExecutor.new(usage_printer: Dev::Cli::UsagePrinter.new, out: StringIO.new),
@@ -289,7 +282,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
         project_commands: { "test" => project },
       ),
       executor: executor,
-      dependency_service: fake_dependency_service,
+      dependency_service: null_dependency_service,
     )
     # The builtin whose calls the row observes; a group and a project
     # command record nothing in-process.
@@ -305,9 +298,9 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
 
     Then "a known flag is parsed and reaches the builtin; an unknown one is refused before anything runs; " \
       "a project command gets its argv verbatim"
+    forwarded.size * project_executor.exec_into(project, args: forwarded.first)
     error.nil? == (expected != :unknown_flag)
     node.nil? || node.calls.map(&:first) == (expected == :unknown_flag ? [] : [expected])
-    shape != "project command" || forwarded == [expected.words]
     error.nil? || error.path == path
 
     Where
@@ -330,7 +323,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     plain = FakeBuiltin.new(staleness_exempt: true)
     service = build_service(
       builtins: { "help" => help, "cache" => build_group(children: { "gc" => leaf }), "plain" => plain },
-      dependency_service: fake_dependency_service,
+      dependency_service: null_dependency_service,
     )
 
     When "executing with a help flag among the node's args"
@@ -356,7 +349,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     Given "a tree holding help and a plain leaf"
     help = FakeBuiltin.new(staleness_exempt: true)
     plain = FakeBuiltin.new(staleness_exempt: true)
-    service = build_service(builtins: { "help" => help, "plain" => plain }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "help" => help, "plain" => plain }, dependency_service: null_dependency_service)
 
     When "executing with the terminator before the help flag"
     service.execute(argv, context: fake_context)
@@ -375,7 +368,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
     Given "a tree holding help and an opaque builtin"
     help = FakeBuiltin.new(staleness_exempt: true)
     opaque = FakeBuiltin.new(staleness_exempt: true, opaque_args: true)
-    service = build_service(builtins: { "help" => help, "complete" => opaque }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "help" => help, "complete" => opaque }, dependency_service: null_dependency_service)
 
     When "executing with a help flag among its words"
     service.execute(["complete", "plan", "--help"], context: fake_context)
@@ -388,7 +381,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
   test "an opaque builtin's args bypass the gate, terminator included" do
     Given "a builtin whose words are another command's argv (as complete's are)"
     builtin = FakeBuiltin.new(staleness_exempt: true, opaque_args: true)
-    service = build_service(builtins: { "complete" => builtin }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "complete" => builtin }, dependency_service: null_dependency_service)
 
     When "executing with foreign flags and a terminator"
     service.execute(["complete", "plan", "pull", "--merge", "--", "-h"], context: fake_context)
@@ -400,13 +393,13 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
   test "an unknown flag is refused before the staleness guard gets to nag" do
     Given "a non-exempt builtin and a strict dependency service"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).never
     service = build_service(builtins: { "build" => FakeBuiltin.new }, dependency_service: dependency_service)
 
     When "executing with a flag it does not declare"
     service.execute(["build", "--bogus"], context: fake_context)
 
     Then
+    0 * dependency_service.guard!
     raises Dev::Cli::FlagVocabulary::UnknownFlagError
   end
 
@@ -419,7 +412,7 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
   test "root serves the repository's tree" do
     Given "a service over one builtin"
     builtin = FakeBuiltin.new
-    service = build_service(builtins: { "deps" => builtin }, dependency_service: fake_dependency_service)
+    service = build_service(builtins: { "deps" => builtin }, dependency_service: null_dependency_service)
 
     Expect "the tree flows through the service (the onion rule)"
     service.root.children == { "deps" => builtin }
@@ -428,16 +421,15 @@ class Dev::Cli::CommandServiceTest < Minitest::Test
   test "empty argv resolves to the root, handed to the executor as a group" do
     Given "an executor expecting the root"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.expects(:guard!).never
     executor = typed_mock(Dev::Cli::CommandExecutor)
     context = fake_context
     service = build_service(builtins: { "up" => FakeBuiltin.new }, dependency_service: dependency_service, executor: executor)
-    executor.expects(:execute).with(service.root, args: no_args, context: context).once
 
     When "executing bare"
     service.execute([], context: context)
 
-    Then "the expectations hold"
-    true
+    Then "the executor got the root, unguarded"
+    1 * executor.execute(service.root, args: no_args, context: context)
+    0 * dependency_service.guard!
   end
 end

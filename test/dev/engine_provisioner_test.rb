@@ -32,28 +32,20 @@ class Dev::EngineProvisionerTest < Minitest::Test
     )
   end
 
-  # A check that passes whatever it is shown; tests about the check pass
-  # their own.
-  def passing_check
-    typed_mock(Dev::EngineResourcesCheck).tap { |check| check.stubs(:check!) }
+  # The real host probe over a kernel banner under +dir+: a WSL2 distro when
+  # the banner names Microsoft, any other Linux or a Mac otherwise.
+  def host_of(dir, host_os, wsl: false)
+    banner = File.join(dir, "proc-version")
+    File.write(banner, "Linux version 5.15.90.1-microsoft-standard-WSL2\n") if wsl
+    Dev::WslHost.new(host_os: host_os, proc_version_path: banner, env: {})
   end
 
-  # Linux collaborators that tolerate anything; tests about Linux pass their
-  # own.
-  def quiet_linux_engine
-    typed_mock(Dev::LinuxEngineProvisioner).tap { |engine| engine.stubs(:provision!) }
-  end
-
-  def quiet_wsl
-    typed_mock(Dev::WslProvisioner).tap { |wsl| wsl.stubs(:provision!) }
-  end
-
-  def wsl_host(wsl)
-    typed_mock(Dev::WslHost).tap { |host| host.stubs(:wsl?).returns(wsl) }
-  end
-
-  def build(dir, host_os:, record: nil, colima:, cli_plugins:, resources_check: passing_check,
-    linux_engine: quiet_linux_engine, wsl: quiet_wsl, on_wsl: false)
+  # A provisioner over bare doubles: a test passes the collaborators its
+  # path reaches and states their interactions in its Then.
+  def build(dir, host_os:, record: nil, engine: nil, colima: typed_mock(Dev::ColimaProvisioner),
+    cli_plugins: typed_mock(Dev::DockerCliPlugins), resources_check: typed_mock(Dev::EngineResourcesCheck),
+    linux_engine: typed_mock(Dev::LinuxEngineProvisioner), wsl: typed_mock(Dev::WslProvisioner),
+    wsl_host: host_of(dir, host_os))
     Dev::EngineProvisioner.new(
       settings: build_settings(dir, record: record),
       colima: colima,
@@ -61,27 +53,28 @@ class Dev::EngineProvisionerTest < Minitest::Test
       resources_check: resources_check,
       linux_engine: linux_engine,
       wsl: wsl,
-      wsl_host: wsl_host(on_wsl),
+      wsl_host: wsl_host,
       host_os: host_os,
       env: {},
+      engine: engine,
     )
   end
 
-  test "on macOS with the default engine, up wires the docker CLI plugins then starts the colima VM sized from resources" do
+  test "on macOS with the default engine, up wires the docker CLI plugins and starts the colima VM sized from resources" do
     Given "a darwin host, no record, and a repo resources hint"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
-    order = sequence("plugins then VM")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.expects(:ensure!).once.in_sequence(order).returns(:added)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).with(cpus: 8, memory_gib: 24, disk_gib: 250).once.in_sequence(order)
+    check = typed_mock(Dev::EngineResourcesCheck)
     resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24, disk_gib: 250)
 
     When "provisioning"
-    build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins).provision!(resources: resources)
+    build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins, resources_check: check).provision!(resources: resources)
 
-    Then "asserted on the mocks: plugins first (docker build needs buildx), then the VM"
-    true
+    Then "the plugins are wired (docker build needs buildx) and the VM is sized from the hint"
+    1 * cli_plugins.ensure! >> :added
+    1 * colima.provision!(cpus: 8, memory_gib: 24, disk_gib: 250)
+    _ * check.check!
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -92,11 +85,11 @@ class Dev::EngineProvisionerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     order = sequence("provision then verify")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.stubs(:ensure!).returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).once.in_sequence(order)
     resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
+    # call order: the check reads the engine live after the ratchet sized it; before, it would measure the old VM
+    colima.expects(:provision!).once.in_sequence(order)
     check.expects(:check!).once.in_sequence(order)
       .with { |engine:, hint:, actual:| engine.kind == :colima && hint == resources && actual.nil? }
       .raises(Dev::EngineResourcesCheck::UndersizedEngineError, "still 4 cpus")
@@ -106,6 +99,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
       .provision!(resources: resources)
 
     Then "the check's verdict is up's verdict"
+    _ * cli_plugins.ensure! >> :already_present
     error = raises Dev::EngineResourcesCheck::UndersizedEngineError
     error.message == "still 4 cpus"
 
@@ -116,18 +110,16 @@ class Dev::EngineProvisionerTest < Minitest::Test
   test "bare dockerd has nothing to start but is still measured against the hint, as the daemon reports itself" do
     Given "a linux host and a hint"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
-    cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    colima = typed_mock(Dev::ColimaProvisioner)
+    linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
     resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).once.with { |engine:, hint:, actual:| engine.kind == :docker && hint == resources && actual.nil? }
 
     When "provisioning"
-    build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check)
-      .provision!(resources: resources)
+    build(dir, host_os: "linux", resources_check: check, linux_engine: linux_engine).provision!(resources: resources)
 
     Then
-    true
+    _ * linux_engine.provision!
+    1 * check.check!(engine: responds_with(:kind, :docker), hint: resources, actual: nil)
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -141,21 +133,20 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a #{host_os} host, a 12/24 engine, and a hint it meets"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.stubs(:ensure!).returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.stubs(:provision!)
+    linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
     engine = FakeContainerEngine.new(kind: kind, capture_result: "12 #{24 * 1024**3}")
     check = Dev::EngineResourcesCheck.new(settings: build_settings(dir), out: StringIO.new)
-    provisioner = Dev::EngineProvisioner.new(
-      settings: build_settings(dir), colima: colima, cli_plugins: cli_plugins, resources_check: check,
-      linux_engine: quiet_linux_engine, wsl: quiet_wsl, wsl_host: wsl_host(false), host_os: host_os, env: {},
-      engine: engine,
-    )
+    provisioner = build(dir, host_os: host_os, engine: engine, colima: colima, cli_plugins: cli_plugins, resources_check: check,
+      linux_engine: linux_engine)
 
     When "provisioning"
     provisioner.provision!(resources: Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16))
 
     Then "one docker info and nothing else spawned on the engine"
+    _ * cli_plugins.ensure! >> :already_present
+    _ * colima.provision!
+    _ * linux_engine.provision!
     engine.captures == [["info", "--format", "{{.NCPU}} {{.MemTotal}}"]]
     engine.runs.empty?
 
@@ -172,15 +163,16 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a darwin host and no hint"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.stubs(:ensure!).returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).with(cpus: nil, memory_gib: nil, disk_gib: nil).once
+    check = typed_mock(Dev::EngineResourcesCheck)
 
     When "provisioning"
-    build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins).provision!(resources: nil)
+    build(dir, host_os: "darwin", colima: colima, cli_plugins: cli_plugins, resources_check: check).provision!(resources: nil)
 
     Then
-    true
+    _ * cli_plugins.ensure! >> :already_present
+    1 * colima.provision!(cpus: nil, memory_gib: nil, disk_gib: nil)
+    _ * check.check!
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -190,20 +182,21 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a linux host (not WSL) with the bare-dockerd default"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.expects(:ensure!).never
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).never
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.expects(:provision!).once
     wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).never
+    check = typed_mock(Dev::EngineResourcesCheck)
 
     When "provisioning"
-    build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, linux_engine: linux_engine, wsl: wsl,
-      on_wsl: false).provision!(resources: nil)
+    build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check, linux_engine: linux_engine, wsl: wsl)
+      .provision!(resources: nil)
 
     Then
-    true
+    0 * cli_plugins.ensure!
+    0 * colima.provision!
+    1 * linux_engine.provision!
+    0 * wsl.provision!
+    _ * check.check!
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -214,30 +207,29 @@ class Dev::EngineProvisionerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     order = sequence("dockerd, then .wslconfig, then check")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.expects(:ensure!).never
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).never
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.expects(:provision!).once.in_sequence(order)
     wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).with(cpus: 12, memory_gib: 24).once.in_sequence(order)
     resources = Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24)
     vm = Dev::EngineResources.new(cpus: 28, memory_gib: 64)
-    host = wsl_host(true)
-    host.stubs(:observed).returns(vm)
+    host = typed_mock(Dev::WslHost)
     check = typed_mock(Dev::EngineResourcesCheck)
+    # call order: dockerd must run before the .wslconfig ratchet asks it (`docker ps`) who is busy, and the check measures the VM after the ratchet sized it
+    linux_engine.expects(:provision!).once.in_sequence(order)
+    wsl.expects(:provision!).with(cpus: 12, memory_gib: 24).once.in_sequence(order)
     check.expects(:check!).once.in_sequence(order)
       .with { |engine:, hint:, actual:| engine.kind == :docker && hint == resources && actual == vm }
 
     When "provisioning"
-    Dev::EngineProvisioner.new(
-      settings: build_settings(dir), colima: colima, cli_plugins: cli_plugins, resources_check: check,
-      linux_engine: linux_engine, wsl: wsl, wsl_host: host, host_os: "linux", env: {},
-    ).provision!(resources: resources)
+    build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check, linux_engine: linux_engine, wsl: wsl,
+      wsl_host: host).provision!(resources: resources)
 
-    Then "asserted on the mocks: dockerd must run before `docker ps` can answer the busy question, and the check " \
-         "is handed the hypervisor's size for the VM, not the daemon's MemTotal (a 64 GB VM's kernel reports 63)"
-    true
+    Then "the macOS steps are skipped, and the check is handed the hypervisor's size for the VM, not the daemon's MemTotal " \
+         "(a 64 GB VM's kernel reports 63)"
+    0 * cli_plugins.ensure!
+    0 * colima.provision!
+    _ * host.wsl? >> true
+    _ * host.observed >> vm
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -246,20 +238,19 @@ class Dev::EngineProvisionerTest < Minitest::Test
   test "a WSL restart-required stops up before the resources check — the message is the verdict" do
     Given "a WSL host whose ratchet wrote .wslconfig"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
-    cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    colima = typed_mock(Dev::ColimaProvisioner)
+    linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
     wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).raises(Dev::WslProvisioner::RestartRequiredError, "restart pending")
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).never
 
     When "provisioning"
-    error = assert_raises(Dev::WslProvisioner::RestartRequiredError) do
-      build(dir, host_os: "linux", colima: colima, cli_plugins: cli_plugins, resources_check: check, wsl: wsl,
-        on_wsl: true).provision!(resources: nil)
-    end
+    build(dir, host_os: "linux", resources_check: check, linux_engine: linux_engine, wsl: wsl, wsl_host: host_of(dir, "linux", wsl: true))
+      .provision!(resources: nil)
 
     Then
+    _ * linux_engine.provision!
+    1 * wsl.provision! >> raises(Dev::WslProvisioner::RestartRequiredError, "restart pending")
+    0 * check.check!
+    error = raises Dev::WslProvisioner::RestartRequiredError
     error.message == "restart pending"
 
     Cleanup
@@ -270,15 +261,16 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a darwin host whose user recorded container_engine: docker"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.expects(:ensure!).once.returns(:already_present)
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).never
+    check = typed_mock(Dev::EngineResourcesCheck)
 
     When "provisioning"
-    build(dir, host_os: "darwin", record: "docker", colima: colima, cli_plugins: cli_plugins).provision!(resources: nil)
+    build(dir, host_os: "darwin", record: "docker", colima: colima, cli_plugins: cli_plugins, resources_check: check).provision!(resources: nil)
 
     Then
-    true
+    1 * cli_plugins.ensure! >> :already_present
+    0 * colima.provision!
+    _ * check.check!
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -299,26 +291,17 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Dev::ContainerEngine.new(kind: kind, argv_prefix: ["false"])
   end
 
-  def build_with_engine(dir, engine:, host_os:, colima: typed_mock(Dev::ColimaProvisioner),
-    linux_engine: quiet_linux_engine, on_wsl: false, wsl_host: nil)
-    Dev::EngineProvisioner.new(
-      settings: build_settings(dir), colima: colima, cli_plugins: typed_mock(Dev::DockerCliPlugins),
-      resources_check: passing_check, linux_engine: linux_engine, wsl: quiet_wsl,
-      wsl_host: wsl_host || wsl_host(on_wsl), host_os: host_os, env: {}, engine: engine,
-    )
-  end
-
   test "status on colima reports the VM as colima sees it, plus what runs in it" do
     Given "a running 8/16 VM with one managed and one foreign container"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.stubs(:status).returns(Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100))
     engine = fake_engine(:colima, containers: "dev-snappy\ttrue\t/src/snappy\npg\t\t\n")
 
     When "inspecting"
-    status = build_with_engine(dir, engine: engine, host_os: "darwin", colima: colima).status
+    status = build(dir, engine: engine, host_os: "darwin", colima: colima).status
 
     Then "the VM facts come from colima; the resources are the VM's size; containers are the engine's records"
+    _ * colima.status >> Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100)
     status.kind == :colima
     status.running == true
     status.stoppable == true
@@ -337,12 +320,12 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "no colima profile"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.stubs(:status).returns(nil)
 
     When "inspecting"
-    status = build_with_engine(dir, engine: dead_engine(:colima), host_os: "darwin", colima: colima).status
+    status = build(dir, engine: dead_engine(:colima), host_os: "darwin", colima: colima).status
 
     Then
+    _ * colima.status >> nil
     status.running == false
     status.resources.nil?
     status.colima.nil?
@@ -360,13 +343,12 @@ class Dev::EngineProvisionerTest < Minitest::Test
       in_docker_group: true, systemd_enabled: nil,
     )
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.stubs(:status).returns(linux_status)
 
     When "inspecting"
-    status = build_with_engine(dir, engine: fake_engine(:docker, cpus: 12, memory_gib: 32), host_os: "linux",
-      linux_engine: linux_engine).status
+    status = build(dir, engine: fake_engine(:docker, cpus: 12, memory_gib: 32), host_os: "linux", linux_engine: linux_engine).status
 
     Then
+    _ * linux_engine.status >> linux_status
     status.kind == :docker
     status.running == true
     status.stoppable == true
@@ -383,23 +365,23 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a WSL distro whose .wslconfig asks for more than the VM got"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.stubs(:status).returns(Dev::LinuxEngineProvisioner::Status.new(
+    linux_status = Dev::LinuxEngineProvisioner::Status.new(
       docker_path: "/usr/bin/docker", desktop_shim: false, dockerd_active: false, buildx: true,
       in_docker_group: true, systemd_enabled: true,
-    ))
+    )
     wsl_status = Dev::WslHost::Status.new(
       interop: true, configured_cpus: 16, configured_memory_gib: 48,
       observed: Dev::EngineResources.new(cpus: 8, memory_gib: 24), hardware: Dev::EngineResources.new(cpus: 28, memory_gib: 64),
     )
     host = typed_mock(Dev::WslHost)
-    host.stubs(:wsl?).returns(true)
-    host.stubs(:status).returns(wsl_status)
 
     When "inspecting"
-    status = build_with_engine(dir, engine: fake_engine(:docker), host_os: "linux", linux_engine: linux_engine,
-      wsl_host: host).status
+    status = build(dir, engine: fake_engine(:docker), host_os: "linux", linux_engine: linux_engine, wsl_host: host).status
 
     Then "dockerd being stopped reads as not running; the VM's size is the host's to report"
+    _ * linux_engine.status >> linux_status
+    _ * host.wsl? >> true
+    _ * host.status >> wsl_status
     status.running == false
     status.resources == Dev::EngineResources.new(cpus: 8, memory_gib: 24)
     status.wsl == wsl_status
@@ -415,7 +397,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     engine = answers ? fake_engine(:explicit, cpus: 4, memory_gib: 8) : dead_engine(:explicit)
 
     When "inspecting"
-    status = build_with_engine(dir, engine: engine, host_os: "linux").status
+    status = build(dir, engine: engine, host_os: "linux").status
 
     Then
     status.kind == :explicit
@@ -437,7 +419,7 @@ class Dev::EngineProvisionerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-engine-provisioner-")
 
     When "inspecting"
-    status = build_with_engine(dir, engine: fake_engine(:docker), host_os: "darwin").status
+    status = build(dir, engine: fake_engine(:docker), host_os: "darwin").status
 
     Then
     status.stoppable == false
@@ -452,36 +434,35 @@ class Dev::EngineProvisionerTest < Minitest::Test
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     colima = typed_mock(Dev::ColimaProvisioner)
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    (colima_stops ? colima : linux_engine).expects(:stop!).once
-    (colima_stops ? linux_engine : colima).expects(:stop!).never
 
     When "stopping"
-    build_with_engine(dir, engine: fake_engine(kind), host_os: host_os, colima: colima, linux_engine: linux_engine).stop!
+    build(dir, engine: fake_engine(kind), host_os: host_os, colima: colima, linux_engine: linux_engine).stop!
 
     Then
-    true
+    colima_stops * colima.stop!
+    linux_stops * linux_engine.stop!
 
     Cleanup
     FileUtils.rm_rf(dir)
 
     Where
-    kind    | host_os  | colima_stops
-    :colima | "darwin" | true
-    :docker | "linux"  | false
+    kind    | host_os  | colima_stops | linux_stops
+    :colima | "darwin" | 1            | 0
+    :docker | "linux"  | 0            | 1
   end
 
   test "stop! refuses an engine dev does not own: #{description}" do
     Given "that engine"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:stop!).never
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.expects(:stop!).never
 
     When "stopping"
-    build_with_engine(dir, engine: fake_engine(kind), host_os: host_os, colima: colima, linux_engine: linux_engine).stop!
+    build(dir, engine: fake_engine(kind), host_os: host_os, colima: colima, linux_engine: linux_engine).stop!
 
     Then
+    0 * colima.stop!
+    0 * linux_engine.stop!
     error = raises Dev::EngineProvisioner::UnmanagedEngineError
     error.message.include?(hint)
 
@@ -498,18 +479,13 @@ class Dev::EngineProvisionerTest < Minitest::Test
     Given "a host with DOCKER_HOST set"
     dir = Dir.mktmpdir("dev-engine-provisioner-")
     cli_plugins = typed_mock(Dev::DockerCliPlugins)
-    cli_plugins.expects(:ensure!).never
     colima = typed_mock(Dev::ColimaProvisioner)
-    colima.expects(:provision!).never
     linux_engine = typed_mock(Dev::LinuxEngineProvisioner)
-    linux_engine.expects(:provision!).never
     wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).never
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).never
     provisioner = Dev::EngineProvisioner.new(
       settings: build_settings(dir), colima: colima, cli_plugins: cli_plugins, resources_check: check,
-      linux_engine: linux_engine, wsl: wsl, wsl_host: wsl_host(true),
+      linux_engine: linux_engine, wsl: wsl, wsl_host: host_of(dir, host_os, wsl: true),
       host_os: host_os, env: { "DOCKER_HOST" => "ssh://build-box" },
     )
 
@@ -517,7 +493,11 @@ class Dev::EngineProvisionerTest < Minitest::Test
     provisioner.provision!(resources: nil)
 
     Then
-    true
+    0 * cli_plugins.ensure!
+    0 * colima.provision!
+    0 * linux_engine.provision!
+    0 * wsl.provision!
+    0 * check.check!
 
     Cleanup
     FileUtils.rm_rf(dir)

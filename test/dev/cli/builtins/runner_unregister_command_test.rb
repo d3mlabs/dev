@@ -247,13 +247,13 @@ class Dev::Cli::Builtins::RunnerUnregisterCommandTest < Minitest::Test
   test "the default wiring is discovery over this user's home, and nothing else — unregister never asks gh" do
     Given "a bare unregister with default wiring, discovery over an empty home"
     empty_discovery = Dev::RunnerDiscovery.new(home: Dir.mktmpdir)
-    Dev::RunnerDiscovery.stubs(:new).returns(empty_discovery)
-    command = Dev::Cli::Builtins::RunnerUnregisterCommand.new
 
     When "running with no reference"
+    command = Dev::Cli::Builtins::RunnerUnregisterCommand.new
     command.call(args: no_args, context: projectless_context)
 
     Then "the empty host has nothing to pick from"
+    _ * Dev::RunnerDiscovery.new >> empty_discovery
     raises Dev::Cli::Builtins::RunnerUnregisterCommand::NothingEnrolledError
   end
 

@@ -20,16 +20,18 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   include SorbetHelper
 
-  def setup
-    # The data root step is a host fact (Linux, default root); these tests
-    # inject it where it is the subject and have none otherwise — on a
-    # Linux CI runner the default would reach for sudo.
-    Dev::LinuxDataRootProvisioner.stubs(:for_host).returns(nil)
-  end
+  # The install body's vocabulary: `up` composes its own flags from it, so a
+  # test that parses `up`'s args states it as the mock's answer to `flags`.
+  INSTALL_DEPS_FLAGS = [
+    Dev::Cli::Flag.new(Dev::Cli::Builtins::InstallDepsCommand::GROUP_FLAG, takes_value: true),
+    Dev::Cli::Flag.new(Dev::Cli::Builtins::InstallDepsCommand::PINNED_TAPS_FLAG),
+  ].freeze
 
   test "traits: staleness-exempt (it IS the remediation) and stamps on success" do
     Given "the builtin"
-    command = build_command
+    command = Dev::Cli::Builtins::UpCommand.new(
+      install_deps_command: install_deps_mock, host_service: typed_mock(Dev::HostService), service_dependencies: [], data_root_provisioner: nil,
+    )
 
     Expect "the declarative traits"
     command.staleness_exempt? == true
@@ -38,63 +40,66 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   end
 
   test "call ensures the dev cd shell hook and composes the dev deps install body" do
-    Given "an up command with expectations on both collaborators"
+    Given "an up command over both collaborators"
     install_deps = install_deps_mock
-    host_service = quiet_host_service
-    host_service.expects(:install_rc_hook).once
-    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
+    host_service = typed_mock(Dev::HostService)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service, data_root_provisioner: nil)
     context = build_context
 
     When "running up"
     command.call(args: parsed_args(command, ["--pinned-taps"]), context: context)
 
-    Then "the install body received the same args and context"
+    Then "the hook is installed and the install body received the same args and context"
+    _ * install_deps.flags >> INSTALL_DEPS_FLAGS
+    _ * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    _ * host_service.sync_skills
+    1 * host_service.install_rc_hook
     1 * install_deps.call(args: parsed_args(command, ["--pinned-taps"]), context: context)
   end
 
   test "call converges the host tooling and links shipped skills as its host half" do
-    Given "an up command whose host service expects the converge and the skill links"
-    host_service = quiet_host_service
-    host_service.expects(:converge_tooling).once.returns(Dev::HostService::TOOLING_CONVERGED)
-    host_service.expects(:sync_skills).with(project_root: nil).once
+    Given "an up command over a host service"
+    host_service = typed_mock(Dev::HostService)
     install_deps = install_deps_mock
-    install_deps.stubs(:call)
-    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service, data_root_provisioner: nil)
 
     When "running up"
     command.call(args: no_args, context: build_context)
 
-    Then "the expectations on the host service hold"
-    true
+    Then "the host service converged the tooling and linked the skills"
+    _ * host_service.install_rc_hook
+    _ * install_deps.call
+    1 * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    1 * host_service.sync_skills(project_root: nil)
   end
 
   test "call makes the Linux data root exist as part of the host half, before the install" do
     Given "a host whose data root step applies"
     install_deps = install_deps_mock
+    host_service = typed_mock(Dev::HostService)
     provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
     order = []
+    # call order: the data root must exist at its final path before the install lands in it
     provisioner.expects(:provision!).once.with { |ui:| order.push(:root).any? && ui.is_a?(Dev::Ui) }
     install_deps.expects(:call).once.with { |**| order.push(:install).any? }
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, data_root_provisioner: provisioner,
+      install_deps_command: install_deps, host_service: host_service, data_root_provisioner: provisioner,
     )
 
     When
     command.call(args: no_args, context: build_context)
 
     Then "the root exists before anything installs into it"
+    _ * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    _ * host_service.install_rc_hook
+    _ * host_service.sync_skills
     order == [:root, :install]
   end
 
   test "a projectless up still makes the data root: it is the machine's, not the project's" do
     Given
     host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling).returns(Dev::HostService::TOOLING_CONVERGED)
-    host_service.stubs(:install_rc_hook)
-    host_service.stubs(:sync_skills)
-    host_service.stubs(:sync_learnings)
     provisioner = typed_mock(Dev::LinuxDataRootProvisioner)
-    provisioner.expects(:provision!).once
     command = Dev::Cli::Builtins::UpCommand.new(
       install_deps_command: install_deps_mock, host_service: host_service, data_root_provisioner: provisioner,
     )
@@ -103,24 +108,28 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     capture_stdout { command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))) }
 
     Then
-    true
+    _ * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    _ * host_service.install_rc_hook
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
+    1 * provisioner.provision!
   end
 
   test "call without a project converges the host half, syncs org learnings, and skips provisioning" do
     Given "a projectless context and a host service expecting only host work"
     host_service = typed_mock(Dev::HostService)
-    host_service.expects(:converge_tooling).once.returns(Dev::HostService::TOOLING_CONVERGED)
-    host_service.expects(:install_rc_hook).once
-    host_service.expects(:sync_skills).with(project_root: nil).once
-    host_service.expects(:sync_learnings).with(project_root: nil).once
     install_deps = install_deps_mock
-    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service, data_root_provisioner: nil)
     context = Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "running up outside any project"
     stdout = capture_stdout { command.call(args: no_args, context: context) }
 
     Then "deps install never runs, and the bootstrap message points at projects"
+    1 * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    1 * host_service.install_rc_hook
+    1 * host_service.sync_skills(project_root: nil)
+    1 * host_service.sync_learnings(project_root: nil)
     0 * install_deps.call(args: anything, context: anything)
     stdout.include?("dev: host layer converged.\n")
     stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
@@ -135,16 +144,16 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   test "a projectless up whose brew layer was skipped says so, naming the prefix owner — #{what}" do
     Given "a host service whose tooling converge reports the skip"
     host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling).returns(Dev::HostService::ToolingOutcome.new(skipped: true, prefix_owner: owner))
-    host_service.stubs(:install_rc_hook)
-    host_service.stubs(:sync_skills)
-    host_service.stubs(:sync_learnings)
-    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps_mock, host_service: host_service)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps_mock, host_service: host_service, data_root_provisioner: nil)
 
     When "running up outside any project"
     stdout = capture_stdout { command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))) }
 
     Then "the summary carries the skip and the remedy, and still points at projects"
+    _ * host_service.converge_tooling >> Dev::HostService::ToolingOutcome.new(skipped: true, prefix_owner: owner)
+    _ * host_service.install_rc_hook
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     stdout.include?(summary)
     !stdout.include?("dev: host layer converged.\n")
     stdout.include?("no dev.yml here — run dev up inside a project to provision it too")
@@ -159,22 +168,26 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     Given "two service dependencies; deps install and both bring-ups observed in order"
     order = sequence("deps, then services in order")
     install_deps = install_deps_mock
-    install_deps.expects(:call).once.in_sequence(order)
+    host_service = typed_mock(Dev::HostService)
     context = build_context
     first = typed_mock(Dev::Cli::Builtins::ContainerUpCommand)
     second = typed_mock(Dev::Cli::Builtins::ContainerUpCommand)
+    # call order: a service's bring-up may need the locked deps on disk, and a later service may need an earlier one
+    install_deps.expects(:call).once.in_sequence(order)
     first.expects(:up).with(project: context.project).once.in_sequence(order)
     second.expects(:up).with(project: context.project).once.in_sequence(order)
-    first.expects(:call).never
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [first, second],
+      install_deps_command: install_deps, host_service: host_service, service_dependencies: [first, second], data_root_provisioner: nil,
     )
 
     When "running up"
     command.call(args: no_args, context: context)
 
     Then "asserted on the mocks: the services are ready before the first command that needs them"
-    true
+    _ * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    _ * host_service.install_rc_hook
+    _ * host_service.sync_skills
+    0 * first.call
   end
 
   test "inside the container, call is the deps install alone: no host converge or service bring-up" do
@@ -185,13 +198,14 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     context = build_context
     command = Dev::Cli::Builtins::UpCommand.new(
       install_deps_command: install_deps, host_service: host_service,
-      service_dependencies: [service], inside_container: true,
+      service_dependencies: [service], inside_container: true, data_root_provisioner: nil,
     )
 
     When "running up inside"
     command.call(args: parsed_args(command, ["--group", "app"]), context: context)
 
     Then "only the install body ran, with the user's args"
+    _ * install_deps.flags >> INSTALL_DEPS_FLAGS
     1 * install_deps.call(args: parsed_args(command, ["--group", "app"]), context: context)
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
@@ -222,11 +236,14 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     root, _current, older = inside_fixture
     (root / "marker").write(older.marker)
     install_deps = install_deps_mock
-    install_deps.expects(:call).never
     command = inside_up_command(install_deps, root)
-    error = assert_raises(Dev::Cli::HostRule::ContainerDriftError) { command.call(args: no_args, context: inside_context(root)) }
 
-    Expect
+    When
+    command.call(args: no_args, context: inside_context(root))
+
+    Then
+    0 * install_deps.call
+    error = raises Dev::Cli::HostRule::ContainerDriftError
     error.message.include?("this container is snappy-linux@#{older.short_digest}")
     error.message.include?("re-create it from the host: `dev container reset && dev up`")
 
@@ -239,7 +256,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     host_service = typed_mock(Dev::HostService)
     install_deps = install_deps_mock
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: host_service, inside_container: true,
+      install_deps_command: install_deps, host_service: host_service, inside_container: true, data_root_provisioner: nil,
     )
     context = Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
@@ -257,33 +274,36 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     warm = Dir.mktmpdir("up-no-cache-warm-")
     original = ENV.fetch("DEV_DATA_ROOT", nil)
     ENV["DEV_DATA_ROOT"] = warm
-    seen = {}
+    # Typed fakes: what matters is the data root in force at the moment each
+    # half runs, which only the call itself can read.
+    installs = []
     install_deps = install_deps_mock
-    install_deps.expects(:call).with { |args:, context:|
-      seen[:install_args] = args
-      seen[:install_root] = ENV.fetch("DEV_DATA_ROOT")
-      context.project
-    }.once
+    install_deps.define_singleton_method(:call) { |args:, context:| installs << [args, ENV.fetch("DEV_DATA_ROOT"), context.project] }
+    cold_ups = []
     service = typed_mock(Dev::Cli::Builtins::ContainerUpCommand)
-    service.expects(:cold_up).with { |project:|
-      seen[:cold_root] = ENV.fetch("DEV_DATA_ROOT")
-      project
-    }.once
-    service.expects(:up).never
+    service.define_singleton_method(:cold_up) { |project:| cold_ups << [ENV.fetch("DEV_DATA_ROOT"), project] }
     host_service = typed_mock(Dev::HostService)
     context = build_context
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: host_service, service_dependencies: [service],
+      install_deps_command: install_deps, host_service: host_service, service_dependencies: [service], data_root_provisioner: nil,
     )
 
     When "running dev up --no-cache --group app"
     command.call(args: parsed_args(command, ["--no-cache", "--group", "app"]), context: context)
 
     Then "both halves ran under one throwaway sibling of the warm root, which is gone and restored afterwards"
-    seen[:install_args] == parsed_args(command, ["--no-cache", "--group", "app"])
-    seen[:install_root].start_with?("#{warm}-cold-")
-    seen[:cold_root] == seen[:install_root]
-    !File.exist?(seen[:cold_root])
+    _ * install_deps.flags >> INSTALL_DEPS_FLAGS
+    0 * service.up
+    installs.length == 1
+    cold_ups.length == 1
+    install_args, install_root, installed_project = installs.fetch(0)
+    cold_root, cold_project = cold_ups.fetch(0)
+    install_args == parsed_args(command, ["--no-cache", "--group", "app"])
+    installed_project == context.project
+    cold_project == context.project
+    install_root.start_with?("#{warm}-cold-")
+    cold_root == install_root
+    !File.exist?(cold_root)
     ENV.fetch("DEV_DATA_ROOT") == warm
     0 * host_service.converge_tooling
     0 * host_service.install_rc_hook
@@ -302,13 +322,14 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     Given "a projectless context"
     install_deps = install_deps_mock
     host_service = typed_mock(Dev::HostService)
-    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service)
+    command = Dev::Cli::Builtins::UpCommand.new(install_deps_command: install_deps, host_service: host_service, data_root_provisioner: nil)
     context = Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui))
 
     When "running dev up --no-cache"
     stdout = capture_stdout { command.call(args: parsed_args(command, ["--no-cache"]), context: context) }
 
     Then "nothing ran and the message says why"
+    _ * install_deps.flags >> INSTALL_DEPS_FLAGS
     0 * install_deps.call(args: anything, context: anything)
     0 * host_service.converge_tooling
     stdout.include?("dev up --no-cache needs a project")
@@ -318,7 +339,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     Given "an inside up command"
     install_deps = install_deps_mock
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true,
+      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true, data_root_provisioner: nil,
     )
     context = build_context
 
@@ -326,6 +347,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
     stdout = capture_stdout { command.call(args: parsed_args(command, ["--no-cache"]), context: context) }
 
     Then "the install ran with the same args (the flag is not one it reads) and the output explains"
+    _ * install_deps.flags >> INSTALL_DEPS_FLAGS
     1 * install_deps.call(args: parsed_args(command, ["--no-cache"]), context: context)
     stdout.include?("--no-cache runs from the host")
   end
@@ -333,45 +355,25 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
   test "call with no service dependencies is the deps install alone" do
     Given "a plain project"
     install_deps = install_deps_mock
-    install_deps.expects(:call).once
+    host_service = typed_mock(Dev::HostService)
     command = Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
+      install_deps_command: install_deps, host_service: host_service, service_dependencies: [], data_root_provisioner: nil,
     )
 
     When "running up"
     command.call(args: no_args, context: build_context)
 
     Then
-    true
+    _ * host_service.converge_tooling >> Dev::HostService::TOOLING_CONVERGED
+    _ * host_service.install_rc_hook
+    _ * host_service.sync_skills
+    1 * install_deps.call
   end
 
   private
 
-  def build_command
-    install_deps = install_deps_mock
-    install_deps.stubs(:call)
-    Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: quiet_host_service, service_dependencies: [],
-    )
-  end
-
-  # The install body as a strict mock that still exposes its vocabulary:
-  # `up` composes its own flags from it, so parsing `up`'s args needs it.
   def install_deps_mock
-    install_deps = typed_mock(Dev::Cli::Builtins::InstallDepsCommand)
-    install_deps.stubs(:flags).returns([
-      Dev::Cli::Flag.new(Dev::Cli::Builtins::InstallDepsCommand::GROUP_FLAG, takes_value: true),
-      Dev::Cli::Flag.new(Dev::Cli::Builtins::InstallDepsCommand::PINNED_TAPS_FLAG),
-    ])
-    install_deps
-  end
-
-  def quiet_host_service
-    host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:converge_tooling).returns(Dev::HostService::TOOLING_CONVERGED)
-    host_service.stubs(:install_rc_hook)
-    host_service.stubs(:sync_skills)
-    host_service
+    typed_mock(Dev::Cli::Builtins::InstallDepsCommand)
   end
 
   def capture_stdout
@@ -407,7 +409,7 @@ class Dev::Cli::Builtins::UpCommandTest < Minitest::Test
       host_environment: Dev::HostEnvironment.new(path: (root / "marker").to_s),
     )
     Dev::Cli::Builtins::UpCommand.new(
-      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true, host_rule: host_rule,
+      install_deps_command: install_deps, host_service: typed_mock(Dev::HostService), inside_container: true, host_rule: host_rule, data_root_provisioner: nil,
     )
   end
 

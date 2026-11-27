@@ -80,20 +80,11 @@ module Dev
       # @raise [ApiError] on any other non-2xx response
       sig { params(name: String).returns(T::Hash[String, T.untyped]) }
       def project_json(name)
-        response = get_project(name)
+        response = Net::HTTP.get_response(URI("#{PYPI_HOST}/pypi/#{name}/json"))
         return JSON.parse(T.must(response.body)) if response.is_a?(Net::HTTPSuccess)
         raise ProjectNotFoundError, "no project named #{name} on PyPI" if response.is_a?(Net::HTTPNotFound)
 
         raise ApiError, "PyPI API returned #{response.code} for #{name}: #{response.body}"
-      end
-
-      # Perform the HTTP request. Isolated so tests can stub the boundary.
-      #
-      # @param name [String] project name
-      # @return [Net::HTTPResponse]
-      sig { params(name: String).returns(Net::HTTPResponse) }
-      def get_project(name)
-        Net::HTTP.get_response(URI("#{PYPI_HOST}/pypi/#{name}/json"))
       end
 
       # The files pip would install a release from: the ones not yanked.

@@ -22,12 +22,14 @@ class RunnerTest < Minitest::Test
   extend T::Sig
   include SorbetHelper
 
-  # The composition root builds every builtin on its platform defaults
-  # (`for_host`): the same Mac for every test here, pinned, so the catalog
-  # and the usage read the same on a laptop, the box and hosted CI.
+  # The composition root builds every builtin for the host it is given
+  # (`host_os:`): the same Mac for every test here, so the catalog and the
+  # usage read the same on a laptop, the box and hosted CI.
+  HOST_OS = "darwin"
+
   def setup
     super
-    @host_probes = pin_host_platform(os: "darwin")
+    @original_env = ENV.slice("DEV_DATA_ROOT", "CI")
   end
 
   test "run with empty argv prints usage" do
@@ -153,12 +155,13 @@ class RunnerTest < Minitest::Test
     runner = build_runner(commands: {}, out: out)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(2).once
 
     When "running with a flag the node does not declare"
     runner.run(argv)
 
     Then "stderr names the flag and the node, then prints its usage; stdout stays empty"
+    e = raises SystemExit
+    e.status == 2
     $stderr.string.lines.first == "dev: unknown flag '#{flag}' for '#{invocation}'\n"
     $stderr.string.include?(usage_line)
     out.string.empty?
@@ -180,12 +183,13 @@ class RunnerTest < Minitest::Test
     runner = build_runner
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we run an unknown command"
     runner.run(["nonexistent"])
 
     Then "error mentions the command name"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("nonexistent")
     $stderr.string.include?("dev --help")
 
@@ -208,25 +212,28 @@ class RunnerTest < Minitest::Test
     !out.string.match?(/^  check /)
   end
 
-  test "the retired flat dependency verbs are not found" do
+  test "the retired flat dependency verb #{name} is not found" do
     Given "a Runner"
     runner = build_runner(commands: {})
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).times(3)
 
-    When "running each flat name"
-    runner.run(["update-deps"])
-    runner.run(["install-deps"])
-    runner.run(["check"])
+    When "running the flat name"
+    runner.run([name])
 
-    Then "each falls through to the not-found error"
-    $stderr.string.include?("Command 'update-deps' not found")
-    $stderr.string.include?("Command 'install-deps' not found")
-    $stderr.string.include?("Command 'check' not found")
+    Then "it falls through to the not-found error"
+    e = raises SystemExit
+    e.status == 1
+    $stderr.string.include?("Command '#{name}' not found")
 
     Cleanup
     $stderr = old_stderr
+
+    Where
+    name
+    "update-deps"
+    "install-deps"
+    "check"
   end
 
   test "usage includes both built-in and project commands" do
@@ -319,12 +326,12 @@ class RunnerTest < Minitest::Test
     Given "a Runner over a checkout whose lock pins two images"
     out = StringIO.new
     runner = build_runner(commands: {}, out: out, root: pinned_root("snappy-linux", "snappy-server"))
-    Dev::ContainerEngine.expects(:resolve).never
 
     When "we print usage"
     runner.run([])
 
-    Then "the noun is listed, and down beside it"
+    Then "the noun is listed, and down beside it; no engine was resolved for a listing"
+    0 * Dev::ContainerEngine.resolve
     out.string.include?("container")
     out.string.lines.any? { |l| l.strip.start_with?("down ") }
   end
@@ -334,12 +341,13 @@ class RunnerTest < Minitest::Test
     runner = build_runner(commands: {})
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we invoke the absent command"
     runner.run(argv)
 
     Then "it is not found"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?(name)
 
     Cleanup
@@ -460,7 +468,7 @@ class RunnerTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("runner-test-"))
     (@tmp_roots ||= []).push(root)
     data_root = root / "data"
-    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    ENV["DEV_DATA_ROOT"] = data_root.to_s
     out = StringIO.new
     runner = build_runner(out: out, root: root, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "echo \"$DEV_TARGET $DEV_CONFIG\" > \"$DEV_STAGE/env\"" },
@@ -479,23 +487,20 @@ class RunnerTest < Minitest::Test
     Given "a project with a channel, a Runner given no deployments_factory, and the Gh class watched"
     root = Pathname.new(Dir.mktmpdir("runner-test-"))
     (@tmp_roots ||= []).push(root)
-    Dev.stubs(:target_project_root).returns(root)
-    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
-    tmp.write(YAML.dump({ "name" => "testproject",
-                          "targets" => { "site" => { "desc" => "The site", "builder" => "true" } },
-                          "commands" => { "deploy" => { "commands" => {
-                            "staging" => { "desc" => "rsync", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
-                          } } } }))
-    tmp.flush
+    (root / "dev.yml").write(YAML.dump({ "name" => "testproject",
+                                         "targets" => { "site" => { "desc" => "The site", "builder" => "true" } },
+                                         "commands" => { "deploy" => { "commands" => {
+                                           "staging" => { "desc" => "rsync", "targets" => ["site"], "run" => "./bin/stage", "environment" => "host" },
+                                         } } } }))
     out = StringIO.new
-    # Built before the expectation: FakeGh is a Gh, so its `new` is the one being watched.
+    # Built before the interaction installs: FakeGh is a Gh, so its `new` is the one being watched.
     fake = FakeGh.new(root:)
-    Dev::Lifecycle::Gh.expects(:new).with(root: root).at_least_once.returns(fake)
 
     When "we print deploy's usage"
-    Dev::Cli::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: out).run(["help", "deploy"])
+    Dev::Cli::Runner.new(dev_yaml_path: root / "dev.yml", ui: fake_ui, out: out, host_os: HOST_OS).run(["help", "deploy"])
 
     Then "the ledger was built over this checkout; usage never asked the forge anything"
+    (1.._) * Dev::Lifecycle::Gh.new(root: root) >> fake
     out.string.include?("staging")
   end
 
@@ -503,21 +508,18 @@ class RunnerTest < Minitest::Test
     Given "a project with `release: {}`, a Runner given no releases_factory, and the Gh class watched"
     root = Pathname.new(Dir.mktmpdir("runner-test-"))
     (@tmp_roots ||= []).push(root)
-    Dev.stubs(:target_project_root).returns(root)
-    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
-    tmp.write(YAML.dump({ "name" => "testproject",
-                          "targets" => { "site" => { "desc" => "The site", "configs" => ["release"], "builder" => "true" } },
-                          "commands" => { "release" => {} } }))
-    tmp.flush
+    (root / "dev.yml").write(YAML.dump({ "name" => "testproject",
+                                         "targets" => { "site" => { "desc" => "The site", "configs" => ["release"], "builder" => "true" } },
+                                         "commands" => { "release" => {} } }))
     out = StringIO.new
-    # Built before the expectation: FakeGh is a Gh, so its `new` is the one being watched.
+    # Built before the interaction installs: FakeGh is a Gh, so its `new` is the one being watched.
     fake = FakeGh.new(root:)
-    Dev::Lifecycle::Gh.expects(:new).with(root: root).at_least_once.returns(fake)
 
     When "we print release's usage"
-    Dev::Cli::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: out).run(["help", "release"])
+    Dev::Cli::Runner.new(dev_yaml_path: root / "dev.yml", ui: fake_ui, out: out, host_os: HOST_OS).run(["help", "release"])
 
     Then "the archive was built over this checkout; usage never asked the forge anything"
+    (1.._) * Dev::Lifecycle::Gh.new(root: root) >> fake
     out.string.include?("site-release")
   end
 
@@ -571,12 +573,10 @@ class RunnerTest < Minitest::Test
     Given "a project whose channel script records its env, and a packaged artifact in the store"
     root = Pathname.new(Dir.mktmpdir("runner-test-"))
     (@tmp_roots ||= []).push(root)
-    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
-    Open3.capture2e("git", "-C", root.to_s, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one")
     outside = Pathname.new(Dir.mktmpdir("runner-test-"))
     @tmp_roots.push(outside)
     data_root = outside / "data"
-    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    ENV["DEV_DATA_ROOT"] = data_root.to_s
     out = StringIO.new
     gh = FakeGh.new.resolving("d3mlabs/testproject")
       .answers(["api", "-X", "POST", "--input", "-", "repos/d3mlabs/testproject/deployments"], with: { "id" => 9, "created_at" => "2026-11-05T17:02:11Z" })
@@ -588,6 +588,7 @@ class RunnerTest < Minitest::Test
         "staging" => { "targets" => ["site"], "run" => "echo \"$DEV_CHANNEL $DEV_BUILD $DEV_ARTIFACT\" >> \"#{outside}/shipped\"", "environment" => "host" },
       } },
     })
+    commit_tree(root)
     runner.run(["package", "site-release"])
     out.truncate(0)
     out.rewind
@@ -614,7 +615,7 @@ class RunnerTest < Minitest::Test
     outside = Pathname.new(Dir.mktmpdir("runner-test-"))
     @tmp_roots.push(outside)
     data_root = outside / "data"
-    Dev::DataRoot.stubs(:path).returns(data_root.to_s)
+    ENV["DEV_DATA_ROOT"] = data_root.to_s
     out = StringIO.new
     release_json = JSON.generate({
       "stamp" => Dev::Lifecycle::Manifest::Stamp.now(dev_version: "0.7.2", now: Time.utc(2026, 11, 6, 12)).to_json_hash,
@@ -683,7 +684,6 @@ class RunnerTest < Minitest::Test
   test "a channel the lock contributes is a deploy child without a run: line: declared, its targets: configure it; undeclared, it accepts every packageable build (dev#422)" do
     Given "a lock contributing a steam publisher, and a project declaring steam without run: beside a script channel"
     steam = RecordingPublisher.new
-    Dev::Deps::Registry.stubs(:publishers).returns({ "steam" => steam })
     out = StringIO.new
     configured = build_runner(out: out, targets: {
       "site" => { "desc" => "The site", "configs" => ["dev", "release"], "builder" => "true" },
@@ -703,6 +703,7 @@ class RunnerTest < Minitest::Test
 
     Then "the declared one keeps its targets: and desc over the integration's protocol; the undeclared one appears as the lock's, over every build; " \
          "dev's own `status` sits among them either way; each names the head strategy its publisher declares"
+    _ * Dev::Deps::Registry.publishers >> { "steam" => steam }
     out.string.include?(<<~USAGE)
       Commands:
         staging      rsync to the box                          host
@@ -736,10 +737,11 @@ class RunnerTest < Minitest::Test
 
     When "help runs, then the channel is asked to ship"
     runner.run(["help", "deploy"])
-    Kernel.expects(:exit).with(1).once
     runner.run(["deploy", "steam"])
 
     Then "help listed it, protocol-less, and the deploy was refused with the protocol message — load itself said nothing"
+    e = raises SystemExit
+    e.status == 1
     out.string.include?("steam        Steam depots")
     out.string.include?("Protocol: publisher: steam — deps.lock pins no `steam`")
     $stderr.string.include?("dev: channel 'deploy steam' has no protocol: it declares no `run:` and deps.lock pins no `steam`")
@@ -755,7 +757,7 @@ class RunnerTest < Minitest::Test
   # checkout's dev can; in any project an older dev `dev up`s a newer
   # dev.yml. A `targets:` this dev cannot read therefore stops the lifecycle
   # verbs, naming the key, and nothing else.
-  test "a `targets:` this dev cannot read registers the lifecycle verbs as refusing stand-ins: the tree loads, help names the fault, and each verb refuses with the key (dev#689)" do
+  test "a `targets:` this dev cannot read registers #{verb} as a refusing stand-in: the tree loads, help names the fault, and the verb refuses with the key (dev#689)" do
     Given "dev's own dev.yml, one archive option ahead of this dev"
     out = StringIO.new
     runner = build_runner(
@@ -772,27 +774,35 @@ class RunnerTest < Minitest::Test
     old_stderr = $stderr
     $stderr = StringIO.new
 
-    When "the root usage prints, then each verb is asked for"
+    When "the root usage prints, then the verb is asked for"
     runner.run([])
-    Kernel.expects(:exit).with(1).times(4)
-    %w[build package deploy release].each { |verb| runner.run([verb]) }
+    runner.run([verb])
 
-    Then "load said nothing; the project commands list; the four verbs list under Lifecycle carrying the fault; each refused under the dev: prefix, naming the key and the way out"
+    Then "load said nothing; the project commands list; the four verbs list under Lifecycle carrying the fault; the verb refused under the dev: prefix, naming the key and the way out"
+    e = raises SystemExit
+    e.status == 1
     out.string.include?("Development commands for dev")
     out.string.include?("  up           Setup dev environment")
     out.string.include?("  test         Run this repo's tests")
     out.string.include?("Lifecycle:")
-    %w[build package deploy release].all? do |verb|
-      out.string.lines.any? { |line| line.start_with?("  #{verb} ") && line.include?("Refused: this dev cannot read dev.yml `targets:`") }
+    %w[build package deploy release].all? do |listed|
+      out.string.lines.any? { |line| line.start_with?("  #{listed} ") && line.include?("Refused: this dev cannot read dev.yml `targets:`") }
     end
     refusals = $stderr.string.lines.grep(/^dev: /)
-    refusals.size == 4
-    refusals.all? { |line| line.include?("dev.yml `targets:` is not readable by this dev (#{Dev::Version.current})") }
-    refusals.all? { |line| line.include?("target 'dev-core': archive takes format, split, vendor, files, not level") }
-    refusals.all? { |line| line.include?("`dev up` upgrades dev") }
+    refusals.size == 1
+    refusals.first.include?("dev.yml `targets:` is not readable by this dev (#{Dev::Version.current})")
+    refusals.first.include?("target 'dev-core': archive takes format, split, vendor, files, not level")
+    refusals.first.include?("`dev up` upgrades dev")
 
     Cleanup
     $stderr = old_stderr
+
+    Where
+    verb
+    "build"
+    "package"
+    "deploy"
+    "release"
   end
 
   test "a `targets:` this dev cannot read registers only the verbs the declaration implies: build and package alone without deploy: or release: entries" do
@@ -804,10 +814,11 @@ class RunnerTest < Minitest::Test
 
     When
     runner.run([])
-    Kernel.expects(:exit).with(1).once
     runner.run(["deploy"])
 
     Then "build and package list; deploy is not found, as in any project without channels"
+    e = raises SystemExit
+    e.status == 1
     out.string.lines.any? { |line| line.start_with?("  build ") }
     out.string.lines.any? { |line| line.start_with?("  package ") }
     out.string.lines.none? { |line| line.start_with?("  deploy ", "  release ") }
@@ -860,31 +871,30 @@ class RunnerTest < Minitest::Test
     (root / "exe/ai-flow").write("#!/usr/bin/env ruby\n")
     (root / "dependencies.rb").write("Dev::Deps.define { ruby \"4.0.6\" }\n")
     (root / "deps.lock").write("ruby:\n  ruby:\n    group: app\n    version: 4.0.6\n")
-    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
-    Open3.capture2e("git", "-C", root.to_s, "add", ".")
-    Open3.capture2e("git", "-C", root.to_s, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one")
     outside = Pathname.new(Dir.mktmpdir("runner-test-"))
     @tmp_roots.push(outside)
-    Dev::DataRoot.stubs(:path).returns((outside / "data").to_s)
+    ENV["DEV_DATA_ROOT"] = (outside / "data").to_s
     # The checkout's lock was never installed on this machine, and `package`
     # runs under the staleness guard: a workstation warns and goes on, CI
     # refuses the verb before the channel is asked. The refusal under test
     # is the channel's, so the guard reads the workstation posture.
-    Dev::Deps.stubs(:detect_env).returns("dev")
+    ENV.delete("CI")
     out = StringIO.new
     runner = build_runner(out: out, ui: Dev::NoUi.new(out: out), root: root, targets: {
       "ai-flow" => { "desc" => "The dispatcher", "packager" => { "archive" => { "files" => ["/exe", "/dependencies.rb"] } } },
     }, commands: {
       "deploy" => { "commands" => { "gh" => { "desc" => "Series tags", "targets" => ["ai-flow"] } } },
     })
+    commit_tree(root)
     old_stderr = $stderr
     $stderr = StringIO.new
 
     When
-    Kernel.expects(:exit).with(1).once
     runner.run(["package", "ai-flow"])
 
     Then "the refusal names the channel and the lock; the store holds no artifact for the build"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("dev: channel 'gh' refuses the tree as it would ship: it ships dependencies.rb without deps.lock")
     out.string == ""
     !(outside / "data" / "artifacts" / "testproject" / "ai-flow" / "ai-flow.zip").exist?
@@ -1022,7 +1032,7 @@ class RunnerTest < Minitest::Test
   test "dev complete outside a project offers the projectless catalog, global commands included" do
     Given "a Runner with no dev.yml, over its real service graph"
     out = StringIO.new
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out, host_os: HOST_OS)
 
     When "completing at the top level"
     runner.run(["complete"])
@@ -1036,7 +1046,7 @@ class RunnerTest < Minitest::Test
   test "bare dev outside a project prints the projectless root: the global commands and the dev.yml hint" do
     Given "a Runner with no dev.yml, over its real service graph"
     out = StringIO.new
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out, host_os: HOST_OS)
 
     When "running bare"
     runner.run([])
@@ -1059,7 +1069,7 @@ class RunnerTest < Minitest::Test
   test "dev help <path> outside a project renders a global group's usage" do
     Given "a Runner with no dev.yml, over its real service graph"
     out = StringIO.new
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: out, host_os: HOST_OS)
 
     When "asking for help on plan"
     runner.run(["help", "plan"])
@@ -1075,8 +1085,8 @@ class RunnerTest < Minitest::Test
     root_out = StringIO.new
 
     When "asking for the learnings group's usage and the root listing"
-    Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: help_out).run(["help", "learnings"])
-    Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: root_out).run([])
+    Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: help_out, host_os: HOST_OS).run(["help", "learnings"])
+    Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: root_out, host_os: HOST_OS).run([])
 
     Then "the group's usage carries the capture pointer; the root keeps the one-line summary"
     help_out.string.include?("Capture is agent-driven, not a dev verb: the capture-learning skill")
@@ -1136,12 +1146,13 @@ class RunnerTest < Minitest::Test
     )
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "running an unknown child"
     runner.run(["test", "bogus"])
 
     Then "the error names the path as typed"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("Command 'test bogus' not found")
 
     Cleanup
@@ -1158,11 +1169,7 @@ class RunnerTest < Minitest::Test
         python "3.12"
       end
     RUBY
-    contexts = []
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).with { |argv, context:|
-      contexts << [argv, context]
-      true }
     ui = fake_ui
     runner = build_runner(commands: {}, command_service: command_service, ui: ui, root: root)
 
@@ -1170,10 +1177,10 @@ class RunnerTest < Minitest::Test
     runner.run(["test", "--fast"])
 
     Then "the service got the argv and a fully-assembled context"
-    argv, context = contexts.fetch(0)
-    argv == ["test", "--fast"]
-    context.ui == ui
-    context.project!.root == root
+    1 * command_service.execute(
+      ["test", "--fast"],
+      context: all_of(responds_with(:ui, ui), responds_with(:project!, responds_with(:root, root))),
+    ) >> true
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -1181,49 +1188,44 @@ class RunnerTest < Minitest::Test
 
   test "the project context carries the dev.yml runner roles, so register can resolve --role" do
     Given "a Runner over a dev.yml declaring a farm role"
-    contexts = []
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).with { |argv, context:|
-      contexts << [argv, context]
-      true }
     runner = build_runner(runner_roles: { "ue-farm" => { "labels" => %w[ue gpu] } }, command_service: command_service)
 
     When
     runner.run(["test"])
 
     Then
-    contexts.fetch(0).last.project!.runner_roles == { "ue-farm" => Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu]) }
+    1 * command_service.execute(
+      ["test"],
+      context: responds_with(:project!, responds_with(:runner_roles, { "ue-farm" => Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu]) })),
+    ) >> true
   end
 
   test "run without a dev.yml assembles a projectless context" do
     Given "a Runner constructed with no dev.yml anywhere"
-    contexts = []
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).with { |argv, context:|
-      contexts << [argv, context]
-      true }
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, command_service: command_service)
+    ui = fake_ui
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: ui, command_service: command_service, host_os: HOST_OS)
 
     When "running up"
     runner.run(["up"])
 
     Then "the service got a context with a ui and no project half"
-    argv, context = contexts.fetch(0)
-    argv == ["up"]
-    context.project.nil?
+    1 * command_service.execute(["up"], context: all_of(responds_with(:ui, ui), responds_with(:project, nil))) >> true
   end
 
   test "a project command without a dev.yml maps to the no-dev.yml refusal" do
     Given "a Runner with no dev.yml, over its real service graph"
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new, host_os: HOST_OS)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "running a project command"
     runner.run(["test"])
 
     Then "the refusal names the missing dev.yml"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("no dev.yml found in this directory or any parent")
     $stderr.string.include?("Run dev from inside a project that defines a dev.yml.")
 
@@ -1233,15 +1235,16 @@ class RunnerTest < Minitest::Test
 
   test "project builtins are not registered without a dev.yml" do
     Given "a Runner with no dev.yml, over its real service graph"
-    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: nil, ui: fake_ui, out: StringIO.new, host_os: HOST_OS)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "running a project-scoped builtin"
     runner.run(%w[deps install])
 
     Then "the lookup fails like any other command outside a project"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("no dev.yml found in this directory or any parent")
 
     Cleanup
@@ -1253,15 +1256,16 @@ class RunnerTest < Minitest::Test
     tmp = Tempfile.new(["dev", ".yml"])
     tmp.write(YAML.dump({ "name" => "testproject", "ruby" => "3.3.0", "commands" => {} }))
     tmp.flush
-    runner = Dev::Cli::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: StringIO.new)
+    runner = Dev::Cli::Runner.new(dev_yaml_path: Pathname.new(tmp.path), ui: fake_ui, out: StringIO.new, host_os: HOST_OS)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "running any command"
     runner.run(["test"])
 
     Then "the migration message reaches stderr as a dev: error"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("dev.yml `ruby:` is no longer supported")
 
     Cleanup
@@ -1272,30 +1276,31 @@ class RunnerTest < Minitest::Test
   test "a failed waited child exits with the child's status" do
     Given "a Runner whose service raises the child's failure"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(Dev::Cli::CommandRunner::CommandFailedError.new(exit_status: 7))
     runner = build_runner(commands: {}, command_service: command_service)
-    Kernel.expects(:exit).with(7).once
 
     When "we run the command"
     runner.run(["up"])
 
-    Then "the expectation on the exit mapping holds"
-    true
+    Then "the child's status is the exit status"
+    _ * command_service.execute >> raises(Dev::Cli::CommandRunner::CommandFailedError.new(exit_status: 7))
+    e = raises SystemExit
+    e.status == 7
   end
 
   test "a signal-killed child exits 128 plus the signal number" do
     Given "a Runner whose service raises the child's signal death"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(Dev::Cli::CommandRunner::CommandKilledError.new(signal: 15))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(143).once
 
     When "we run the command"
     runner.run(["up"])
 
     Then "the signal is reported under the dev: prefix"
+    _ * command_service.execute >> raises(Dev::Cli::CommandRunner::CommandKilledError.new(signal: 15))
+    e = raises SystemExit
+    e.status == 143
     $stderr.string.include?("dev: command killed by signal 15")
 
     Cleanup
@@ -1305,16 +1310,17 @@ class RunnerTest < Minitest::Test
   test "a child that never spawned exits 127" do
     Given "a Runner whose service raises the spawn failure"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(Dev::Cli::CommandRunner::CommandSpawnError.new)
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(127).once
 
     When "we run the command"
     runner.run(["up"])
 
     Then "the spawn failure is reported under the dev: prefix"
+    _ * command_service.execute >> raises(Dev::Cli::CommandRunner::CommandSpawnError.new)
+    e = raises SystemExit
+    e.status == 127
     $stderr.string.include?("dev: command could not be spawned")
 
     Cleanup
@@ -1324,16 +1330,17 @@ class RunnerTest < Minitest::Test
   test "an ArgumentError is reported as a clean dev error with exit 1" do
     Given "a Runner whose service raises a usage error"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(ArgumentError.new("usage: dev cache gc [--keep N]"))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we run the command"
     runner.run(["cache"])
 
     Then "the message reaches stderr under the dev: prefix"
+    _ * command_service.execute >> raises(ArgumentError.new("usage: dev cache gc [--keep N]"))
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("dev: usage: dev cache gc [--keep N]")
 
     Cleanup
@@ -1343,16 +1350,17 @@ class RunnerTest < Minitest::Test
   test "GitHub refusing a runner query is a clean dev error with exit 1, not a backtrace (dev#493)" do
     Given "a Runner whose service surfaces the registry's refusal"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(Dev::RunnerRegistry::QueryError.new("gh api orgs/d3mlabs/actions/runner-groups failed (HTTP 403)"))
     runner = build_runner(commands: {}, command_service: command_service)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we run the command"
     runner.run(["runner", "register"])
 
     Then "GitHub's words reach stderr under the dev: prefix"
+    _ * command_service.execute >> raises(Dev::RunnerRegistry::QueryError.new("gh api orgs/d3mlabs/actions/runner-groups failed (HTTP 403)"))
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("dev: gh api orgs/d3mlabs/actions/runner-groups failed (HTTP 403)")
 
     Cleanup
@@ -1362,13 +1370,13 @@ class RunnerTest < Minitest::Test
   test "an unmapped error is a dev bug and re-raises with its backtrace" do
     Given "a Runner whose service raises an unmapped error class"
     command_service = typed_mock(Dev::Cli::CommandService)
-    command_service.stubs(:execute).raises(Dev::Deps::ArtifactStore::PublishOutsideStagingError.new("elsewhere"))
     runner = build_runner(commands: {}, command_service: command_service)
 
     When "we run the command"
     runner.run(["deps"])
 
     Then
+    _ * command_service.execute >> raises(Dev::Deps::ArtifactStore::PublishOutsideStagingError.new("elsewhere"))
     raises Dev::Deps::ArtifactStore::PublishOutsideStagingError
   end
 
@@ -1404,29 +1412,34 @@ class RunnerTest < Minitest::Test
     [path] + children.flat_map { |child| every_path(runner, out, [*path, child]) }
   end
 
-  # Every run builds an ExecutionContext, so the helper always pins the
-  # project root to a temp dir; tests needing their own pass a root.
+  # A Runner over a dev.yml written into the project root — a temp dir of
+  # the helper's own unless the test passes one — since the root is the
+  # dev.yml's directory.
   def build_runner(name: "testproject", commands: {}, targets: nil, runner: nil, runner_roles: nil, command_service: nil,
     ui: fake_ui, out: StringIO.new, root: nil, gh: FakeGh.new)
     root ||= (@tmp_roots ||= []).push(Pathname.new(Dir.mktmpdir("runner-test-"))).fetch(-1)
-    Dev.stubs(:target_project_root).returns(root)
 
     yaml = { "name" => name, "commands" => commands }
     yaml["targets"] = targets if targets
     yaml["runner"] = runner if runner
     yaml["runner_roles"] = runner_roles if runner_roles
-    # Held in @tmp_files until teardown: a Tempfile that falls out of scope is
-    # unlinked by its finalizer at the next GC, under a Runner still reading it.
-    tmp = (@tmp_files ||= []).push(Tempfile.new(["dev", ".yml"])).fetch(-1)
-    tmp.write(YAML.dump(yaml))
-    tmp.flush
+    (root / "dev.yml").write(YAML.dump(yaml))
 
     # The deployment ledger and the release archive are the forge: scripted, never reached.
     Dev::Cli::Runner.new(
-      dev_yaml_path: Pathname.new(tmp.path), ui: ui, out: out, command_service: command_service,
+      dev_yaml_path: root / "dev.yml", ui: ui, out: out, command_service: command_service, host_os: HOST_OS,
       deployments_factory: ->(_root) { Dev::Lifecycle::GithubDeployments.new(gh:) },
       releases_factory: ->(_root) { Dev::Lifecycle::GithubReleases.new(gh:) },
     )
+  end
+
+  # Make the root a checkout with everything in it — the dev.yml included —
+  # committed: a package verb reads the tree's git state, and ships only
+  # what a clean tree produced.
+  def commit_tree(root)
+    Open3.capture2e("git", "-C", root.to_s, "init", "-q")
+    Open3.capture2e("git", "-C", root.to_s, "add", ".")
+    Open3.capture2e("git", "-C", root.to_s, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one")
   end
 
   # A checkout whose lock pins these images (dev#277), removed in teardown.
@@ -1447,15 +1460,12 @@ class RunnerTest < Minitest::Test
   end
 
   def teardown
-    restore_host_probe_guard(@host_probes)
+    %w[DEV_DATA_ROOT CI].each { |name| @original_env.key?(name) ? ENV[name] = @original_env[name] : ENV.delete(name) }
     @tmp_roots&.each { |root| FileUtils.rm_rf(root) }
-    @tmp_files&.each(&:close!)
     super
   end
 
   def fake_ui
-    ui = typed_mock(Dev::Ui)
-    ui.stubs(:print_header)
-    ui
+    typed_mock(Dev::Ui)
   end
 end

@@ -30,24 +30,24 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
   end
 
   def succeeded
-    ["", "", stub(success?: true)]
+    ["", "", exit_status(0)]
   end
 
   def failed(err)
-    ["", err, stub(success?: false)]
+    ["", err, exit_status(1)]
   end
 
   test "install_all runs a frozen bundle install through the project's shadowenv seam" do
     Given "a bundler integration with one locked gem and bundler present"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).with("bundle", "--version").returns(succeeded)
     integration = build_integration(dir, shadowenv_exec)
 
     When "installing all dependencies"
     integration.install_all([gem_dep("ffi")])
 
     Then "bundle install is dispatched frozen against the generated Gemfile, caching gems in the store's bundler cache"
+    _ * shadowenv_exec.capture3("bundle", "--version") >> succeeded
     1 * shadowenv_exec.capture3(
       "bundle", "install",
       env: {
@@ -67,14 +67,14 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     Given "a bundler integration whose shadowenv Ruby has no bundler"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).with("bundle", "--version").returns(failed("command not found"))
-    shadowenv_exec.stubs(:capture3).with("bundle", "install", env: anything).returns(succeeded)
     integration = build_integration(dir, shadowenv_exec)
 
     When "installing all dependencies"
     integration.install_all([gem_dep("ffi")])
 
     Then "bundler is installed into the provisioned Ruby, not the host one"
+    _ * shadowenv_exec.capture3("bundle", "--version") >> failed("command not found")
+    _ * shadowenv_exec.capture3("bundle", "install", env: anything) >> succeeded
     1 * shadowenv_exec.capture3("gem", "install", "bundler", "--no-document") >> succeeded
 
     Cleanup
@@ -85,8 +85,6 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     Given "a bundler integration whose bundler install fails"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).with("bundle", "--version").returns(failed("command not found"))
-    shadowenv_exec.stubs(:capture3).with("gem", "install", "bundler", "--no-document").returns(failed("no network"))
     integration = build_integration(dir, shadowenv_exec)
 
     When "installing all dependencies"
@@ -95,6 +93,8 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     end
 
     Then "the error surfaces the gem install failure"
+    _ * shadowenv_exec.capture3("bundle", "--version") >> failed("command not found")
+    _ * shadowenv_exec.capture3("gem", "install", "bundler", "--no-document") >> failed("no network")
     error.message.include?("no network")
 
     Cleanup
@@ -121,8 +121,6 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     Given "a bundler integration whose install fails"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).with("bundle", "--version").returns(succeeded)
-    shadowenv_exec.stubs(:capture3).with("bundle", "install", env: anything).returns(failed("frozen mismatch"))
     integration = build_integration(dir, shadowenv_exec)
 
     When "installing all dependencies"
@@ -131,6 +129,8 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
     end
 
     Then "the error surfaces the bundler failure"
+    _ * shadowenv_exec.capture3("bundle", "--version") >> succeeded
+    _ * shadowenv_exec.capture3("bundle", "install", env: anything) >> failed("frozen mismatch")
     error.message.include?("bundle install failed")
 
     Cleanup
@@ -138,20 +138,22 @@ class Dev::Deps::BundlerIntegrationTest < Minitest::Test
   end
 
   test "builds its own seam on the project root when none is injected" do
-    Given "a bundler integration constructed the way the registry does, with only a project root"
+    Given "a project root, and the seam the constructor will answer with"
     dir = Dir.mktmpdir("dev-bundler-int-test-")
+    seam = Dev::Deps::ShadowenvExec.new(project_root: dir)
+
+    When "constructing the way the registry does, with only a project root, and installing all dependencies"
     integration = Dev::Deps::BundlerIntegration.new(
       repository: Dev::Deps::BundlerRepository.new(project_root: dir),
       store: Dev::Deps::LocalStore.new(data_root: dir),
       project_root: dir,
     )
-    Dev::Deps::ShadowenvExec.any_instance.stubs(:capture3).with("bundle", "--version").returns(succeeded)
-
-    When "installing all dependencies"
     integration.install_all([gem_dep("ffi")])
 
-    Then "bundle install still goes through a ShadowenvExec"
-    1 * Dev::Deps::ShadowenvExec.any_instance.capture3("bundle", "install", env: anything) >> succeeded
+    Then "the default seam is a ShadowenvExec over the project root, and bundle install goes through it"
+    1 * Dev::Deps::ShadowenvExec.new(project_root: dir) >> seam
+    _ * seam.capture3("bundle", "--version") >> succeeded
+    1 * seam.capture3("bundle", "install", env: anything) >> succeeded
 
     Cleanup
     FileUtils.rm_rf(dir)

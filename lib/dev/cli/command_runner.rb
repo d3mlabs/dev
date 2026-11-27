@@ -123,21 +123,25 @@ module Dev
       #   and whether this dev already runs inside a container
       # @param containers [Dev::ProjectContainer] the way into the project's
       #   containers (the one instance the lifecycle verbs share)
+      # @param llvm [T.class_of(Dev::ShadowenvLlvm)] the host LLVM toolchain a
+      #   host-placed run provisions before it execs
       sig do
         params(
           ui: Dev::Ui,
           project_root: Pathname,
           host_rule: Dev::Cli::HostRule,
           containers: Dev::ProjectContainer,
+          llvm: T.class_of(Dev::ShadowenvLlvm),
         ).void
       end
       def initialize(ui:, project_root:, host_rule: Dev::Cli::HostRule.new,
-                     containers: Dev::ProjectContainer.new(project_root:))
+                     containers: Dev::ProjectContainer.new(project_root:), llvm: Dev::ShadowenvLlvm)
         @ui = ui
         @project_root = project_root
         @host_rule = host_rule
         @containers = containers
         @shadowenv = T.let(ProjectShadowenv.new(project_root), ProjectShadowenv)
+        @llvm = llvm
       end
 
       # Hand the process over to the command: exec-replace, the right shape
@@ -288,14 +292,14 @@ module Dev
 
       sig { params(project_root: Pathname).void }
       def ensure_llvm_provisioned!(project_root)
-        return if ShadowenvLlvm.ci_or_linux?
-        return unless ShadowenvLlvm.project_needs_llvm?(project_root)
+        return if @llvm.ci_or_linux?
+        return unless @llvm.project_needs_llvm?(project_root)
 
-        prefix = ShadowenvLlvm.detect_llvm_prefix
+        prefix = @llvm.detect_llvm_prefix
         return unless prefix
-        return if ShadowenvLlvm.provisioned?(prefix, project_root: project_root)
+        return if @llvm.provisioned?(prefix, project_root: project_root)
 
-        ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
+        @llvm.setup!(project_root: project_root, llvm_prefix: prefix)
       end
 
       # The argv that precedes `sh -c` for a direct run: the project's

@@ -204,7 +204,6 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     Given "a cache that blows up on the bounded refresh"
     dir = Dir.mktmpdir("dev-learnings-sync-test-")
     synchronizer, cache, project, = build_env(dir)
-    cache.stubs(:refresh_bounded).raises(RuntimeError, "boom")
     old_stderr = $stderr
     $stderr = StringIO.new
 
@@ -212,6 +211,7 @@ class Dev::Learnings::SynchronizerTest < Minitest::Test
     synchronizer.sync(project_root: project)
 
     Then "the failure is a warning, not an exception"
+    _ * cache.refresh_bounded >> raises(RuntimeError, "boom")
     $stderr.string.include?("org learnings sync failed")
 
     Cleanup

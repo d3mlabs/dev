@@ -26,10 +26,23 @@ module Dev
       # `brew update` so the brew index it reads is today's (`bundle lock
       # --update`). Naming declarations moves those and what they need, and
       # keeps every other pin the lock can keep (`bundle update <gem>`;
-      # PinCarryover has the rule). Everything here is derived from the
-      # per-call project root, so no collaborators need injecting.
+      # PinCarryover has the rule). The universe it resolves against comes
+      # from the registry it is given — what dev's integrations contribute
+      # for a project — and the resolver over that universe from a factory,
+      # so a test scripts both without reaching into either.
       class UpdateDepsCommand < BuiltinCommand
         extend T::Sig
+
+        # Builds the resolver over a universe: the repositories and schemes
+        # the registry contributed and the needs table, in that order
+        # (positional: Sorbet's proc types have no keyword parameters).
+        ResolverFactory = T.type_alias do
+          T.proc.params(
+            repositories: T::Hash[Symbol, Dev::Deps::Repository],
+            schemes: T::Hash[Symbol, Dev::Deps::VersionScheme],
+            needs: T::Hash[Symbol, T::Array[Dev::Deps::ScopedDeclaration]],
+          ).returns(Dev::Deps::Resolver)
+        end
 
         # A positional that is not a declaration of the manifest.
         class UnknownDeclarationError < ArgumentError; end
@@ -41,6 +54,19 @@ module Dev
         # The pin types that are interpreters: installed before the lockers
         # run, since the lockers' tools run under them.
         INTERPRETER_TYPES = T.let(%i[ruby python].freeze, T::Array[Symbol])
+
+        # @param registry [T.class_of(Dev::Deps::Registry)] what dev's integrations
+        #   contribute for a project: repositories, schemes, lockers, host integrations
+        # @param resolver_factory [ResolverFactory] builds the resolver over the universe
+        sig { params(registry: T.class_of(Dev::Deps::Registry), resolver_factory: ResolverFactory).void }
+        def initialize(
+          registry: Dev::Deps::Registry,
+          resolver_factory: ->(repositories, schemes, needs) { Dev::Deps::Resolver.new(repositories:, schemes:, needs:) }
+        )
+          super()
+          @registry = registry
+          @resolver_factory = resolver_factory
+        end
 
         sig { override.returns(String) }
         def desc
@@ -86,14 +112,10 @@ module Dev
           # The needs table: each integration's own manifest, so a declaration
           # pulls the tooling its integration shells to into this project's
           # lock.
-          needs = Dev::Deps::IntegrationNeeds.new.table(Dev::Deps::Registry.integration_classes)
-          repositories = Dev::Deps::Registry.repositories(project_root: project_root)
+          needs = Dev::Deps::IntegrationNeeds.new.table(@registry.integration_classes)
+          repositories = @registry.repositories(project_root: project_root)
           refresh_brew_index(repositories, declarations) if unlock.all?
-          resolver = Dev::Deps::Resolver.new(
-            repositories: repositories,
-            schemes: Dev::Deps::Registry.schemes,
-            needs: needs,
-          )
+          resolver = @resolver_factory.call(repositories, @registry.schemes, needs)
 
           # The Resolver is a pure function of the declarations and the
           # universe; which pin the lock being written takes — today's or the
@@ -105,7 +127,7 @@ module Dev
           # declarations are part of what the resolution answered.
           lockfile = Dev::Deps::Lockfile.new(dir: project_root)
           previous = lockfile.read_for_relock
-          carryover = Dev::Deps::PinCarryover.new(schemes: Dev::Deps::Registry.schemes)
+          carryover = Dev::Deps::PinCarryover.new(schemes: @registry.schemes)
           answered = declarations + needs.values.flatten
 
           # Interpreters before lockers: the lockers run their ecosystem tool
@@ -128,7 +150,7 @@ module Dev
           # whole-set solve (bundler) materialize their tool lockfile first, so
           # the repositories read an already-solved universe. The tool is told
           # what floats; it keeps the rest of its own lockfile.
-          lockers = Dev::Deps::Registry.lockers(
+          lockers = @registry.lockers(
             project_root: project_root,
             ruby_version: interpreters.find { |dep| dep.integration == :ruby }&.version,
           )
@@ -194,8 +216,8 @@ module Dev
         # @return [void]
         sig { params(repositories: T::Hash[Symbol, Dev::Deps::Repository], declarations: T::Array[Dev::Deps::ScopedDeclaration]).void }
         def refresh_brew_index(repositories, declarations)
-          brew = declarations.filter_map { |decl| repositories[decl.integration] }.grep(Dev::Deps::BrewRepository).first
-          return if brew.nil?
+          brew = declarations.filter_map { |decl| repositories[decl.integration] }.find { |repo| repo.is_a?(Dev::Deps::BrewRepository) }
+          return unless brew.is_a?(Dev::Deps::BrewRepository)
 
           brew.refresh_index!
         rescue Dev::Deps::BrewRepository::IndexRefreshError => e
@@ -254,7 +276,7 @@ module Dev
         # @return [void]
         sig { params(project: ProjectContext, interpreters: T::Array[Dev::Deps::Dependency], ui: Dev::Ui).void }
         def install_interpreters!(project, interpreters, ui:)
-          integrations = Dev::Deps::Registry.host_integrations(
+          integrations = @registry.host_integrations(
             project_root: project.root, project_name: project.name, store: Dev::Deps::LocalStore.new, ui:,
           )
           keys = interpreters.map(&:integration).uniq.join("+")

@@ -92,11 +92,15 @@ module Dev
 
       # @param unpacker [Lifecycle::Unpacker] what turns an archive into a content root
       # @param ui [Ui] the terminal a first-time build account is onboarded at
-      sig { params(unpacker: Lifecycle::Unpacker, ui: Ui).void }
-      def initialize(unpacker: Lifecycle::Unpacker.new, ui: NoUi.new)
+      # @param credentials [T.class_of(Credentials)] where the build account is kept
+      # @param steam_cmd [T.class_of(SteamCmd)] the steamcmd boundary: branch tips and the build run
+      sig { params(unpacker: Lifecycle::Unpacker, ui: Ui, credentials: T.class_of(Credentials), steam_cmd: T.class_of(SteamCmd)).void }
+      def initialize(unpacker: Lifecycle::Unpacker.new, ui: NoUi.new, credentials: Credentials, steam_cmd: SteamCmd)
         super()
         @unpacker = unpacker
         @ui = ui
+        @credentials = credentials
+        @steam_cmd = steam_cmd
       end
 
       # The branch the source names is not one the app publishes.
@@ -122,7 +126,7 @@ module Dev
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
         coordinate = SteamBranch.parse(T.must(id.source))
-        tips = resolve_branches(coordinate.app)
+        tips = @steam_cmd.resolve_branches(app: coordinate.app)
         build_id = tips[coordinate.branch]
         if build_id.nil?
           published = tips.sort.map { |branch, tip| "#{branch} #{tip}" }
@@ -186,15 +190,6 @@ module Dev
 
       private
 
-      # Isolated so tests can stub the SteamCMD boundary.
-      #
-      # @param app [String]
-      # @return [Hash{String => String}] branch name → current buildid
-      sig { params(app: String).returns(T::Hash[String, String]) }
-      def resolve_branches(app)
-        SteamCmd.resolve_branches(app: app)
-      end
-
       # Run the build through a steamcmd script: the login, then
       # `run_app_build`. The script holds the credentials, so it is created
       # with its mode and removed whatever happens.
@@ -208,7 +203,7 @@ module Dev
       def run_app_build(app_script, scratch)
         script = scratch / LOGIN_SCRIPT
         File.open(script, File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |file| file.write(script_text(app_script)) }
-        out, err, status = SteamCmd.run("+runscript", script.to_s)
+        out, err, status = @steam_cmd.run("+runscript", script.to_s)
         unless status.success?
           raise UploadFailedError, "steamcmd run_app_build #{app_script.basename} #{Lifecycle::Shell.describe(status)}: #{(err + out).strip.lines.last(5).join}"
         end
@@ -242,11 +237,11 @@ module Dev
       # @raise [Credentials::MissingCredentialError]
       sig { returns(T::Array[String]) }
       def login
-        username = Credentials.resolve(
+        username = @credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "username", env_var: "STEAM_USERNAME",
           prompt_label: "Steam build account (a Steamworks user with Edit App Metadata)", create_url: BUILD_ACCOUNT_URL, ui: @ui,
         )
-        password = ENV.fetch("STEAM_PASSWORD") { Credentials.load(CREDENTIAL_NAMESPACE, "password") }
+        password = ENV.fetch("STEAM_PASSWORD") { @credentials.load(CREDENTIAL_NAMESPACE, "password") }
         [username, password].compact
       end
 

@@ -18,9 +18,13 @@ module Dev
       # pipeline bug, not a reminder.
       class StaleDependencyStateError < RuntimeError; end
 
-      sig { params(staleness: Dev::Deps::Staleness).void }
-      def initialize(staleness:)
+      # @param staleness [Dev::Deps::Staleness] the project's digest checks
+      # @param env [String] "ci" or "dev" (Dev::Deps.detect_env): where a
+      #   stale state is a pipeline bug rather than a reminder
+      sig { params(staleness: Dev::Deps::Staleness, env: String).void }
+      def initialize(staleness:, env: Dev::Deps.detect_env)
         @staleness = staleness
+        @env = env
       end
 
       # All current staleness messages (see Dev::Deps::Staleness#messages).
@@ -41,7 +45,7 @@ module Dev
         stale_messages = messages
         return if stale_messages.empty?
 
-        if Dev::Deps.detect_env == "ci"
+        if @env == "ci"
           raise StaleDependencyStateError,
             "stale dependency state:\n#{stale_messages.map { |m| "  #{m}" }.join("\n")}"
         end

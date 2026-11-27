@@ -49,12 +49,13 @@ class Dev::HostServiceTest < Minitest::Test
     dir = Dir.mktmpdir("dev-host-service-test-")
     executor = RecordingExecutor.new
     service = build_service(dir, brew_executor: executor)
-    service.instance_variable_get(:@settings).stubs(:system_config_path).returns(nil)
+    settings = service.instance_variable_get(:@settings)
 
     When "converging the tooling"
     outcome = service.converge_tooling
 
     Then "brew is never invoked; an empty layer is converged, nothing was left undone"
+    _ * settings.system_config_path >> nil
     executor.commands.empty?
     outcome == Dev::HostService::TOOLING_CONVERGED
 
@@ -124,19 +125,28 @@ class Dev::HostServiceTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "the default owner probe names who owns the machine's brew prefix, nil without one" do
-    Given "a prefix this process made, and settings that know it — then no prefix at all"
+  test "the default owner probe names who owns the machine's brew prefix" do
+    Given "a prefix this process made"
     dir = Dir.mktmpdir("dev-host-service-test-")
-    Dev::Settings.stubs(:brew_prefix).returns(dir)
-    owned_by = Dev::HostService.default_prefix_owner.call
-    Dev::Settings.stubs(:brew_prefix).returns(nil)
 
-    Expect
+    When
+    owned_by = Dev::HostService.default_prefix_owner.call
+
+    Then "settings know the prefix; its owner is this process's user"
+    1 * Dev::Settings.brew_prefix >> dir
     owned_by == Etc.getpwuid(Process.uid).name
-    Dev::HostService.default_prefix_owner.call.nil?
 
     Cleanup
     FileUtils.rm_rf(dir)
+  end
+
+  test "the default owner probe answers nil without a brew prefix" do
+    When
+    owned_by = Dev::HostService.default_prefix_owner.call
+
+    Then
+    1 * Dev::Settings.brew_prefix >> nil
+    owned_by.nil?
   end
 
   test "the writability probe answers for the Cellar when there is one, the prefix itself when not, and false for no prefix" do
@@ -161,11 +171,12 @@ class Dev::HostServiceTest < Minitest::Test
   end
 
   test "the default probe asks for the machine's brew prefix" do
-    Given "settings that know the prefix"
-    Dev::Settings.stubs(:brew_prefix).returns("/nonexistent/prefix")
+    When
+    writable = Dev::HostService.default_prefix_writable.call
 
-    Expect "a prefix that is not there is not writable"
-    !Dev::HostService.default_prefix_writable.call
+    Then "settings know the prefix; one that is not there is not writable"
+    1 * Dev::Settings.brew_prefix >> "/nonexistent/prefix"
+    !writable
   end
 
   test "a bare host runs the self-update but has nothing to upgrade or bundle" do
@@ -496,7 +507,6 @@ class Dev::HostServiceTest < Minitest::Test
     File.symlink("/nowhere/rspock", skills / "gem-rspock--rspock")
     File.symlink("/nowhere/mine", skills / "mine")
     materializer = typed_mock(Dev::Skills::Materializer)
-    materializer.stubs(:sync)
     own = Dev::Skills::OwnSkills.new(root: File.join(dir, "global"))
     gem = Dev::Skills::CorpusChannel.new(name: "gem", root: skills / "dev", corpus_root: File.join(dir, "gems"))
     service = build_service(dir, materializer: materializer, own_skills: own, gem_skills_factory: ->(_root) { gem })
@@ -505,6 +515,7 @@ class Dev::HostServiceTest < Minitest::Test
     service.sync_skills(project_root: project)
 
     Then "the legacy link is gone, the user's stands"
+    _ * materializer.sync
     !File.symlink?(skills / "gem-rspock--rspock")
     File.symlink?(skills / "mine")
 
@@ -519,12 +530,16 @@ class Dev::HostServiceTest < Minitest::Test
     gem = Dev::Skills::CorpusChannel.new(name: "gem", root: File.join(dir, "project"), corpus_root: File.join(dir, "gems"))
     org = Dev::Skills::CorpusChannel.new(name: "org", root: File.join(dir, "global"), corpus_root: File.join(dir, "cache"))
     synchronizer = typed_mock(Dev::Learnings::Synchronizer)
-    synchronizer.stubs(:org_channel).returns(org)
     service = build_service(dir, own_skills: own, gem_skills_factory: ->(_root) { gem }, synchronizer: synchronizer)
 
-    Expect "all three in a project, own + org outside one"
-    service.skill_channels(project_root: "/tmp/some-project") == [own, org, gem]
-    service.skill_channels == [own, org]
+    When "listing the channels inside and outside a project"
+    in_project = service.skill_channels(project_root: "/tmp/some-project")
+    outside = service.skill_channels
+
+    Then "all three in a project, own + org outside one"
+    _ * synchronizer.org_channel >> org
+    in_project == [own, org, gem]
+    outside == [own, org]
 
     Cleanup
     FileUtils.rm_rf(dir)

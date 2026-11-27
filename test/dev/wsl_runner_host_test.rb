@@ -115,12 +115,6 @@ class Dev::WslRunnerHostTest < Minitest::Test
     )
   end
 
-  def ratchet_expecting(cpus: nil, memory_gib: nil)
-    wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).with(cpus: cpus, memory_gib: memory_gib).once
-    wsl
-  end
-
   test "for_host is nil off WSL: the step does not apply on a Mac or a bare Linux box" do
     Expect
     Dev::WslRunnerHost.for_host(host: host(executor: RecordedRunnerHostExecutor.new, wsl: false)).nil?
@@ -156,12 +150,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "a converged host: one probe, nothing registered, nothing written, the ratchet still asked" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
-    runner = runner_host(executor: executor, wsl: ratchet_expecting)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!
 
     Then "Task Scheduler was read once and nothing else ran"
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 1
     executor.scripts.first.include?("Get-ScheduledTask")
     executor.sudo_runs.empty?
@@ -172,12 +168,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
     hint = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
-    runner = runner_host(executor: executor, wsl: ratchet_expecting(cpus: 8, memory_gib: 24))
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!(resources: hint)
 
     Then
+    1 * wsl.provision!(cpus: 8, memory_gib: 24)
     executor.sudo_runs.empty?
   end
 
@@ -199,12 +197,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "no keepalive task: it is registered as the logged-on user and started, no elevation" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: { "present" => false })
-    runner = runner_host(executor: executor, wsl: ratchet_expecting)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!
 
     Then "probe, then the register script — which starts the task itself"
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 2
     executor.scripts.last.include?("Register-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'")
     executor.scripts.last.include?("Start-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'")
@@ -216,12 +216,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "a bootstrap's task that the unelevated write cannot replace: its shortfalls are said, then one UAC prompt replaces it" do
     Given "the unelevated Register-ScheduledTask refused (an administrator's task file)"
     executor = RecordedRunnerHostExecutor.new(task: BOOTSTRAP_TASK, failing: "Register-ScheduledTask")
-    runner = runner_host(executor: executor, wsl: ratchet_expecting)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!
 
     Then "probe, the unelevated attempt, then the same script under RunAs"
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 3
     executor.scripts[1].include?("Register-ScheduledTask")
     executor.scripts[2].include?("Start-Process -FilePath 'powershell.exe' -Verb RunAs")
@@ -233,12 +235,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "a bootstrap's task that the unelevated write replaces: no elevation" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: BOOTSTRAP_TASK)
-    runner = runner_host(executor: executor, wsl: ratchet_expecting)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!
 
     Then
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 2
     !@out.string.include?("UAC")
   end
@@ -271,12 +275,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "a converged task that is not running (after `wsl --shutdown`) is started, not re-registered" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK.merge("state" => "Ready"))
-    runner = runner_host(executor: executor, wsl: ratchet_expecting)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl)
 
     When
     runner.converge!
 
     Then
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 2
     executor.scripts.last.include?("Start-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'")
     !executor.scripts.last.include?("Register-ScheduledTask")
@@ -312,12 +318,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
     Given "a distro whose wsl.conf has only automount, systemd not PID 1"
     File.write(@wsl_conf_path, "[automount]\nenabled=true\n")
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
-    runner = runner_host(executor: executor, wsl: ratchet_expecting, systemd_conf: false, systemd_active: false)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl, systemd_conf: false, systemd_active: false)
 
     When
     error = assert_raises(Dev::WslRunnerHost::RestartRequiredError) { runner.converge! }
 
     Then "sudo -v, then install -m 0644 <staged> wsl.conf carrying the merged file"
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.sudo_runs.length == 2
     executor.sudo_runs.first == %w[sudo -v]
     executor.sudo_runs.last.values_at(0, 1, 2, 3, 5) == ["sudo", "install", "-m", "0644", @wsl_conf_path]
@@ -333,12 +341,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "systemd enabled but not running yet (the restart has not happened): nothing written, a restart asked for" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
-    runner = runner_host(executor: executor, wsl: ratchet_expecting, systemd_active: false)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl, systemd_active: false)
 
     When
     error = assert_raises(Dev::WslRunnerHost::RestartRequiredError) { runner.converge! }
 
     Then
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.sudo_runs.empty?
     error.message.include?("#{@wsl_conf_path} enables systemd but it is not running")
     error.message.include?("wsl --shutdown")
@@ -348,13 +358,13 @@ class Dev::WslRunnerHostTest < Minitest::Test
     Given
     executor = RecordedRunnerHostExecutor.new(task: CONVERGED_TASK)
     wsl = typed_mock(Dev::WslProvisioner)
-    wsl.expects(:provision!).raises(Dev::WslProvisioner::RestartRequiredError, "memory=24GB is ahead of the VM.")
     runner = runner_host(executor: executor, wsl: wsl)
 
     When
     error = assert_raises(Dev::WslRunnerHost::RestartRequiredError) { runner.converge! }
 
     Then
+    1 * wsl.provision! >> raises(Dev::WslProvisioner::RestartRequiredError, "memory=24GB is ahead of the VM.")
     error.message.start_with?("memory=24GB is ahead of the VM. After the shutdown")
     error.message.include?("Start-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'")
   end
@@ -362,12 +372,14 @@ class Dev::WslRunnerHostTest < Minitest::Test
   test "the keepalive is converged before systemd, so the restart systemd asks for brings the distro back under it" do
     Given
     executor = RecordedRunnerHostExecutor.new(task: { "present" => false })
-    runner = runner_host(executor: executor, wsl: ratchet_expecting, systemd_conf: false, systemd_active: false)
+    wsl = typed_mock(Dev::WslProvisioner)
+    runner = runner_host(executor: executor, wsl: wsl, systemd_conf: false, systemd_active: false)
 
     When
     assert_raises(Dev::WslRunnerHost::RestartRequiredError) { runner.converge! }
 
     Then "the register script ran, and the sudo write came after it"
+    1 * wsl.provision!(cpus: nil, memory_gib: nil)
     executor.scripts.length == 2
     executor.runs.index { |cmd| cmd.first == "sudo" } > executor.runs.rindex { |cmd| cmd.first == "powershell.exe" }
   end

@@ -29,15 +29,24 @@ class CommandRunnerTest < Minitest::Test
 
   def setup
     @ui = typed_mock(Dev::Ui)
-    @ui.stubs(:print_header)
-    @ui.stubs(:print_remote_crossing)
     # CommandRunner#run chdirs into @project_root, which teardown deletes.
     # Each test restores @original_cwd in its Cleanup block so later tests
     # don't run from a deleted directory (getcwd would raise ENOENT).
     @original_cwd = Dir.pwd
     @project_root = Pathname(Dir.mktmpdir("dev-runner-test"))
-    @runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    @runner.stubs(:ensure_shadowenv_provisioned!)
+    @runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: no_llvm_host)
+  end
+
+  # The host LLVM toolchain as a host that needs none: a typed fake whose
+  # one answer short-circuits provisioning, so a run reaches its exec
+  # without probing this machine (the two provisioning tests state the
+  # toolchain's answers as interactions instead).
+  #
+  # @return [T.class_of(Dev::ShadowenvLlvm)]
+  def no_llvm_host
+    llvm = typed_mock(Dev::ShadowenvLlvm, class_of: true)
+    llvm.define_singleton_method(:ci_or_linux?) { true }
+    llvm
   end
 
   def teardown
@@ -45,21 +54,22 @@ class CommandRunnerTest < Minitest::Test
   end
 
   # A containerized runner over a real ProjectContainer whose
-  # engine-injected BuildContainer client is handed back, so tests stub
-  # the client instance (the image step is a registry boundary) and read
-  # what reached the engine off the fake. The container's transport
-  # delivers the tree as the checkout itself, mounted (no git, no forge).
-  # The project is on the lock's pins alone (lock_images). The marker is
-  # the host rule's fact: absent unless a test writes one (`marker:` a
-  # path under the project root). The engine-floor gate passes unless a
-  # test hands in its own check (`resources_check:`) over a sized engine
-  # (`engine:`).
-  def container_runner(engine_hint: nil, engine: FakeContainerEngine.new, resources_check: passing_check,
+  # engine-injected BuildContainer client is handed back, so tests state
+  # the client's answers as interactions (the image step is a registry
+  # boundary) and read what reached the engine off the fake. The
+  # container's transport delivers the tree as the checkout itself,
+  # mounted (no git, no forge). The project is on the lock's pins alone
+  # (lock_images). The marker is the host rule's fact: absent unless a
+  # test writes one (`marker:` a path under the project root). The
+  # engine-floor gate is a real check over hermetic settings; with no hint
+  # (`engine_hint:` nil, the default) it measures nothing, so only tests
+  # about the gate hand in a sized engine (`engine:`).
+  def container_runner(engine_hint: nil, engine: FakeContainerEngine.new, resources_check: real_check,
     inside_container: false, marker: nil, github_token: no_github_token)
     client = Dev::BuildContainer.new(engine:)
     containers = Dev::ProjectContainer.new(project_root: @project_root, client:, engine_hint:, resources_check:, github_token:)
     runner = Dev::Cli::CommandRunner.new(
-      ui: @ui, project_root: @project_root, host_rule: host_rule(marker:, inside_container:), containers:,
+      ui: @ui, project_root: @project_root, host_rule: host_rule(marker:, inside_container:), containers:, llvm: no_llvm_host,
     )
     [runner, client]
   end
@@ -70,12 +80,6 @@ class CommandRunnerTest < Minitest::Test
     ["sh", "-c", shell_command]
   end
 
-  # The container's verdict in exec mode is the process's own: pin the exit
-  # instead of leaving the suite to take it.
-  def expect_exit(status)
-    Kernel.expects(:exit).with(status).once
-  end
-
   # A project command bound against the lock as it stands now — what the
   # composition root hands the runner (PlacementBinder): the runner reads
   # the placement, it never resolves a name. Call it after lock_images.
@@ -84,12 +88,7 @@ class CommandRunnerTest < Minitest::Test
     Dev::Cli::ProjectCommand.new(run:, repl:).with_placement(images.bind(ref, subject: run))
   end
 
-  # A gate that passes whatever it is shown; tests about the gate pass a
-  # real one over hermetic settings.
-  def passing_check
-    typed_mock(Dev::EngineResourcesCheck).tap { |check| check.stubs(:check!) }
-  end
-
+  # The engine-floor gate over settings that never read this machine's.
   def real_check
     Dev::EngineResourcesCheck.new(settings: Dev::Settings.new(
       config_path: (@project_root / "user-config.yml").to_s, system_config_path: (@project_root / "system-config.yml").to_s,
@@ -162,15 +161,14 @@ class CommandRunnerTest < Minitest::Test
   test "a direct run hands its child the inherited env plus dev's lib on RUBYLIB, and clears nothing" do
     Given "a runner over a project, with no RUBYLIB of the suite's own in the way"
     saved_rubylib = ENV.delete("RUBYLIB")
-    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    runner.stubs(:ensure_shadowenv_provisioned!)
-    Kernel.stubs(:exec)
+    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: no_llvm_host)
     cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
 
     Then "the child's env is dev's lib on RUBYLIB and nothing else — no key nil'd"
+    _ * @ui.print_header
     1 * Kernel.exec(
       { "RUBYLIB" => Dev::DEV_LIB_DIR.to_s },
       "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", "./bin/console"
@@ -186,17 +184,16 @@ class CommandRunnerTest < Minitest::Test
   # is the one nested under .shadowenv.d-container/ (ProjectShadowenv), so
   # the direct run points shadowenv there rather than at the project root.
   test "a direct run inside the build container points shadowenv at the container's nested shadowenv" do
-    Given "a runner over a project, this dev inside the container"
-    Dev::ContainerContext.stubs(:inside?).returns(true)
-    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    runner.stubs(:ensure_shadowenv_provisioned!)
-    Kernel.stubs(:exec)
+    Given "a project and a command"
     cmd = command("./bin/console", repl: true)
 
-    When "we run a command"
+    When "a runner built inside the container runs it"
+    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: no_llvm_host)
     runner.exec_into(cmd)
 
     Then
+    _ * Dev::ContainerContext.inside? >> true
+    _ * @ui.print_header
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", (@project_root / ".shadowenv.d-container").to_s, "--", "sh", "-c", "./bin/console")
 
     Cleanup
@@ -206,16 +203,17 @@ class CommandRunnerTest < Minitest::Test
   # --- Toolchain provisioning ---
 
   test "run provisions nothing for the interpreters: Ruby and Python are dependencies dev deps install activated" do
-    Given "a runner whose provisioning step is not stubbed, on a host that needs no LLVM"
-    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    Dev::ShadowenvLlvm.stubs(:ci_or_linux?).returns(true)
-    Kernel.stubs(:exec)
+    Given "a runner over the host LLVM toolchain, on a host that needs no LLVM"
+    llvm = typed_mock(Dev::ShadowenvLlvm, class_of: true)
+    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: llvm)
     cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
 
     Then "no interpreter is resolved, built or activated on the way to the exec"
+    _ * @ui.print_header
+    1 * llvm.ci_or_linux? >> true
     0 * Dev::ShadowenvRuby.activate!(keg: anything, version: anything, project_root: anything)
     0 * Dev::ShadowenvPython.activate!(keg: anything, version: anything, project_root: anything)
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", "./bin/console")
@@ -225,20 +223,22 @@ class CommandRunnerTest < Minitest::Test
   end
 
   test "run provisions the host LLVM when the project needs it" do
-    Given "a runner whose provisioning step is not stubbed, over a project that needs LLVM"
-    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    Dev::ShadowenvLlvm.stubs(:ci_or_linux?).returns(false)
-    Dev::ShadowenvLlvm.stubs(:project_needs_llvm?).with(@project_root).returns(true)
-    Dev::ShadowenvLlvm.stubs(:detect_llvm_prefix).returns("/opt/llvm")
-    Dev::ShadowenvLlvm.stubs(:provisioned?).with("/opt/llvm", project_root: @project_root).returns(false)
-    Kernel.stubs(:exec)
+    Given "a runner over the host LLVM toolchain, over a project that needs LLVM"
+    llvm = typed_mock(Dev::ShadowenvLlvm, class_of: true)
+    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: llvm)
     cmd = command("./bin/console", repl: true)
 
     When "we run a command"
     runner.exec_into(cmd)
 
-    Then "the LLVM shadowenv is set up for the project root"
-    1 * Dev::ShadowenvLlvm.setup!(project_root: @project_root, llvm_prefix: "/opt/llvm")
+    Then "the toolchain is asked, and the LLVM shadowenv is set up for the project root"
+    _ * @ui.print_header
+    _ * Kernel.exec
+    1 * llvm.ci_or_linux? >> false
+    1 * llvm.project_needs_llvm?(@project_root) >> true
+    1 * llvm.detect_llvm_prefix >> "/opt/llvm"
+    1 * llvm.provisioned?("/opt/llvm", project_root: @project_root) >> false
+    1 * llvm.setup!(project_root: @project_root, llvm_prefix: "/opt/llvm")
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -299,6 +299,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.exec_into(cmd)
 
     Then "the shell wrapper includes exit code handling and Done/Failed output"
+    _ * @ui.print_header
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c",
       all_of(includes("./bin/test.sh"), includes("__dev_status=$?"), includes("Done"), includes("Failed")))
 
@@ -331,6 +332,7 @@ class CommandRunnerTest < Minitest::Test
     @runner.run_waiting(cmd)
 
     Then "the command runs as a waited child, never via exec"
+    _ * @ui.print_header
     1 * Kernel.system(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/setup.rb")) >> true
     0 * Kernel.exec(any_parameters)
 
@@ -341,15 +343,17 @@ class CommandRunnerTest < Minitest::Test
   test "run_waiting raises CommandFailedError carrying the child's exit status" do
     Given "a child that exits 7"
     cmd = command("./bin/setup.rb", repl: false)
-    Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real child here to leave the
     # thread-local $? at exit status 7 — what a real failed child would set.
     Process.wait(Process.spawn("sh", "-c", "exit 7"))
 
     When "we run the command waiting"
-    error = assert_raises(Dev::Cli::CommandRunner::CommandFailedError) { @runner.run_waiting(cmd) }
+    @runner.run_waiting(cmd)
 
     Then "the error carries the child's exit status"
+    _ * @ui.print_header
+    _ * Kernel.system >> false
+    error = raises Dev::Cli::CommandRunner::CommandFailedError
     error.exit_status == 7
 
     Cleanup
@@ -359,15 +363,17 @@ class CommandRunnerTest < Minitest::Test
   test "run_waiting raises CommandKilledError carrying the terminating signal" do
     Given "a child killed by SIGTERM"
     cmd = command("./bin/setup.rb", repl: false)
-    Kernel.stubs(:system).returns(false)
     # Kernel.system is stubbed, so wait on a real signal-killed child here to
     # leave the thread-local $? signaled — what a real killed child would set.
     Process.wait(Process.spawn("sh", "-c", "kill -TERM $$"))
 
     When "we run the command waiting"
-    error = assert_raises(Dev::Cli::CommandRunner::CommandKilledError) { @runner.run_waiting(cmd) }
+    @runner.run_waiting(cmd)
 
     Then "the error carries the terminating signal number"
+    _ * @ui.print_header
+    _ * Kernel.system >> false
+    error = raises Dev::Cli::CommandRunner::CommandKilledError
     error.signal == Signal.list.fetch("TERM")
 
     Cleanup
@@ -377,13 +383,13 @@ class CommandRunnerTest < Minitest::Test
   test "run_waiting raises CommandSpawnError when the child never started" do
     Given "a child that cannot be spawned"
     cmd = command("./bin/setup.rb", repl: false)
-    # Kernel.system returns nil (not false) when the child never started.
-    Kernel.stubs(:system).returns(nil)
 
     When "we run the command waiting"
     @runner.run_waiting(cmd)
 
-    Then
+    Then "Kernel.system answers nil (not false) when the child never started"
+    _ * @ui.print_header
+    _ * Kernel.system >> nil
     raises Dev::Cli::CommandRunner::CommandSpawnError
 
     Cleanup
@@ -398,12 +404,13 @@ class CommandRunnerTest < Minitest::Test
     cmd = command("./bin/up.sh", repl: false)
 
     When "the image resolves and we run the command waiting"
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command)
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/up.sh"))
     runner.run_waiting(cmd)
 
     Then "the engine ran it as a waited child; nothing exec'd, nothing exited"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/up.sh")
     engine.runs.last == ["run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/up.sh"]
     0 * Kernel.exec(any_parameters)
     0 * Kernel.exit(any_parameters)
@@ -417,13 +424,16 @@ class CommandRunnerTest < Minitest::Test
     lock_images("myapp-linux")
     engine = FakeContainerEngine.new(&->(args) { args.fetch(0) == "run" ? 5 : true })
     runner, client = container_runner(engine:)
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command).returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/up.sh"))
 
     When
-    error = assert_raises(Dev::Cli::CommandRunner::CommandFailedError) { runner.run_waiting(command("./bin/up.sh", repl: false)) }
+    runner.run_waiting(command("./bin/up.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/up.sh")
+    error = raises Dev::Cli::CommandRunner::CommandFailedError
     error.exit_status == 5
 
     Cleanup
@@ -445,18 +455,18 @@ class CommandRunnerTest < Minitest::Test
     engine = FakeContainerEngine.new
     runner, client = container_runner(engine:)
     cmd = command("./bin/build.sh", repl: false)
-    client.expects(:ensure_environment_image!).once
-      .with { |image, publish:| image.name == "myapp-linux" && !publish }
-      .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {})
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
 
     When
     runner.exec_into(cmd)
 
     Then "the engine ran the invocation in the checkout, and the status was exited with"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image!(responds_with(:name, "myapp-linux"), publish: false) >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {}) >>
+      invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
     engine.runs.last == ["run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"]
     0 * Kernel.exec(any_parameters)
 
@@ -465,20 +475,20 @@ class CommandRunnerTest < Minitest::Test
   end
 
   test "the command's args ride the shell command the container runs" do
-    Given "a lock pinning one image and a client whose argv is captured"
+    Given "a lock pinning one image"
     lock_images("myapp-linux")
     runner, client = container_runner
-    handed = nil
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command).with { |_tag, argv:, **| handed = argv }
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "x"))
-    Kernel.stubs(:exit)
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false), args: ["--fast"])
 
-    Then
-    handed == ["sh", "-c", "./bin/build.sh --fast"]
+    Then "the argv handed to the client is sh -c and the command with its args"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command(anything, has_entries(argv: runs_inside("./bin/build.sh --fast"))) >>
+      invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "x")
+    raises SystemExit
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -489,14 +499,17 @@ class CommandRunnerTest < Minitest::Test
     lock_images("myapp-linux")
     engine = FakeContainerEngine.new(&->(args) { args.fetch(0) == "run" ? 9 : true })
     runner, client = container_runner(engine:)
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command).returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
-    expect_exit(9)
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 9
     0 * Kernel.exec(any_parameters)
 
     Cleanup
@@ -514,16 +527,17 @@ class CommandRunnerTest < Minitest::Test
     Given "a lock pinning one image, a 12/24 engine, and a hint it meets"
     lock_images("myapp-linux")
     engine = engine_sized(cpus: 12, memory_gib: 24)
-    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16),
-      resources_check: real_check)
-    client.stubs(:docker_run_command)
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 16))
 
     When "the command runs"
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then "one docker info, then the image's inspect, then the run — nothing measured twice"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
     engine.captures == [DOCKER_INFO]
     engine.runs.map(&:first) == ["image", "run"]
 
@@ -536,15 +550,15 @@ class CommandRunnerTest < Minitest::Test
     saved_mode = ENV.delete("DEV_ENGINE_RESOURCES")
     lock_images("myapp-linux")
     engine = engine_sized(cpus: 4, memory_gib: 8)
-    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24),
-      resources_check: real_check)
-    client.expects(:docker_run_command).never
-    Kernel.expects(:exit).never
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12, memory_gib: 24))
 
     When "the command runs"
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then "the gate's verdict is the run's verdict, and the image was never inspected, pulled or built"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    0 * client.docker_run_command
     error = raises Dev::EngineResourcesCheck::UndersizedEngineError
     error.message.include?("4 cpus / 8 GiB")
     error.message.include?("12 cpus / 24 GiB")
@@ -560,15 +574,17 @@ class CommandRunnerTest < Minitest::Test
     Given "a lock pinning one image and no hint"
     lock_images("myapp-linux")
     engine = FakeContainerEngine.new(kind: :docker, capture_result: ->(_args) { raise "docker info was called" })
-    runner, client = container_runner(engine:, engine_hint: nil, resources_check: real_check)
-    client.stubs(:docker_run_command)
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
+    runner, client = container_runner(engine:, engine_hint: nil)
 
     When "the command runs"
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
     engine.captures.empty?
     engine.runs.last == ["run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"]
 
@@ -580,13 +596,14 @@ class CommandRunnerTest < Minitest::Test
     Given "two pinned images, a floor, and a command placed on the host"
     lock_images("snappy-linux", "snappy-server")
     engine = FakeContainerEngine.new(kind: :docker, capture_result: ->(_args) { raise "docker info was called" })
-    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12), resources_check: real_check)
-    client.expects(:ensure_environment_image!).never
+    runner, client = container_runner(engine:, engine_hint: Dev::EngineResources::Hint.new(cpus: 12))
 
     When
     runner.exec_into(command("./bin/editor.sh", repl: false, environment: "host"))
 
     Then
+    _ * @ui.print_header
+    0 * client.ensure_environment_image!
     engine.captures.empty?
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/editor.sh"))
 
@@ -601,22 +618,20 @@ class CommandRunnerTest < Minitest::Test
     engine = FakeContainerEngine.new
     runner, client = container_runner(engine:)
     cmd = command("./bin/test-server.sh", repl: false, environment: "snappy-server")
-    client.expects(:ensure_environment_image!).once
-      .with { |image, **| image.name == "snappy-server" }
-      .returns("ghcr.io/d3mlabs/snappy-server:deadbeef")
-    client.expects(:ensure_service!)
-      .with("ghcr.io/d3mlabs/snappy-server:deadbeef", project_root: @project_root, volumes: ["/e:/ue"])
-      .returns("dev-snappy-server-deadbeef")
-    client.expects(:docker_exec_command)
-      .with("dev-snappy-server-deadbeef", project_root: @project_root, argv: runs_inside("./bin/test-server.sh"), env: { "WWISE_TOKEN" => "tok-123" })
-      .returns(invocation("exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"))
-    client.expects(:docker_run_command).never
-    expect_exit(0)
 
     When
     runner.exec_into(cmd)
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image!(responds_with(:name, "snappy-server"), anything) >> "ghcr.io/d3mlabs/snappy-server:deadbeef"
+    1 * client.ensure_service!("ghcr.io/d3mlabs/snappy-server:deadbeef", project_root: @project_root, volumes: ["/e:/ue"]) >> "dev-snappy-server-deadbeef"
+    1 * client.docker_exec_command("dev-snappy-server-deadbeef", project_root: @project_root, argv: runs_inside("./bin/test-server.sh"), env: { "WWISE_TOKEN" => "tok-123" }) >>
+      invocation("exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh")
+    0 * client.docker_run_command
+    exit = raises SystemExit
+    exit.status == 0
     engine.runs.last == ["exec", "dev-snappy-server-deadbeef", "sh", "-c", "./bin/test-server.sh"]
 
     Cleanup
@@ -628,14 +643,14 @@ class CommandRunnerTest < Minitest::Test
     Given "two pinned images and a command placed on the host"
     lock_images("snappy-linux", "snappy-server")
     runner, client = container_runner
-    runner.stubs(:ensure_shadowenv_provisioned!)
     cmd = command("./bin/editor.sh", repl: false, environment: "host")
-    client.expects(:ensure_environment_image!).never
 
     When
     runner.exec_into(cmd)
 
     Then
+    _ * @ui.print_header
+    0 * client.ensure_environment_image!
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/editor.sh"))
 
     Cleanup
@@ -646,13 +661,14 @@ class CommandRunnerTest < Minitest::Test
     Given "a pinned image and a command straight from the parser"
     lock_images("snappy-linux")
     runner, client = container_runner
-    client.expects(:ensure_environment_image!).never
-    Kernel.expects(:exec).never
 
     When
     runner.exec_into(Dev::Cli::ProjectCommand.new(run: "./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    0 * client.ensure_environment_image!
+    0 * Kernel.exec
     error = raises(Dev::Cli::ProjectCommand::UnboundPlacementError)
     error.message.include?("dev deps update")
 
@@ -665,18 +681,20 @@ class CommandRunnerTest < Minitest::Test
     lock_images("snappy-linux", "snappy-server")
     server = images.named("snappy-server")
     runner, client = container_runner(marker: provisioned_from(server))
-    runner.stubs(:ensure_llvm_provisioned!)
-    client.stubs(:ensure_environment_image!).returns("ref-linux")
-    client.stubs(:docker_run_command).returns(invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
-    Kernel.stubs(:exec)
-    Kernel.stubs(:exit)
 
+    # The container run goes last: it exits the process (SystemExit), where
+    # the native and host runs exec and return under the stub.
     When
-    runner.exec_into(command("./bin/build.sh", environment: "snappy-linux"))
     runner.exec_into(command("./bin/server.sh", environment: "snappy-server"))
     runner.exec_into(command("./bin/editor.sh", environment: "host"))
+    runner.exec_into(command("./bin/build.sh", environment: "snappy-linux"))
 
     Then "the crossing into snappy-linux's container is the one line"
+    _ * @ui.print_header
+    _ * client.ensure_environment_image! >> "ref-linux"
+    _ * client.docker_run_command >> invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+    _ * Kernel.exec
+    raises SystemExit
     1 * @ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: "the checkout, mounted")
     0 * @ui.print_remote_crossing(destination: includes("snappy-server"), workspace: anything)
     0 * @ui.print_remote_crossing(destination: includes("host"), workspace: anything)
@@ -692,17 +710,19 @@ class CommandRunnerTest < Minitest::Test
     server = pins.find { |image| image.name == "snappy-server" }
     engine = FakeContainerEngine.new
     runner, client = container_runner(engine:, marker: provisioned_from(server))
-    runner.stubs(:ensure_llvm_provisioned!)
-    client.expects(:ensure_environment_image!).once.with { |image, **| image.name == "snappy-linux" }.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
 
     When "one command runs on each"
     runner.exec_into(command("./bin/server.sh", repl: false, environment: "snappy-server"))
     runner.exec_into(command("./bin/build.sh", repl: false, environment: "snappy-linux"))
 
     Then "the server command execs under the host's shadowenv; the linux one in the engine, though the host is its platform too"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image!(responds_with(:name, "snappy-linux"), anything) >> "ref-linux"
+    1 * client.docker_run_command >> invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/server.sh"))
+    exit = raises SystemExit
+    exit.status == 0
     engine.runs == [["run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"]]
 
     Cleanup
@@ -714,14 +734,17 @@ class CommandRunnerTest < Minitest::Test
     lock_images("snappy-linux")
     engine = FakeContainerEngine.new
     runner, client = container_runner(engine:)
-    client.expects(:ensure_environment_image!).once.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image! >> "ref-linux"
+    1 * client.docker_run_command >> invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
     engine.runs == [["run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"]]
 
     Cleanup
@@ -738,14 +761,17 @@ class CommandRunnerTest < Minitest::Test
     )
     engine = FakeContainerEngine.new
     runner, client = container_runner(engine:, marker: provisioned_from(older))
-    client.expects(:ensure_environment_image!).once.returns("ref-linux")
-    client.expects(:docker_run_command).once.returns(invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"))
-    expect_exit(0)
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image! >> "ref-linux"
+    1 * client.docker_run_command >> invocation("run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
     engine.runs == [["run", "--rm", "ref-linux", "sh", "-c", "./bin/build.sh"]]
 
     Cleanup
@@ -756,12 +782,13 @@ class CommandRunnerTest < Minitest::Test
     Given
     lock_images("snappy-linux")
     runner, client = container_runner(inside_container: true, marker: provisioned_from(images.pinned.first))
-    client.expects(:docker_run_command).never
 
     When
     runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    0 * client.docker_run_command
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
@@ -777,15 +804,15 @@ class CommandRunnerTest < Minitest::Test
       apt: ["libnss3"], registry: current.registry,
     )
     runner, client = container_runner(inside_container: true, marker: provisioned_from(older))
-    client.expects(:docker_run_command).never
-    Kernel.expects(:exec).never
 
     When
-    error = assert_raises(Dev::Cli::HostRule::ContainerDriftError) do
-      runner.exec_into(command("./bin/build.sh", repl: false))
-    end
+    runner.exec_into(command("./bin/build.sh", repl: false))
 
     Then
+    _ * @ui.print_header
+    0 * client.docker_run_command
+    0 * Kernel.exec
+    error = raises Dev::Cli::HostRule::ContainerDriftError
     error.message.include?("this container is snappy-linux@#{older.short_digest}")
     error.message.include?("the lock's snappy-linux is snappy-linux@#{current.short_digest}")
     error.message.include?("dev container reset && dev up")
@@ -803,6 +830,7 @@ class CommandRunnerTest < Minitest::Test
     runner.exec_into(cmd)
 
     Then "the argv is shadowenv exec, sh -c and the command alone; llvm is the image's concern"
+    _ * @ui.print_header
     0 * Dev::ShadowenvLlvm.setup!(project_root: anything, llvm_prefix: anything)
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", "./bin/console")
 
@@ -812,14 +840,14 @@ class CommandRunnerTest < Minitest::Test
 
   test "run falls back to local execution when the lock pins no image" do
     Given "a runner over a project pinning no image"
-    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root)
-    runner.stubs(:ensure_shadowenv_provisioned!)
+    runner = Dev::Cli::CommandRunner.new(ui: @ui, project_root: @project_root, llvm: no_llvm_host)
     cmd = command("./bin/build.sh", repl: false)
 
     When "we run the command"
     runner.exec_into(cmd)
 
     Then "exec uses shadowenv"
+    _ * @ui.print_header
     1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @project_root.to_s, "--", "sh", "-c", includes("./bin/build.sh"))
 
     Cleanup
@@ -831,17 +859,17 @@ class CommandRunnerTest < Minitest::Test
     lock_images("myapp-linux")
     runner, client = container_runner
     cmd = command("./bin/test.sh", repl: false)
-    Kernel.stubs(:exit)
 
-    When "the client returns an invocation and we run with args"
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/test.sh --verbose"), volumes: [], env: {})
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/test.sh --verbose"))
+    When "we run with args"
     runner.exec_into(cmd, args: ["--verbose"])
 
-    Then "the header names the args too"
+    Then "the header names the args too, and the client is handed the command with them"
     1 * @ui.print_header("./bin/test.sh --verbose")
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/test.sh --verbose"), volumes: [], env: {}) >>
+      invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/test.sh --verbose")
+    raises SystemExit
 
     Cleanup
     Dir.chdir(@original_cwd)
@@ -854,16 +882,17 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner(engine:)
     cmd = command("./bin/build.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
-    Kernel.stubs(:exit)
 
-    When "the image is ready and the command runs"
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: { "WWISE_TOKEN" => "tok-123" })
-      .returns(invocation("run", "--rm", "-e", "WWISE_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh", env: { "WWISE_TOKEN" => "tok-123" }))
+    When "the command runs"
     runner.exec_into(cmd)
 
     Then "the argv names the variable; its value reaches the engine through the spawn env, never argv (dev#317)"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: { "WWISE_TOKEN" => "tok-123" }) >>
+      invocation("run", "--rm", "-e", "WWISE_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh", env: { "WWISE_TOKEN" => "tok-123" })
+    raises SystemExit
     engine.runs.last == ["run", "--rm", "-e", "WWISE_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"]
     engine.run_envs.last == { "WWISE_TOKEN" => "tok-123" }
 
@@ -878,17 +907,17 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner
     cmd = command("./bin/build.sh", repl: false)
     ENV["DEV_PUBLISH_IMAGE"] = "1"
-    Kernel.stubs(:exit)
 
     When "the command runs"
-    client.expects(:ensure_environment_image!)
-      .with { |image, publish:| image.name == "myapp-linux" && publish }
-      .returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.stubs(:docker_run_command).returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "ensure_environment_image! is asked to publish the resolved image"
-    1 * Kernel.exit(0)
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    1 * client.ensure_environment_image!(responds_with(:name, "myapp-linux"), publish: true) >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    _ * client.docker_run_command >> invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
 
     Cleanup
     ENV.delete("DEV_PUBLISH_IMAGE")
@@ -902,18 +931,19 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner(engine:, github_token: host_github_token("gho_host"))
     cmd = command("./bin/ue/starter/publish.sh", repl: false)
     ENV["WWISE_TOKEN"] = "tok-123"
-    Kernel.stubs(:exit)
 
     When "the command runs"
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/ue/starter/publish.sh"),
-        volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
-      .returns(invocation("run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/ue/starter/publish.sh",
-        env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }))
     runner.exec_into(cmd)
 
     Then "the run names both on argv; both values ride the spawn env, the token on no argv (dev#317)"
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/ue/starter/publish.sh"),
+      volumes: [], env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }) >>
+      invocation("run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/ue/starter/publish.sh",
+        env: { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" })
+    raises SystemExit
     engine.runs.last == ["run", "--rm", "-e", "WWISE_TOKEN", "-e", "GH_TOKEN", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/ue/starter/publish.sh"]
     engine.run_envs.last == { "WWISE_TOKEN" => "tok-123", "GH_TOKEN" => "gho_host" }
 
@@ -928,18 +958,19 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner(github_token: host_github_token("gho_host"))
     cmd = command("./bin/build.sh", repl: false)
     ENV["GH_TOKEN"] = "gho_mine"
-    Kernel.stubs(:exit)
 
     When "the command runs"
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"),
-        volumes: [], env: { "GH_TOKEN" => "gho_mine" })
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
     Then "the run_env's token is the one injected"
-    1 * Kernel.exit(0)
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"),
+      volumes: [], env: { "GH_TOKEN" => "gho_mine" }) >>
+      invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
 
     Cleanup
     ENV.delete("GH_TOKEN")
@@ -952,18 +983,19 @@ class CommandRunnerTest < Minitest::Test
     runner, client = container_runner
     cmd = command("./bin/build.sh", repl: false)
     ENV.delete("WWISE_TOKEN")
-    Kernel.stubs(:exit)
 
     When "the credential is not stored and the command runs"
-    Dev::Credentials.stubs(:load).with("wwise", "token").returns(nil)
-    client.stubs(:ensure_environment_image!).returns("ghcr.io/d3mlabs/myapp-linux:deadbeef")
-    client.expects(:docker_run_command)
-      .with("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {})
-      .returns(invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh"))
     runner.exec_into(cmd)
 
-    Then "no env is injected and the command still runs"
-    1 * Kernel.exit(0)
+    Then "the store is asked once and has nothing; no env is injected and the command still runs"
+    1 * Dev::Credentials.load("wwise", "token") >> nil
+    _ * @ui.print_header
+    _ * @ui.print_remote_crossing
+    _ * client.ensure_environment_image! >> "ghcr.io/d3mlabs/myapp-linux:deadbeef"
+    1 * client.docker_run_command("ghcr.io/d3mlabs/myapp-linux:deadbeef", project_root: @project_root, argv: runs_inside("./bin/build.sh"), volumes: [], env: {}) >>
+      invocation("run", "--rm", "ghcr.io/d3mlabs/myapp-linux:deadbeef", "sh", "-c", "./bin/build.sh")
+    exit = raises SystemExit
+    exit.status == 0
 
     Cleanup
     Dir.chdir(@original_cwd)

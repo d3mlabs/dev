@@ -10,7 +10,7 @@ require "support/recording_ui"
 require "tmpdir"
 
 # The `skills` verbs share one shape (a per-call accessor factory fed the
-# context's ui, one verb call), so one Where-driven file covers them;
+# context's ui, one verb call), so one file covers them;
 # `status --json` alone keeps an `out:` — its document is a payload, not
 # the Ui's.
 transform!(RSpock::AST::Transformation)
@@ -38,27 +38,40 @@ class Dev::Cli::Builtins::SkillsCommandsTest < Minitest::Test
     LEAVES[1] | 0
   end
 
-  test "#{klass} builds the accessor per call over the context's ui and forwards to #{verb}" do
-    Given "an expecting accessor behind a factory recording the ui it was handed"
+  test "sync builds the accessor per call over the context's ui and forwards to sync" do
+    Given "an accessor behind a factory recording the ui it was handed"
     ui = RecordingUi.new
     accessor = typed_mock(Dev::Skills::Accessor)
-    accessor.expects(verb).with.once
     factory_uis = []
-    command = klass.new(accessor_factory: lambda { |factory_ui|
+    command = LEAVES[0].new(accessor_factory: lambda { |factory_ui|
       factory_uis << factory_ui
       accessor
     })
 
     When "calling the leaf in a projectless context"
-    command.call(args: parsed_args(command, command_args), context: build_context(ui))
+    command.call(args: parsed_args(command, []), context: build_context(ui))
 
-    Then "the factory was consulted once, with the context's ui"
+    Then "the factory was consulted once, with the context's ui, and the verb forwarded"
+    1 * accessor.sync
     factory_uis == [ui]
+  end
 
-    Where
-    klass     | verb    | command_args
-    LEAVES[0] | :sync   | []
-    LEAVES[1] | :status | []
+  test "status builds the accessor per call over the context's ui and forwards to status" do
+    Given "an accessor behind a factory recording the ui it was handed"
+    ui = RecordingUi.new
+    accessor = typed_mock(Dev::Skills::Accessor)
+    factory_uis = []
+    command = LEAVES[1].new(accessor_factory: lambda { |factory_ui|
+      factory_uis << factory_ui
+      accessor
+    })
+
+    When "calling the leaf in a projectless context"
+    command.call(args: parsed_args(command, []), context: build_context(ui))
+
+    Then "the factory was consulted once, with the context's ui, and the verb forwarded"
+    1 * accessor.status
+    factory_uis == [ui]
   end
 
   test "status --json hands the accessor its own out — the document is a payload, never the Ui's" do
@@ -66,13 +79,13 @@ class Dev::Cli::Builtins::SkillsCommandsTest < Minitest::Test
     out = StringIO.new
     ui = RecordingUi.new
     accessor = typed_mock(Dev::Skills::Accessor)
-    accessor.expects(:status_json).with(out: out).once
     command = LEAVES[1].new(accessor_factory: ->(_ui) { accessor }, out: out)
 
     When "calling the leaf with --json"
     command.call(args: parsed_args(command, ["--json"]), context: build_context(ui))
 
-    Then "nothing reached the seam"
+    Then "the document went to the leaf's out and nothing reached the seam"
+    1 * accessor.status_json(out: out)
     ui.rows == []
   end
 

@@ -404,7 +404,6 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
         metadata: { "repo" => "https://example.com/bad_repo" },
       ),
     ]
-    integration.stubs(:system).returns(false)
 
     When "installing all"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -412,6 +411,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     end
 
     Then "the per-dep failure is the clone error"
+    _ * integration.system >> false
     error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::GitCloneError)
 
     Cleanup
@@ -431,12 +431,6 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
         metadata: { "repo" => "https://example.com/bad_checkout" },
       ),
     ]
-    integration.stubs(:system)
-               .with("git", "clone", "--no-checkout", "-q", anything, anything)
-               .returns(true)
-    integration.stubs(:system)
-               .with("git", "-c", "advice.detachedHead=false", "checkout", anything, chdir: anything)
-               .returns(false)
 
     When "installing all"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -444,6 +438,8 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     end
 
     Then "the per-dep failure is the checkout error"
+    _ * integration.system("git", "clone", "--no-checkout", "-q", anything, anything) >> true
+    _ * integration.system("git", "-c", "advice.detachedHead=false", "checkout", anything, chdir: anything) >> false
     error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::GitCheckoutError)
 
     Cleanup
@@ -463,9 +459,6 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
         metadata: { "url" => "https://example.com/missing.tar.gz" },
       ),
     ]
-    integration.stubs(:system)
-               .with("curl", "-fsSL", "-o", anything, anything)
-               .returns(false)
 
     When "installing all"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
@@ -473,6 +466,7 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
     end
 
     Then "the per-dep failure is the download error"
+    _ * integration.system("curl", "-fsSL", "-o", anything, anything) >> false
     error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::DownloadError)
 
     Cleanup
@@ -492,16 +486,15 @@ class Dev::Deps::CmakeIntegrationTest < Minitest::Test
         metadata: { "url" => "https://example.com/bad.tar.gz" },
       ),
     ]
-    # curl succeeds but tar fails
-    integration.stubs(:system).with { |cmd, *_| cmd == "curl" }.returns(true)
-    integration.stubs(:system).with { |cmd, *_| cmd == "tar" }.returns(false)
 
     When "installing all"
     error = assert_raises(Dev::Deps::Integration::PartialInstallError) do
       integration.install_all(deps)
     end
 
-    Then "the per-dep failure is the extract error"
+    Then "curl succeeds but tar fails: the per-dep failure is the extract error"
+    _ * integration.system("curl", any_parameters) >> true
+    _ * integration.system("tar", any_parameters) >> false
     error.failures[0][1].is_a?(Dev::Deps::CmakeIntegration::ExtractError)
 
     Cleanup

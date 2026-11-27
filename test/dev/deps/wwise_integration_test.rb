@@ -107,14 +107,14 @@ class Dev::Deps::WwiseIntegrationTest < Minitest::Test
     Given "an integration over a terminal that pastes, nothing stored and nothing in the env"
     dir = Dir.mktmpdir("dev-wwise-int-test-")
     ENV["XDG_CONFIG_HOME"] = dir
-    Dev::Credentials.stubs(:keychain_available?).returns(false)
     ui = AnsweringUi.new(secret: "pasted")
     integration = Dev::Deps::WwiseIntegration.new(repository: nil, store: Dev::Deps::LocalStore.new(data_root: dir), ui: ui)
 
     When "resolving the credentials"
     env = integration.send(:credentials_env)
 
-    Then "both were asked for at this Ui, in order, and are the environment the CLI gets"
+    Then "both were asked for at this Ui, in order, and are the environment the CLI gets — the chain on its file backend, whatever this host has"
+    _ * Dev::Credentials.keychain_available? >> false
     ui.secrets_asked == ["Paste your Wwise account email (the Audiokinetic login)", "Paste your Wwise account password"]
     env == { "WWISE_EMAIL" => "pasted", "WWISE_PASSWORD" => "pasted" }
 

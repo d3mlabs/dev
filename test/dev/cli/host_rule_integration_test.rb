@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev"
 require "dev/build_container"
-require "dev/container_engine"
 require "dev/container_github_token"
 require "dev/deps"
 require "dev/deps/dependency"
@@ -12,10 +11,8 @@ require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/host_environment"
 require "dev/cli/host_rule"
-require "dev/platform"
 require "dev/project_container"
 require "dev/cli/runner"
-require "dev/shadowenv_llvm"
 require "support/fake_container_engine"
 require "support/scripted_remote"
 require "fileutils"
@@ -43,16 +40,16 @@ class HostRuleIntegrationTest < Minitest::Test
     @data_root = Dir.mktmpdir("host-rule-data-root")
     @original_data_root = ENV.fetch("DEV_DATA_ROOT", nil)
     ENV["DEV_DATA_ROOT"] = @data_root
-    Dev.stubs(:target_project_root).returns(@root)
-    Dev::Deps.stubs(:detect_env).returns("dev")
-    Dev::Platform.stubs(:current).returns("linux-x86_64")
-    # The composition root builds every builtin on its platform defaults
-    # (`for_host`): a Linux host, pinned, with DEV_DATA_ROOT set above, so
-    # they answer the same on every machine.
-    @host_probes = pin_host_platform(os: "linux")
+    # A workstation: the fixture is never `dev up`'d, and in CI the
+    # staleness guard would refuse the command.
+    @original_ci = ENV.fetch("CI", nil)
+    ENV.delete("CI")
+    # The composition root builds `up` on its platform default
+    # (`LinuxDataRootProvisioner.for_host`), which on the Linux host below
+    # reads the process env — DEV_DATA_ROOT, set above — so it answers
+    # nil on every machine.
+    @host_probes = allow_host_probes
     @engine = FakeContainerEngine.new(&method(:docker_succeeds?))
-    Dev::ContainerEngine.stubs(:resolve).returns(@engine)
-    Dev::ShadowenvLlvm.stubs(:project_needs_llvm?).returns(false)
     @stderr = StringIO.new
     @original_stderr = $stderr
     $stderr = @stderr
@@ -62,6 +59,7 @@ class HostRuleIntegrationTest < Minitest::Test
     restore_host_probe_guard(@host_probes)
     $stderr = @original_stderr
     @original_data_root.nil? ? ENV.delete("DEV_DATA_ROOT") : ENV["DEV_DATA_ROOT"] = @original_data_root
+    ENV["CI"] = @original_ci if @original_ci
     Dir.chdir(@original_cwd)
     FileUtils.rm_rf([@root, @data_root])
     super
@@ -71,15 +69,12 @@ class HostRuleIntegrationTest < Minitest::Test
     Given "the marker is the lock's pin"
     image = lock
     @marker.write(image.marker)
-    execs = record_execs
 
     When
     exec!(runner, ["build"])
 
     Then
-    execs.size == 1
-    execs[0].first(7) == ["shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c"]
-    execs[0].last.include?("./bin/build.sh")
+    1 * Kernel.exec(anything, "shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c", includes("./bin/build.sh"))
     @engine.runs.empty?
   end
 
@@ -87,14 +82,13 @@ class HostRuleIntegrationTest < Minitest::Test
     Given "no marker"
     image = lock
     checkout = Dev::BuildContainer.workspace_path(@root)
-    execs = record_execs
-    Kernel.expects(:exit).with(0).once
 
     When
-    exec!(runner, ["build"])
+    status = exec!(runner, ["build"])
 
-    Then "one docker run of the lock's image through the engine; the data root and the checkout are the bind mounts; the checkout the workdir; DEV_DATA_ROOT named on argv, valued in the spawn env; the command last"
-    execs.empty?
+    Then "one docker run of the lock's image through the engine, the process exiting with its status; the data root and the checkout are the bind mounts; the checkout the workdir; DEV_DATA_ROOT named on argv, valued in the spawn env; the command last"
+    0 * Kernel.exec
+    status == 0
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
     run.include?(image.ref)
@@ -109,14 +103,13 @@ class HostRuleIntegrationTest < Minitest::Test
     Given
     image = lock
     @marker.write(older_recipe_of(image).marker)
-    execs = record_execs
-    Kernel.stubs(:exit)
 
     When
-    exec!(runner, ["build"])
+    status = exec!(runner, ["build"])
 
     Then
-    execs.empty?
+    0 * Kernel.exec
+    status == 0
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
     run.include?(image.ref)
@@ -126,14 +119,14 @@ class HostRuleIntegrationTest < Minitest::Test
     Given
     image = lock
     @marker.write(older_recipe_of(image).marker)
-    Dev::ContainerContext.stubs(:inside?).returns(true)
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
 
     When
-    runner.run(["build"])
+    runner(inside_container: true).run(["build"])
 
     Then
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.include?("dev: this container is snappy-linux@#{older_recipe_of(image).short_digest}")
     @stderr.string.include?("re-create it from the host: `dev container reset && dev up`")
   end
@@ -141,14 +134,12 @@ class HostRuleIntegrationTest < Minitest::Test
   test "environment: host is the host whatever the marker says" do
     Given
     lock
-    execs = record_execs
 
     When
     exec!(runner, ["editor"])
 
     Then
-    execs.size == 1
-    execs[0].first(7) == ["shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c"]
+    1 * Kernel.exec(anything, "shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c", includes("./bin/editor.sh"))
   end
 
   private
@@ -163,27 +154,30 @@ class HostRuleIntegrationTest < Minitest::Test
     argv.each_cons(2).select { |flag, _| flag == "-v" }.map(&:last).select { |spec| spec.start_with?("/") }
   end
 
+  # Run a command to its end and answer its exit status. A container-placed
+  # run exits with the container's status; a host run's exec is faked and
+  # "returns", which the executor's never-returns contract reports — both
+  # expected here, and the host run has no status to answer.
   def exec!(runner, argv)
     runner.run(argv)
+    nil
   rescue Dev::Cli::ProjectExecutor::ExecReturnedError
     nil
+  rescue SystemExit => e
+    e.status
   end
 
-  def record_execs
-    execs = []
-    Kernel.stubs(:exec).with { |_env, *argv| execs << argv }
-    execs
-  end
-
-  def runner
+  # A Runner over a dev.yml written into the fixture root, composed for a
+  # Linux host whose marker is the fixture's.
+  def runner(inside_container: false)
     (@root / "dev.yml").write(YAML.dump({ "name" => "snappy", "commands" => COMMANDS }))
-    ui = typed_mock(Dev::Ui)
-    ui.stubs(:print_header)
-    ui.stubs(:print_remote_crossing)
     host_rule = Dev::Cli::HostRule.new(
-      host_environment: Dev::HostEnvironment.new(path: @marker.to_s),
+      host_environment: Dev::HostEnvironment.new(path: @marker.to_s), inside_container:,
     )
-    Dev::Cli::Runner.new(dev_yaml_path: @root / "dev.yml", ui: ui, out: StringIO.new, host_rule: host_rule, hosts_factory: method(:remote_hosts).to_proc)
+    Dev::Cli::Runner.new(
+      dev_yaml_path: @root / "dev.yml", ui: Dev::NoUi.new(out: StringIO.new), out: StringIO.new, host_rule: host_rule, host_os: "linux",
+      hosts_factory: method(:remote_hosts).to_proc,
+    )
   end
 
   # The project's container over the fake engine (a host whose gh holds no
@@ -191,7 +185,7 @@ class HostRuleIntegrationTest < Minitest::Test
   def remote_hosts(project)
     Dev::Cli::Runner::RemoteHosts.new(
       containers: Dev::ProjectContainer.new(
-        project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine),
+        project_root: project.root, engine_hint: project.engine, client: Dev::BuildContainer.new(engine: @engine, host_os: "linux"),
         github_token: Dev::ContainerGithubToken.new(source: -> { nil }),
       ),
       sync_for: ->(_root) { ScriptedRemote::CannedSync.new },

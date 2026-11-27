@@ -550,15 +550,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
       repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
     )
     archive_path = Pathname(File.join(dir, "source.tar.gz"))
-    integration.expects(:system)
-               .with("gh", "api", "repos/nlohmann/json/tarball/#{sha}", out: archive_path.to_s)
-               .returns(true)
 
     When "fetching"
     integration.send(:download_source, dep, archive_path)
 
     Then "the tarball endpoint resolves the commit; no release is consulted"
-    true
+    1 * Kernel.system("gh", "api", "repos/nlohmann/json/tarball/#{sha}", out: archive_path.to_s) >> true
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -572,12 +569,12 @@ class Dev::Deps::GhIntegrationTest < Minitest::Test
     integration = Dev::Deps::GhIntegration.new(
       repository: Dev::Deps::GhRepository.new, store: Dev::Deps::LocalStore.new(data_root: dir),
     )
-    integration.stubs(:system).returns(false)
 
     When "fetching"
     integration.send(:download_source, dep, Pathname(File.join(dir, "source.tar.gz")))
 
     Then
+    1 * Kernel.system("gh", "api", "repos/nlohmann/json/tarball/#{sha}", out: anything) >> false
     raises Dev::Deps::GhIntegration::DownloadError
 
     Cleanup

@@ -11,6 +11,8 @@ require "stringio"
 
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GemSkillsTest < Minitest::Test
+  include SorbetHelper
+
   LOCKFILE = <<~LOCK
     GEM
       remote: https://rubygems.org/
@@ -51,15 +53,21 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
 
   # `bundle list` runs through the ShadowenvExec seam — the project's
   # provisioned Ruby, dev's own gem env scrubbed — so the channel's bundler
-  # boundary is the seam, stubbed to answer with the given gem paths.
+  # boundary is the seam, a double each test primes with the gem paths.
   #
   # @return [Dev::Deps::ShadowenvExec] the seam to hand to the channel
-  def stub_bundle_list(project, paths)
-    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: project)
-    shadowenv_exec.stubs(:capture3)
-                  .with("bundle", "list", "--paths", env: { "BUNDLE_GEMFILE" => (project / "Gemfile").to_s })
-                  .returns([paths.map { |p| "#{p}\n" }.join, "", stub(success?: true)])
-    shadowenv_exec
+  def bundle_lister
+    typed_mock(Dev::Deps::ShadowenvExec)
+  end
+
+  # The env the channel layers on `bundle list`: only the generated Gemfile's pin.
+  def gemfile_env(project)
+    { "BUNDLE_GEMFILE" => (project / "Gemfile").to_s }
+  end
+
+  # What `bundle list --paths` answers for the given gem roots.
+  def bundle_list(paths)
+    [paths.map { |path| "#{path}\n" }.join, "", exit_status(0)]
   end
 
   def build_channel(project, shadowenv_exec)
@@ -80,12 +88,14 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     project, gems = build_project(dir)
     rspock = build_gem(gems, "rspock-1.2.0", skills: ["rspock"])
     minitest = build_gem(gems, "minitest-5.25.0")
-    channel = build_channel(project, stub_bundle_list(project, [rspock, minitest]))
+    shadowenv_exec = bundle_lister
+    channel = build_channel(project, shadowenv_exec)
 
     When "listing entries"
     entries = channel.entries
 
     Then "one entry, named by convention, sourced from the gem's skill dir, carrying its provenance"
+    _ * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([rspock, minitest])
     entries.size == 1
     entries[0].link_name == "gem/rspock/rspock"
     entries[0].name == "rspock"
@@ -117,12 +127,14 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, gems = build_project(dir)
     reporters = build_gem(gems, "minitest-reporters-1.7.1", skills: ["reporting"])
-    channel = build_channel(project, stub_bundle_list(project, [reporters]))
+    shadowenv_exec = bundle_lister
+    channel = build_channel(project, shadowenv_exec)
 
     When "listing entries"
     entries = channel.entries
 
     Then "the entry is named for minitest-reporters, not minitest, and versioned from the right suffix"
+    _ * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([reporters])
     entries.map(&:link_name) == ["gem/minitest-reporters/reporting"]
     entries[0].package == "minitest-reporters"
     entries[0].version == "1.7.1"
@@ -136,10 +148,15 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, gems = build_project(dir)
     rspock = build_gem(gems, "rspock", skills: ["rspock"])
-    channel = build_channel(project, stub_bundle_list(project, [rspock]))
+    shadowenv_exec = bundle_lister
+    channel = build_channel(project, shadowenv_exec)
 
-    Expect "the entry has its package but nil version"
-    channel.entries.map { |e| [e.package, e.version] } == [["rspock", nil]]
+    When "listing entries"
+    entries = channel.entries
+
+    Then "the entry has its package but nil version"
+    _ * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([rspock])
+    entries.map { |e| [e.package, e.version] } == [["rspock", nil]]
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -150,10 +167,15 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, gems = build_project(dir)
     stray = build_gem(gems, "stray-9.9.9", skills: ["stray"])
-    channel = build_channel(project, stub_bundle_list(project, [stray]))
+    shadowenv_exec = bundle_lister
+    channel = build_channel(project, shadowenv_exec)
 
-    Expect "no entries"
-    channel.entries == []
+    When "listing entries"
+    entries = channel.entries
+
+    Then "no entries"
+    _ * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([stray])
+    entries == []
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -192,10 +214,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     channel.entries
 
     Then "the seam is asked for the bundle's paths with only the Gemfile pin layered on"
-    1 * shadowenv_exec.capture3(
-      "bundle", "list", "--paths",
-      env: { "BUNDLE_GEMFILE" => (project / "Gemfile").to_s },
-    ) >> ["", "", stub(success?: true)]
+    1 * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([])
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -205,8 +224,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     Given "bundler erroring out"
     dir = Dir.mktmpdir("dev-gem-skills-test-")
     project, = build_project(dir)
-    shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: project)
-    shadowenv_exec.stubs(:capture3).returns(["", "bundler exploded", stub(success?: false)])
+    shadowenv_exec = bundle_lister
     channel = build_channel(project, shadowenv_exec)
     old_stderr = $stderr
     $stderr = StringIO.new
@@ -215,6 +233,7 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     entries = channel.entries
 
     Then "the failure is a warning, not an exception"
+    _ * shadowenv_exec.capture3 >> ["", "bundler exploded", exit_status(1)]
     entries == []
     $stderr.string.include?("could not list bundled gems")
 
@@ -230,16 +249,22 @@ class Dev::Deps::GemSkillsTest < Minitest::Test
     rspock = build_gem(gems, "rspock-1.2.0", skills: ["rspock"])
     departed = build_gem(gems, "departed-1.0.0", skills: ["departed"])
     materializer = build_materializer(dir)
-    materializer.sync([build_channel(project, stub_bundle_list(project, [rspock, departed]))])
+    earlier_exec = bundle_lister
+    earlier_channel = build_channel(project, earlier_exec)
     skills_dir = project / ".agents" / "skills"
+    FileUtils.mkdir_p(skills_dir)
     File.symlink(gems, skills_dir / "my-own-link")
     (skills_dir / "notes.md").write("mine\n")
-    channel = build_channel(project, stub_bundle_list(project, [rspock]))
+    shadowenv_exec = bundle_lister
+    channel = build_channel(project, shadowenv_exec)
 
-    When "materializing the channel"
+    When "materializing the earlier lock's channel, then the current one"
+    materializer.sync([earlier_channel])
     materializer.sync([channel])
 
     Then "the locked skill is linked in the new layout, the departed gem's link and dir are gone, the repo's own content stands"
+    _ * earlier_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([rspock, departed])
+    _ * shadowenv_exec.capture3("bundle", "list", "--paths", env: gemfile_env(project)) >> bundle_list([rspock])
     File.readlink(skills_dir / "dev" / "gem" / "rspock" / "rspock") == (rspock / "skills" / "rspock").to_s
     !File.exist?(skills_dir / "dev" / "gem" / "departed")
     File.symlink?(skills_dir / "my-own-link")

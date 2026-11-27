@@ -4,10 +4,15 @@
 require "test_helper"
 require "dev/deps/pip_repository"
 
+# PipRepository is the adapter over PyPI's JSON API, so the GET it makes is
+# its contract and the answer is a real response: how it reads the status
+# class and the body is the behaviour under test.
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::PipRepositoryTest < Minitest::Test
+  PYPI = Dev::Deps::PipRepository::PYPI_HOST
+
   test "find reports every installable PyPI release with its sdist digest" do
-    Given "a stubbed PyPI JSON API response with two releases"
+    Given "a PyPI JSON API document with two releases"
     repo = Dev::Deps::PipRepository.new
     project = {
       "releases" => {
@@ -20,13 +25,12 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
         ],
       },
     }
-    response = http_response("200 OK", JSON.generate(project))
 
     When "finding the package"
     package = repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "totalsegmentator"))
 
-    Then "sdist digest preferred, wheel fallback"
-    1 * repo.get_project("totalsegmentator") >> response
+    Then "the project's document is asked for once; sdist digest preferred, wheel fallback"
+    1 * Net::HTTP.get_response(URI("#{PYPI}/pypi/totalsegmentator/json")) >> http_response("200", body: JSON.generate(project))
     package.versions.map(&:version).sort == ["2.0.5", "2.1.0"]
     package.version("2.0.5").digest == "SHA256=sdistsha"
     package.version("2.1.0").digest == "SHA256=onlywheel"
@@ -53,13 +57,12 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
         ],
       },
     }
-    response = http_response("200 OK", JSON.generate(project))
 
     When "finding the package"
     package = repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "scikit-image"))
 
     Then "the universe is what pip can install; a partly yanked release stays, digested from a live file"
-    1 * repo.get_project("scikit-image") >> response
+    1 * Net::HTTP.get_response(URI("#{PYPI}/pypi/scikit-image/json")) >> http_response("200", body: JSON.generate(project))
     package.versions.map(&:version).sort == ["0.21.0", "0.26.0"]
     package.version("0.21.0").digest == "SHA256=livesdist"
   end
@@ -67,40 +70,25 @@ class Dev::Deps::PipRepositoryTest < Minitest::Test
   test "find raises ProjectNotFoundError, a PackageNotFoundError, on 404" do
     Given "a PyPI API that has no such project"
     repo = Dev::Deps::PipRepository.new
-    response = http_response("404 Not Found", "Not Found")
 
     When "finding the package"
     repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "no-such-project"))
 
     Then
-    1 * repo.get_project("no-such-project") >> response
+    1 * Net::HTTP.get_response(URI("#{PYPI}/pypi/no-such-project/json")) >> http_response("404", body: "Not Found")
     raises Dev::Deps::Repository::PackageNotFoundError
   end
 
   test "find raises ApiError on other HTTP failures" do
     Given "a PyPI API returning a 500"
     repo = Dev::Deps::PipRepository.new
-    response = http_response("500 Internal Server Error", "Server Error")
 
     When "finding the package"
     repo.find(Dev::Deps::PackageId.new(integration: :pip, name: "flaky"))
 
     Then
-    1 * repo.get_project("flaky") >> response
+    1 * Net::HTTP.get_response(URI("#{PYPI}/pypi/flaky/json")) >> http_response("500", body: "Server Error")
     e = raises Dev::Deps::PipRepository::ApiError
     e.message == "PyPI API returned 500 for flaky: Server Error"
-  end
-
-  test "get_project asks PyPI's JSON API for the project" do
-    Given "a repository and the response PyPI will answer with"
-    repo = Dev::Deps::PipRepository.new
-    response = http_response("200 OK", "{}")
-
-    When "fetching the project"
-    fetched = repo.send(:get_project, "requests")
-
-    Then "the response comes back from the project URL"
-    1 * Net::HTTP.get_response(URI("https://pypi.org/pypi/requests/json")) >> response
-    fetched.equal?(response)
   end
 end

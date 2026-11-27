@@ -80,7 +80,6 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     integration = Dev::Deps::PipIntegration.new(
       repository: nil, store: Dev::Deps::LocalStore.new(data_root: tmpdir), project_root: tmpdir,
     )
-    ok = stub(success?: true)
 
     When "installing"
     integration.install_all([dep("totalsegmentator", "2.0.5")])
@@ -89,7 +88,7 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     1 * Open3.capture3(
       { "PIP_CACHE_DIR" => "#{tmpdir}/tool-caches/pip" },
       python, "-m", "pip", "install", "totalsegmentator==2.0.5",
-    ) >> ["", "", ok]
+    ) >> ["", "", exit_status(0)]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -102,13 +101,12 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     integration = Dev::Deps::PipIntegration.new(
       repository: nil, store: Dev::Deps::LocalStore.new(data_root: tmpdir), project_root: tmpdir,
     )
-    ok = stub(success?: true)
 
     When "installing"
     integration.install_all([dep("totalsegmentator", "2.0.5")])
 
     Then "pip install is invoked via that venv's python"
-    1 * Open3.capture3(anything, python, "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", ok]
+    1 * Open3.capture3(anything, python, "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", exit_status(0)]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)
@@ -122,13 +120,12 @@ class Dev::Deps::PipIntegrationTest < Minitest::Test
     integration = Dev::Deps::PipIntegration.new(
       repository: nil, store: Dev::Deps::LocalStore.new(data_root: tmpdir), project_root: tmpdir, inside_container: true,
     )
-    ok = stub(success?: true)
 
     When "installing"
     integration.install_all([dep("totalsegmentator", "2.0.5")])
 
     Then "pip runs under the container venv's python"
-    1 * Open3.capture3(anything, container_python, "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", ok]
+    1 * Open3.capture3(anything, container_python, "-m", "pip", "install", "totalsegmentator==2.0.5") >> ["", "", exit_status(0)]
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

@@ -2,8 +2,6 @@
 # frozen_string_literal: true
 
 require "dev/host_probe_guard"
-require "dev/platform"
-require "dev/wsl_runner_host"
 
 # Per-test opt-out of the host-probe kill-switch test_helper arms for the
 # whole process. Only a test that *exercises a platform default itself*
@@ -24,21 +22,6 @@ module HostProbeGuardHelper
     previous = ENV.fetch(Dev::HostProbeGuard::ENV_VAR, nil)
     ENV.delete(Dev::HostProbeGuard::ENV_VAR)
     previous
-  end
-
-  # For a test through the composition root (`Dev::Cli::Runner`), which
-  # builds every builtin on its platform defaults: pins the host the
-  # defaults read — `Platform.os` to `os`, the WSL interop to "not WSL" —
-  # and lifts the guard, so the run answers the same on every machine.
-  # Returns the switch's prior value for restore_host_probe_guard; the
-  # stubs are mocha's and end with the test.
-  #
-  # @param os [String] "darwin" / "linux"
-  # @return [String, nil]
-  def pin_host_platform(os:)
-    Dev::Platform.stubs(:os).returns(os)
-    Dev::WslRunnerHost.stubs(:for_host).returns(nil)
-    allow_host_probes
   end
 
   # Re-arms the guard exactly as it was before allow_host_probes.

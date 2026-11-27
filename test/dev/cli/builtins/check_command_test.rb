@@ -26,7 +26,6 @@ class Dev::Cli::Builtins::CheckCommandTest < Minitest::Test
   test "call reports an in-sync dependency state" do
     Given "a dependency service with no staleness messages"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:messages).returns([])
     command = Dev::Cli::Builtins::CheckCommand.new(dependency_service: dependency_service)
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -35,6 +34,7 @@ class Dev::Cli::Builtins::CheckCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context)
 
     Then "the sync confirmation is printed and the process keeps its exit code"
+    _ * dependency_service.messages >> []
     $stdout.string.include?("in sync")
 
     Cleanup
@@ -44,16 +44,17 @@ class Dev::Cli::Builtins::CheckCommandTest < Minitest::Test
   test "call reports each staleness message and exits 1" do
     Given "a dependency service with drifted layers"
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:messages).returns(["lockfiles are stale", "install is stale"])
     command = Dev::Cli::Builtins::CheckCommand.new(dependency_service: dependency_service)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "running check"
     command.call(args: no_args, context: build_context)
 
-    Then "every message reaches stderr"
+    Then "every message reaches stderr before the process exits 1"
+    _ * dependency_service.messages >> ["lockfiles are stale", "install is stale"]
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("lockfiles are stale")
     $stderr.string.include?("install is stale")
 
@@ -71,7 +72,6 @@ class Dev::Cli::Builtins::CheckCommandTest < Minitest::Test
         metadata: { "app" => "1690800", "branch" => "public" }),
     ])
     dependency_service = typed_mock(Dev::Cli::DependencyService)
-    dependency_service.stubs(:messages).returns([])
     command = Dev::Cli::Builtins::CheckCommand.new(dependency_service: dependency_service)
     old_stdout = $stdout
     $stdout = StringIO.new
@@ -80,6 +80,7 @@ class Dev::Cli::Builtins::CheckCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "the tip is named with why, the formula is not, and the verdict still prints"
+    _ * dependency_service.messages >> []
     $stdout.string.include?("dev: steam/SatisfactoryServer 15400000: re-resolved on every dev deps update")
     !$stdout.string.include?("zlib")
     $stdout.string.include?("in sync")

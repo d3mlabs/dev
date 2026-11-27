@@ -9,25 +9,50 @@ transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::CdCommandTest < Minitest::Test
   include SorbetHelper
 
-  test "#{words.inspect} dispatches to #{verb} with #{expected.inspect}" do
+  test "--resolve <query> dispatches to resolve with the query and both streams" do
     Given "a cd command over an expecting accessor"
     accessor = typed_mock(Dev::Cd::Accessor)
-    accessor.expects(verb).with(*expected).once
+    command = Dev::Cli::Builtins::CdCommand.new(accessor: accessor)
+
+    When "running cd"
+    command.call(args: parsed_args(command, ["--resolve", "widget"]), context: build_context)
+
+    Then "the accessor resolves the query"
+    1 * accessor.resolve("widget", out: $stdout, err: $stderr)
+  end
+
+  test "#{words.inspect} dispatches to candidates with #{query.inspect}" do
+    Given "a cd command over an expecting accessor"
+    accessor = typed_mock(Dev::Cd::Accessor)
     command = Dev::Cli::Builtins::CdCommand.new(accessor: accessor)
 
     When "running cd"
     command.call(args: parsed_args(command, words), context: build_context)
 
-    Then "the expectation on the accessor holds"
-    true
+    Then "the accessor lists candidates for the query"
+    1 * accessor.candidates(query, out: $stdout)
 
     Where
-    words                       | verb                  | expected
-    ["--resolve", "widget"]     | :resolve              | ["widget", { out: $stdout, err: $stderr }]
-    ["--candidates", "wid"]     | :candidates           | ["wid", { out: $stdout }]
-    ["--candidates"]            | :candidates           | ["", { out: $stdout }]
-    ["widget"]                  | :explain_missing_hook | [{ err: $stderr }]
-    []                          | :explain_missing_hook | [{ err: $stderr }]
+    words                   | query
+    ["--candidates", "wid"] | "wid"
+    ["--candidates"]        | ""
+  end
+
+  test "#{words.inspect} dispatches to explain_missing_hook" do
+    Given "a cd command over an expecting accessor"
+    accessor = typed_mock(Dev::Cd::Accessor)
+    command = Dev::Cli::Builtins::CdCommand.new(accessor: accessor)
+
+    When "running cd"
+    command.call(args: parsed_args(command, words), context: build_context)
+
+    Then "the accessor explains the missing shell hook"
+    1 * accessor.explain_missing_hook(err: $stderr)
+
+    Where
+    words
+    ["widget"]
+    []
   end
 
   test "#{words.inspect} is a usage error: #{reason}" do

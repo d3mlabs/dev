@@ -283,8 +283,9 @@ module Dev
       # repos. The endpoint resolves any ref, so the locked version is passed as
       # written: a tag, or the commit SHA of a sha: pin — for which this fetch is
       # also the existence check (GitHub answers 404 for a commit the repo does
-      # not have, and that surfaces here as a DownloadError). Isolated so tests
-      # can stub the gh CLI boundary.
+      # not have, and that surfaces here as a DownloadError). The gh CLI is
+      # this integration's boundary: the spawn is `Kernel.system`'s, by name,
+      # so a test states it as an interaction.
       #
       # @param dep [Dependency]
       # @param archive_path [Pathname] destination .tar.gz
@@ -292,7 +293,7 @@ module Dev
       #   commit the repo does not have
       sig { params(dep: Dependency, archive_path: Pathname).void }
       def download_source(dep, archive_path)
-        success = system(
+        success = Kernel.system(
           "gh", "api", "repos/#{dep.metadata["repo"]}/tarball/#{dep.version}",
           out: archive_path.to_s,
         )

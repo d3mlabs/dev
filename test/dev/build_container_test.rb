@@ -262,7 +262,6 @@ class BuildContainerTest < Minitest::Test
     Given
     original = ENV["DEV_DATA_ROOT"]
     ENV.delete("DEV_DATA_ROOT")
-    Dev::Platform.stubs(:os).returns("linux")
 
     When
     invocation = build_container(host_os: "linux").docker_run_command(
@@ -626,12 +625,12 @@ class BuildContainerTest < Minitest::Test
     stopped = service("dev-snappy-linux-abc-content-old", running: false)
     engine = FakeContainerEngine.new
     bc = build_container(engine: engine)
-    bc.stubs(:service_containers).with(root).returns([stopped, running])
 
     When "stopping"
     result = bc.stop_service!(root)
 
     Then "only the running one is stopped (-t 0: PID 1 is sleep, which ignores SIGTERM); nothing is removed"
+    _ * bc.service_containers(root) >> [stopped, running]
     result == [running.name]
     engine.runs == [["stop", "-t", "0", running.name]]
   end
@@ -640,12 +639,12 @@ class BuildContainerTest < Minitest::Test
     Given "a running container whose stop fails"
     root = @checkout
     bc = build_container(engine: FakeContainerEngine.new { |_args| false })
-    bc.stubs(:service_containers).returns([service("dev-x", running: true)])
 
     When "stopping"
     bc.stop_service!(root)
 
     Then
+    _ * bc.service_containers >> [service("dev-x", running: true)]
     error = raises Dev::BuildContainer::StopFailedError
     error.message == "could not stop container dev-x."
   end
@@ -667,14 +666,14 @@ class BuildContainerTest < Minitest::Test
     current = service(Dev::BuildContainer.service_container_name(tag, root), running: true)
     stale = service(Dev::BuildContainer.service_container_name("jpduchesne89/snappy-linux:content-old", root), running: false)
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: FakeRegistryLogin.new)
-    bc.stubs(:local_image?).with(tag).returns(true)
-    bc.stubs(:registry_has?).with(tag).returns(false)
-    bc.stubs(:service_containers).with(root).returns([stale, current])
 
     When "reporting"
     status = bc.service_status(tag, root, registry: "docker.io")
 
     Then "one record, the current container named so the renderer can tell it from stale ones"
+    _ * bc.local_image?(tag) >> true
+    _ * bc.registry_has?(tag) >> false
+    _ * bc.service_containers(root) >> [stale, current]
     status.image_tag == tag
     status.local_image == true
     status.in_registry == false
@@ -691,15 +690,15 @@ class BuildContainerTest < Minitest::Test
     linux_stale = service(Dev::BuildContainer.service_container_name("ghcr.io/d3mlabs/snappy-linux:0000", root), running: false)
     server_current = service(Dev::BuildContainer.service_container_name(server, root), running: true)
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: FakeRegistryLogin.new)
-    bc.stubs(:service_containers).with(root).returns([linux_stale, linux_current, server_current])
-    bc.stubs(:local_image?).returns(true)
-    bc.stubs(:registry_has?).returns(true)
 
     When "reaping for the first image, and reporting on it"
     bc.reap_stale_services!(linux, root)
     status = bc.service_status(linux, root, registry: "ghcr.io")
 
     Then "only the first image's stale container goes; the report lists the first image's containers alone"
+    _ * bc.service_containers(root) >> [linux_stale, linux_current, server_current]
+    _ * bc.local_image? >> true
+    _ * bc.registry_has? >> true
     1 * bc.remove_container(linux_stale.name) >> true
     0 * bc.remove_container(server_current.name)
     status.containers == [linux_stale, linux_current]
@@ -711,14 +710,14 @@ class BuildContainerTest < Minitest::Test
     root = @checkout
     login = FakeRegistryLogin.new
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
-    bc.stubs(:local_image?).with(tag).returns(false)
-    bc.stubs(:registry_has?).with(tag).returns(true)
-    bc.stubs(:service_containers).with(root).returns([])
 
     When
     status = bc.service_status(tag, root, registry: "ghcr.io")
 
     Then "the registry's answer, asked from inside the session"
+    _ * bc.local_image?(tag) >> false
+    _ * bc.registry_has?(tag) >> true
+    _ * bc.service_containers(root) >> []
     status.in_registry == true
     login.sessions == [["ghcr.io", false]]
   end
@@ -728,15 +727,15 @@ class BuildContainerTest < Minitest::Test
     tag = "ghcr.io/d3mlabs/snappy-linux:aaaa"
     root = @checkout
     login = FakeRegistryLogin.new
-    login.stubs(:with).raises(error, "no")
     bc = Dev::BuildContainer.new(engine: FakeContainerEngine.new, registry_login: login)
-    bc.stubs(:local_image?).with(tag).returns(true)
-    bc.stubs(:service_containers).with(root).returns([])
 
     When
     status = bc.service_status(tag, root, registry: "ghcr.io")
 
     Then "the local half is still answered; the registry half is nil"
+    _ * login.with >> raises(error, "no")
+    _ * bc.local_image?(tag) >> true
+    _ * bc.service_containers(root) >> []
     status.local_image == true
     status.in_registry.nil?
     0 * bc.registry_has?(tag)

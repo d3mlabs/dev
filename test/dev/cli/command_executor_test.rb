@@ -69,15 +69,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
     context = build_context
     strategies = build_strategies
     args = Dev::Cli::ParsedArgs.new(words: ["cellbound-3d-win64-dev"], positionals: ["cellbound-3d-win64-dev"])
-    strategies.fetch(:lifecycle_executor)
-      .expects(:execute).with(command, args: args, context: context).once
     executor = Dev::Cli::CommandExecutor.new(**strategies)
 
     When "executing"
     executor.execute(command, args: args, context: context)
 
-    Then "the expectation held and no other strategy was consulted"
-    true
+    Then "the lifecycle strategy got the dispatch and no other strategy was consulted"
+    1 * strategies.fetch(:lifecycle_executor).execute(command, args: args, context: context)
   end
 
   test "a lifecycle verb against a builtin-only composite is a wiring bug" do
@@ -98,14 +96,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
       children: { "path" => FakeBuiltin.new },
     )
     strategies = build_strategies
-    strategies.fetch(:group_executor).expects(:execute).with(command).once
     executor = Dev::Cli::CommandExecutor.new(**strategies)
 
     When "executing"
     executor.execute(command, args: no_args, context: build_context)
 
-    Then "the expectation held and no other strategy was consulted"
-    true
+    Then "the group strategy got the dispatch and no other strategy was consulted"
+    1 * strategies.fetch(:group_executor).execute(command)
   end
 
   test "a builtin command dispatches to the builtin strategy with exact args" do
@@ -114,15 +111,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
     context = build_context
     strategies = build_strategies
     args = Dev::Cli::ParsedArgs.new(words: ["--verbose"], switches: ["--verbose"])
-    strategies.fetch(:builtin_executor)
-      .expects(:execute).with(command, args: args, context: context).once
     executor = Dev::Cli::CommandExecutor.new(**strategies)
 
     When "executing"
     executor.execute(command, args: args, context: context)
 
-    Then "the expectation held and no other strategy was consulted"
-    true
+    Then "the builtin strategy got the dispatch and no other strategy was consulted"
+    1 * strategies.fetch(:builtin_executor).execute(command, args: args, context: context)
   end
 
   test "a project command dispatches to the project strategy's exec tail-call" do
@@ -130,15 +125,13 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
     command = Dev::Cli::ProjectCommand.new(run: "./bin/test.sh", desc: "Run tests")
     context = build_context
     strategies = build_strategies
-    strategies.fetch(:project_executor)
-      .expects(:exec_into).with(command, args: ["--fast", "spec/a"]).once
     executor = Dev::Cli::CommandExecutor.new(**strategies)
 
     When "executing with the script's words"
     executor.execute(command, args: Dev::Cli::ParsedArgs.new(words: ["--fast", "spec/a"], positionals: ["--fast", "spec/a"]), context: context)
 
-    Then "the expectation held with the words, and no other strategy was consulted"
-    true
+    Then "the project strategy got the exec tail-call with the words, and no other strategy was consulted"
+    1 * strategies.fetch(:project_executor).exec_into(command, args: ["--fast", "spec/a"])
   end
 
   test "a project command against a builtin-only composite is a wiring bug" do
@@ -184,14 +177,12 @@ class Dev::Cli::CommandExecutorTest < Minitest::Test
     )
     context = build_context
     strategies = build_strategies
-    strategies.fetch(:overridden_executor)
-      .expects(:execute).with(command, args: no_args, context: context).once
     executor = Dev::Cli::CommandExecutor.new(**strategies)
 
     When "executing"
     executor.execute(command, args: no_args, context: context)
 
-    Then "the expectation held and no other strategy was consulted"
-    true
+    Then "the overridden strategy got the dispatch and no other strategy was consulted"
+    1 * strategies.fetch(:overridden_executor).execute(command, args: no_args, context: context)
   end
 end

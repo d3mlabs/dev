@@ -3,10 +3,10 @@
 
 require "digest"
 require "json"
-require "net/http"
 require "uri"
 
 require_relative "../gh_auth"
+require_relative "../http_client"
 require_relative "package"
 require_relative "package_id"
 require_relative "package_version"
@@ -70,12 +70,8 @@ module Dev
       # Attestation manifests ride an index under this pseudo-platform.
       UNKNOWN_PLATFORM = "unknown/unknown"
 
-      # One registry response, the shape the HTTP boundary returns.
-      class Response < T::Struct
-        const :code, Integer
-        const :headers, T::Hash[String, String]
-        const :body, String
-      end
+      # One registry response: what the HTTP client answers a GET with.
+      Response = Dev::HttpClient::Response
 
       # A parsed floor reference.
       class Reference < T::Struct
@@ -108,10 +104,12 @@ module Dev
       end
 
       # @param auth [Dev::GhAuth] the token the challenge is answered with
-      sig { params(auth: Dev::GhAuth).void }
-      def initialize(auth: Dev::GhAuth.new)
+      # @param http [Dev::HttpClient] the GETs to the registry and, redirected, to its storage
+      sig { params(auth: Dev::GhAuth, http: Dev::HttpClient).void }
+      def initialize(auth: Dev::GhAuth.new, http: Dev::HttpClient.new)
         super()
         @auth = auth
+        @http = http
       end
 
       # @param id [PackageId] its source is the floor reference
@@ -162,11 +160,11 @@ module Dev
       sig { params(ref: Reference).returns([Response, T.nilable(String)]) }
       def fetch_manifest(ref)
         accept = { "Accept" => MANIFEST_MEDIA_TYPES.join(", ") }
-        response = get(ref.manifest_url, headers: accept)
+        response = @http.get(ref.manifest_url, headers: accept)
         bearer = T.let(nil, T.nilable(String))
         if response.code == 401 && (challenge = response.headers["www-authenticate"])
           bearer = token_for(challenge)
-          response = get(ref.manifest_url, headers: accept.merge("Authorization" => "Bearer #{bearer}"))
+          response = @http.get(ref.manifest_url, headers: accept.merge("Authorization" => "Bearer #{bearer}"))
         end
         check!(response, ref)
         [response, bearer]
@@ -186,7 +184,7 @@ module Dev
 
         query = URI.encode_www_form(params.slice("scope", "service").sort)
         basic = ["#{@auth.login}:#{@auth.token}"].pack("m0")
-        response = get("#{realm}?#{query}", headers: { "Authorization" => "Basic #{basic}" })
+        response = @http.get("#{realm}?#{query}", headers: { "Authorization" => "Basic #{basic}" })
         raise AccessDeniedError, denied_message unless response.code == 200
 
         JSON.parse(response.body).fetch("token") { raise RegistryError, "token endpoint returned no token: #{realm}" }
@@ -209,7 +207,7 @@ module Dev
 
         config_digest = document.dig("config", "digest") or raise RegistryError, "manifest names no config: #{ref.manifest_url}"
         headers = bearer ? { "Authorization" => "Bearer #{bearer}" } : {}
-        config = get(ref.blob_url(config_digest), headers: headers)
+        config = @http.get(ref.blob_url(config_digest), headers: headers)
         check!(config, ref)
         [T.must(platform_string(JSON.parse(config.body)))]
       end
@@ -240,29 +238,6 @@ module Dev
       def denied_message
         "the registry refused gh's token — it needs #{Dev::GhAuth::READ_PACKAGES} on the floor's package " \
           "(run: gh auth refresh -s #{Dev::GhAuth::READ_PACKAGES}, and ask for access if the package is not yours)"
-      end
-
-      # The HTTP boundary, one GET; redirects followed (blob reads redirect
-      # to storage).
-      #
-      # @param url [String]
-      # @param headers [Hash{String => String}]
-      # @return [Response]
-      sig { params(url: String, headers: T::Hash[String, String]).returns(Response) }
-      def get(url, headers:)
-        uri = URI(url)
-        response = Net::HTTP.start(T.must(uri.host), uri.port, use_ssl: uri.scheme == "https") do |http|
-          http.request(Net::HTTP::Get.new(uri, headers))
-        end
-        if response.is_a?(Net::HTTPRedirection) && (location = response["location"])
-          return get(location, headers: headers.reject { |key, _| key == "Authorization" })
-        end
-
-        Response.new(
-          code: response.code.to_i,
-          headers: response.each_header.to_h { |key, value| [key.downcase, value] },
-          body: response.body.to_s,
-        )
       end
     end
   end

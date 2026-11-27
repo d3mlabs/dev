@@ -56,26 +56,44 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
     empty == {}
   end
 
+  # A warm install dir whose steamcmd.sh is the given shell script.
+  #
+  # @return [String] the install dir
+  def warm_dir(script_body)
+    dir = Dir.mktmpdir("steamcmd-test-")
+    script = File.join(dir, "steamcmd.sh")
+    File.write(script, "#!/bin/sh\n#{script_body}")
+    File.chmod(0o755, script)
+    dir
+  end
+
   test "resolve_branches returns the parsed branch map on success" do
-    Given "a successful app_info_print"
-    Dev::Deps::SteamCmd.stubs(:run).returns([APP_INFO, "", stub(success?: true)])
+    Given "a steamcmd.sh whose app_info_print prints the app's branches"
+    dir = warm_dir("cat <<'VDF'\n#{APP_INFO}VDF\n")
 
     When "resolving"
-    branches = Dev::Deps::SteamCmd.resolve_branches(app: 1690800)
+    branches = Dev::Deps::SteamCmd.resolve_branches(app: 1690800, dir: dir)
 
     Then
     branches == { "public" => "15321746", "experimental" => "15400000" }
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "resolve_branches raises when steamcmd fails" do
-    Given "a failing app_info_print"
-    Dev::Deps::SteamCmd.stubs(:run).returns(["", "Connection error", stub(success?: false)])
+    Given "a steamcmd.sh that fails to connect"
+    dir = warm_dir("echo 'Connection error' >&2\nexit 1\n")
 
     When "resolving"
-    Dev::Deps::SteamCmd.resolve_branches(app: 1690800)
+    Dev::Deps::SteamCmd.resolve_branches(app: 1690800, dir: dir)
 
     Then
-    raises Dev::Deps::SteamCmd::SteamCmdError
+    e = raises Dev::Deps::SteamCmd::SteamCmdError
+    e.message == "steamcmd app_info_print 1690800 failed: Connection error"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
   end
 
   test "download_url matches the host OS" do
@@ -107,12 +125,12 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
   test "ensure! raises BootstrapError when the curl|tar pipeline fails" do
     Given "an empty install dir and a failing download pipeline"
     dir = Dir.mktmpdir("steamcmd-test-")
-    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(false)
 
     When "ensuring"
     Dev::Deps::SteamCmd.ensure!(dir)
 
     Then
+    1 * Kernel.system("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)) >> false
     raises Dev::Deps::SteamCmd::BootstrapError
 
     Cleanup
@@ -140,12 +158,12 @@ class Dev::Deps::SteamCmdTest < Minitest::Test
   test "ensure! raises BootstrapError when the pipeline succeeds but produces no script" do
     Given "an empty install dir and a pipeline that extracts nothing"
     dir = Dir.mktmpdir("steamcmd-test-")
-    Kernel.expects(:system).with("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)).returns(true)
 
     When "ensuring"
     Dev::Deps::SteamCmd.ensure!(dir)
 
     Then
+    1 * Kernel.system("sh", "-c", regexp_matches(/curl -fsSL .+ \| tar -xz -C /)) >> true
     raises Dev::Deps::SteamCmd::BootstrapError
 
     Cleanup

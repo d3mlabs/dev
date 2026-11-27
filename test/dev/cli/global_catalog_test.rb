@@ -30,15 +30,14 @@ class Dev::Cli::GlobalCatalogTest < Minitest::Test
   test "the injected accessors are the ones the leaves call" do
     Given "a catalog over an expecting cd accessor"
     cd = typed_mock(Dev::Cd::Accessor)
-    cd.expects(:resolve).with("dev", out: $stdout, err: $stderr).once
     catalog = build_catalog(cd_accessor: cd)
     command = catalog.commands.fetch("cd")
 
     When "calling the cd leaf"
     command.call(args: parsed_args(command, ["--resolve", "dev"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
-    Then "the accessor was used"
-    true
+    Then "the accessor was asked to resolve the query"
+    1 * cd.resolve("dev", out: $stdout, err: $stderr)
   end
 
   private
