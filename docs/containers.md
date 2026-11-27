@@ -212,11 +212,15 @@ At creation the container gets:
   directories are created on the host before the mount, so docker never
   creates them as root. The mount sits inside the mounted checkout, so
   the host can delete the directory under a running container
-  (`actions/checkout`'s `git clean -ffdx`, a developer's); before reusing
-  a running container, `dev up` asks it whether `.shadowenv.d/` is still
-  a mount point and restarts it when not, which re-binds the mount over
-  the recreated directory. Without that the container's lisps would land
-  in the host's `.shadowenv.d/`.
+  (`actions/checkout`'s `git clean -ffdx`, a developer's). The host
+  leaves a witness file, `.bound`, in `.shadowenv.d-container/` whenever
+  it makes the directories; before reusing a running container, `dev up`
+  asks it whether that witness is visible at `.shadowenv.d/` and restarts
+  it when not, which re-binds the mount over the recreated directory. The
+  question is asked through the bind rather than of the mount table
+  because a bind whose source was deleted and recreated can stay listed
+  there until something looks through it. Without the restart the
+  container's lisps would land in the host's `.shadowenv.d/`.
 - **The host's dev at the host's exact version**, installed through
   Linuxbrew into the prefix volume on first use and whenever the version
   differs.

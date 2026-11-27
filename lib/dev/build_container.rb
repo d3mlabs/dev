@@ -167,6 +167,12 @@ module Dev
     # write.
     SHADOWENV_DIR = ".shadowenv.d"
     CONTAINER_SHADOWENV_DIR = ".shadowenv.d-container"
+    # The bind's witness: a file the host leaves in the container's
+    # directory whenever it makes the two, so a running container can be
+    # asked whether the bind still reaches it (see shadowenv_mount_live?).
+    # Never in the host's directory, which is what a dropped bind resolves
+    # to. shadowenv reads `*.lisp` only, so the dotfile is inert.
+    SHADOWENV_BIND_WITNESS = ".bound"
     # Both sides' directories as the repo-relative .gitignore lines covering
     # them — beside the paths they cover, collected by Dev::Footprint. A
     # lisp names one machine's prefixes; neither directory ever commits.
@@ -582,7 +588,8 @@ module Dev
     # Make the checkout's two shadowenv directories on the host, as the
     # host's user: the mount's source and its destination. Docker makes a
     # missing bind path itself, as root, and does so on every start, not
-    # only at creation — so this runs before both.
+    # only at creation — so this runs before both. The witness goes into
+    # the container's directory with them (SHADOWENV_BIND_WITNESS).
     #
     # @param project_root [Pathname] the checkout
     # @return [void]
@@ -590,6 +597,7 @@ module Dev
     def make_shadowenv_dirs(project_root)
       checkout = Pathname(self.class.workspace_path(project_root))
       FileUtils.mkdir_p([checkout / SHADOWENV_DIR, checkout / CONTAINER_SHADOWENV_DIR])
+      FileUtils.touch(checkout / CONTAINER_SHADOWENV_DIR / SHADOWENV_BIND_WITNESS)
     end
 
     # The working directory a command inside runs from: the mounted
@@ -881,22 +889,23 @@ module Dev
       @engine.run(["restart", name], out: File::NULL, err: File::NULL)
     end
 
-    # Whether the running container still has its shadowenv directory
-    # mounted (see CONTAINER_SHADOWENV_DIR): the checkout's `.shadowenv.d`,
-    # at its container path, is a mount point in the container's own
-    # `/proc/self/mountinfo`. A mount whose directory the host deleted
-    # shows there under the deleted entry's name, not the path, so a
-    # recreated directory with no mount on it reads as dead. The path is
-    # the script's argument, never spliced into it.
+    # Whether the running container's shadowenv bind still reaches the
+    # host's container directory (see CONTAINER_SHADOWENV_DIR): the witness
+    # the host left there (SHADOWENV_BIND_WITNESS) is visible at the
+    # checkout's `.shadowenv.d`, at its container path. The probe looks
+    # *through* the bind, as the lisp writers will: a bind whose source the
+    # host deleted and recreated stays listed in the mount table by path
+    # until a lookup revalidates it (virtiofs; dev#732), while the lookup
+    # itself sees the deleted inode's empty contents or, once the mount has
+    # dropped, the host's `.shadowenv.d`, which never holds the witness.
     #
     # @param name [String] the running service container
     # @param project_root [Pathname] the checkout
     # @return [Boolean]
     sig { params(name: String, project_root: Pathname).returns(T::Boolean) }
     def shadowenv_mount_live?(name, project_root)
-      mount_point = Pathname(self.class.workspace_path(project_root)) / SHADOWENV_DIR
-      script = "awk -v p=\"$1\" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo"
-      @engine.run(["exec", name, "sh", "-c", script, "sh", mount_point.to_s], out: File::NULL, err: File::NULL)
+      witness = Pathname(self.class.workspace_path(project_root)) / SHADOWENV_DIR / SHADOWENV_BIND_WITNESS
+      @engine.run(["exec", name, "test", "-e", witness.to_s], out: File::NULL, err: File::NULL)
     end
 
     # Create the detached, idle service container: its own data root, the

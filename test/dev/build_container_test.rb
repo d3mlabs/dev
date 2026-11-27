@@ -593,10 +593,16 @@ class BuildContainerTest < Minitest::Test
     0 * bc.start_container(name)
     0 * bc.create_service_container(name, tag, project_root: root, volumes: [])
     (root / ".shadowenv.d").directory?
-    (root / ".shadowenv.d-container").directory?
+    (root / ".shadowenv.d-container" / ".bound").file?
   end
 
-  test "shadowenv_mount_live? asks the container whether the checkout's .shadowenv.d is a mount point, by path, and reports the engine's verdict: #{what}" do
+  # The mount table is lazy: on virtiofs a bind whose source the host
+  # deleted and recreated stays listed by path until a lookup through it
+  # revalidates the dentry — and the first lookup that did was the lisp
+  # write (dev#732, cellbound-3d#346 job 140637163847). So the probe looks
+  # through the bind the way the writers will: for the witness the host put
+  # in `.shadowenv.d-container/`, at the container's `.shadowenv.d/`.
+  test "shadowenv_mount_live? asks the container whether the host's witness is visible at the checkout's .shadowenv.d, and reports the engine's verdict: #{what}" do
     Given
     engine = FakeContainerEngine.new { |_args| live }
     bc = build_container(engine: engine)
@@ -606,19 +612,28 @@ class BuildContainerTest < Minitest::Test
     When
     verdict = bc.shadowenv_mount_live?(name, root)
 
-    Then "one docker exec, the mount point handed to the script as its argument rather than spliced into it"
+    Then "one docker exec, a lookup of the witness through the mount point"
     verdict == live
-    engine.runs.size == 1
-    engine.runs[0][0, 2] == ["exec", name]
-    engine.runs[0].last == "#{root}/.shadowenv.d"
-    engine.runs[0][2, 2] == ["sh", "-c"]
-    engine.runs[0][4].include?("/proc/self/mountinfo")
-    !engine.runs[0][4].include?(root.to_s)
+    engine.runs == [["exec", name, "test", "-e", "#{root}/.shadowenv.d/.bound"]]
 
     Where
     what           | live
     "a live mount" | true
     "a dead mount" | false
+  end
+
+  test "make_shadowenv_dirs leaves the witness in the container's directory, so the probe has something to find through the bind" do
+    Given "a checkout without its shadowenv directories"
+    root = @checkout
+    bc = build_container
+
+    When
+    bc.make_shadowenv_dirs(root)
+
+    Then "both directories exist and the witness is in the one the container mounts, not the host's"
+    (root / ".shadowenv.d").directory?
+    (root / ".shadowenv.d-container" / ".bound").file?
+    !(root / ".shadowenv.d" / ".bound").exist?
   end
 
   # A container's mounts are fixed at creation. One created before the
