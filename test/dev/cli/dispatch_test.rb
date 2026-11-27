@@ -427,7 +427,10 @@ class Dev::Cli::DispatchTest < Minitest::Test
     git = Dev::Lifecycle::Git.new(root:)
     git.capture(["init", "-q", "-b", "main"])
     (root / "a.txt").write("a\n")
-    git.capture(["add", "a.txt"])
+    # An adopter's checkout carries dev's footprint (dev up warns when it is
+    # missing); with it, "the tree is clean" means dev wrote only there.
+    (root / ".gitignore").write(Dev::BuildContainer::GITIGNORE_FOOTPRINT.map { |line| "#{line}\n" }.join)
+    git.capture(["add", "a.txt", ".gitignore"])
     git.capture(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one"])
     git.capture(["remote", "add", "origin", origin.to_s])
     git.capture(["push", "-q", "-u", "origin", "main"])
