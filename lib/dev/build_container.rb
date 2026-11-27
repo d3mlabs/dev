@@ -12,6 +12,7 @@ require "dev/container_context"
 require "dev/container_engine"
 require "dev/data_root"
 require "dev/platform"
+require "dev/project_shadowenv"
 require "dev/environment_image"
 require "dev/gh_auth"
 require "dev/registry_login"
@@ -593,11 +594,15 @@ module Dev
       reap_stale_services!(image_tag, project_root)
 
       exists = container_exists?(name)
-      if exists && on_another_prefix_volume?(name)
-        # Mounts are fixed at creation: a container from before the per-user
+      if exists && (on_another_prefix_volume?(name) || legacy_shadowenv_bind?(name, project_root))
+        # Mounts are fixed at creation. A container from before the per-user
         # split (or another user's checkout at this path) mounts a prefix
         # volume that is not this user's; reused, this user's aligner would
         # hand that shared volume over and the other user's hand it back.
+        # A container from before dev 0.9.13 binds the host's
+        # `.shadowenv.d-container/` over `.shadowenv.d` inside: docker
+        # recreates a missing bind source as root on start, and the
+        # container's own shadowenv now lives under that directory.
         remove_container(name)
         exists = false
       end
@@ -627,6 +632,19 @@ module Dev
       template = "{{range .Mounts}}{{if eq .Destination \"#{LINUXBREW_MOUNT}\"}}{{.Name}}{{end}}{{end}}"
       mounted = @engine.capture(["container", "inspect", "-f", template, name]).strip
       mounted.empty? ? nil : mounted
+    end
+
+    # Whether a container still carries the shadowenv bind of dev < 0.9.13:
+    # a mount at the checkout's `.shadowenv.d` inside the container.
+    #
+    # @param name [String] the container
+    # @param project_root [Pathname]
+    # @return [Boolean] false when inspect reports none (or fails)
+    sig { params(name: String, project_root: Pathname).returns(T::Boolean) }
+    def legacy_shadowenv_bind?(name, project_root)
+      destination = File.join(self.class.workspace_path(project_root), ProjectShadowenv::DIR)
+      template = "{{range .Mounts}}{{if eq .Destination \"#{destination}\"}}bind{{end}}{{end}}"
+      !@engine.capture(["container", "inspect", "-f", template, name]).strip.empty?
     end
 
     # Run +blk+ against a one-shot sibling of the service container: the

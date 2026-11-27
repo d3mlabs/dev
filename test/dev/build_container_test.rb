@@ -515,10 +515,11 @@ class BuildContainerTest < Minitest::Test
     When "ensuring the service"
     bc.ensure_service!(tag, project_root: root)
 
-    Then "the existing container, on this user's prefix volume, is started, not recreated"
+    Then "the existing container, on this user's prefix volume and without the legacy shadowenv bind, is started, not recreated"
     1 * bc.reap_stale_services!(tag, root) >> nil
     1 * bc.container_exists?(name) >> true
     1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
+    1 * bc.legacy_shadowenv_bind?(name, root) >> false
     1 * bc.container_running?(name) >> false
     1 * bc.start_container(name) >> true
     0 * bc.create_service_container(name, tag,
@@ -539,6 +540,7 @@ class BuildContainerTest < Minitest::Test
     1 * bc.reap_stale_services!(tag, root) >> nil
     1 * bc.container_exists?(name) >> true
     1 * bc.container_prefix_volume(name) >> "dev-linuxbrew"
+    1 * bc.legacy_shadowenv_bind?(name, root) >> false
     1 * bc.container_running?(name) >> true
     0 * bc.start_container(name)
   end
@@ -561,6 +563,7 @@ class BuildContainerTest < Minitest::Test
     1 * bc.reap_stale_services!(tag, root) >> nil
     1 * bc.container_exists?(name) >> true
     1 * bc.container_prefix_volume(name) >> mounted
+    reused * bc.legacy_shadowenv_bind?(name, root) >> false
     recreated * bc.remove_container(name) >> true
     recreated * bc.create_service_container(name, tag, project_root: root, volumes: []) >> true
     reused * bc.container_running?(name) >> true
@@ -571,6 +574,50 @@ class BuildContainerTest < Minitest::Test
     "another user's"            | "dev-linuxbrew-runner"    | 1         | 0
     "its own"                   | "dev-linuxbrew-jp"        | 0         | 1
     "unknown (inspect failed)"  | nil                       | 0         | 1
+  end
+
+  # Until dev#734 the container's shadowenv was the host's `.shadowenv.d-container/`
+  # bind-mounted over `.shadowenv.d` inside. A container created then keeps that
+  # mount, and docker makes its missing source as root on every start (a hosted
+  # runner's checkpoint boots on a fresh checkout) — the very directory the
+  # container's shadowenv now lives under, which its user then cannot write.
+  test "ensure_service! recreates a container created with the shadowenv bind of dev < 0.9.13" do
+    Given "an existing container on this user's prefix volume, mounting the checkout's .shadowenv.d"
+    tag = "jpduchesne89/snappy-linux:content-abc"
+    root = @checkout
+    name = Dev::BuildContainer.service_container_name(tag, root)
+    bc = build_container(host_os: "linux")
+
+    When
+    bc.ensure_service!(tag, project_root: root)
+
+    Then "it is removed and created afresh, never started"
+    1 * bc.reap_stale_services!(tag, root) >> nil
+    1 * bc.container_exists?(name) >> true
+    1 * bc.container_prefix_volume(name) >> "dev-linuxbrew-jp"
+    1 * bc.legacy_shadowenv_bind?(name, root) >> true
+    1 * bc.remove_container(name) >> true
+    1 * bc.create_service_container(name, tag, project_root: root, volumes: []) >> true
+    0 * bc.start_container(name)
+  end
+
+  test "legacy_shadowenv_bind? asks inspect for a mount at the checkout's .shadowenv.d: #{what}" do
+    Given
+    engine = FakeContainerEngine.new(capture_result: ->(args) { args.first == "container" ? answer : "" })
+    checkout = Dev::BuildContainer.workspace_path(@checkout)
+
+    When
+    legacy = build_container(engine: engine).legacy_shadowenv_bind?("dev-x", @checkout)
+
+    Then
+    legacy == expected
+    engine.captures.last == ["container", "inspect", "-f", "{{range .Mounts}}{{if eq .Destination \"#{checkout}/.shadowenv.d\"}}bind{{end}}{{end}}", "dev-x"]
+
+    Where
+    what                              | answer    | expected
+    "a bind there"                    | "bind\n"  | true
+    "no mount there"                  | ""        | false
+    "inspect failed (nothing said)"   | "\n"      | false
   end
 
   test "container_prefix_volume reads the volume mounted at the Linuxbrew prefix; nil when inspect says nothing" do
