@@ -19,7 +19,9 @@ Dev::Deps.define do
   # a 1.x release, resolved through the series head `v1` — the same ref the
   # caller workflows' `uses: …@v1` resolves. A major bump edits this line
   # and both callers.
-  gh "d3mlabs/ai-flow", "^1", assets: "ai-flow-*.zip"
+  group :build do
+    gh "d3mlabs/ai-flow", "^1", assets: "ai-flow-*.zip"
+  end
 end
 
 BUNDLER_VERSION = ">= 2.1" unless defined?(BUNDLER_VERSION)
