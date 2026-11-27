@@ -12,14 +12,13 @@ class Dev::Cli::Builtins::CloneCommandTest < Minitest::Test
   test "#{words.inspect} dispatches the target to the accessor, plumbing: #{plumbing}" do
     Given "a clone command over an expecting accessor"
     accessor = typed_mock(Dev::Clone::Accessor)
-    accessor.expects(:run).with("acme/widget", plumbing: plumbing, out: $stdout, err: $stderr).once
     command = Dev::Cli::Builtins::CloneCommand.new(accessor: accessor)
 
     When "running clone"
     command.call(args: parsed_args(command, words), context: build_context)
 
-    Then "the expectation on the accessor holds"
-    true
+    Then "the accessor runs the clone"
+    1 * accessor.run("acme/widget", plumbing: plumbing, out: $stdout, err: $stderr)
 
     Where
     words                     | plumbing

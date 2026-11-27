@@ -62,13 +62,13 @@ class Dev::ProjectContainerTest < Minitest::Test
     ENV["WWISE_TOKEN"] = "t0k"
     hint = Dev::EngineResources::Hint.new(cpus: 8)
     check = typed_mock(Dev::EngineResourcesCheck)
-    check.expects(:check!).with(engine:, hint:).once
     subject = containers(engine, root:, token: "gho_host", hint:, check:)
 
     When
     status = capture_stdout { subject.run(image(run_env: { "WWISE_TOKEN" => "wwise/token" }), argv: ["dev", "build", "x"], workspace: mounted(root)) }
 
     Then "the inspect, the volumes, then the run: the checkout mounted at its path and the workdir, -e WWISE_TOKEN -e GH_TOKEN on argv, both values in the spawn env, the command word for word"
+    1 * check.check!(engine:, hint:)
     status == 4
     engine.runs.map(&:first) == ["image", "volume", "volume", "run"]
     run = engine.runs.last
@@ -91,12 +91,14 @@ class Dev::ProjectContainerTest < Minitest::Test
     Given
     root = checkout_root
     engine = FakeContainerEngine.new
-    subject = containers(engine, root:)
+    check = typed_mock(Dev::EngineResourcesCheck)
+    subject = containers(engine, root:, check:)
 
     When
     status = capture_stdout { subject.run(image(persist: true), argv: ["dev", "build", "x"], workspace: mounted(root)) }
 
     Then "one exec against the service, in the checkout, the command as its argv; no `docker run`"
+    _ * check.check!
     status == 0
     exec = engine.runs.find { |verb, *_rest| verb == "exec" }
     exec.include?(Dev::BuildContainer.service_container_name(image.ref, root))
@@ -161,13 +163,15 @@ class Dev::ProjectContainerTest < Minitest::Test
     ENV["DEV_PUBLISH_IMAGE"] = publish ? "1" : nil
     engine = FakeContainerEngine.new
     client = Dev::BuildContainer.new(engine:, host_os: "darwin")
-    client.expects(:ensure_environment_image!).with { |_image, publish:| publish == expected }.once.returns(image.ref)
-    subject = containers(engine, root:, client:)
+    check = typed_mock(Dev::EngineResourcesCheck)
+    subject = containers(engine, root:, client:, check:)
 
     When
     subject.run(image, argv: ["true"], workspace: mounted(root))
 
     Then
+    _ * check.check!
+    1 * client.ensure_environment_image!(anything, publish: expected) >> image.ref
     engine.runs.last.first == "run"
 
     Cleanup
@@ -250,16 +254,12 @@ class Dev::ProjectContainerTest < Minitest::Test
     Pathname(File.realpath(Dir.mktmpdir("project-container-checkout-")))
   end
 
-  def containers(engine, root:, token: nil, hint: nil, check: passing_check, host_os: "darwin",
+  def containers(engine, root:, token: nil, hint: nil, check: typed_mock(Dev::EngineResourcesCheck), host_os: "darwin",
     client: Dev::BuildContainer.new(engine:, host_os:))
     Dev::ProjectContainer.new(
       project_root: root, client:, engine_hint: hint, resources_check: check,
       github_token: Dev::ContainerGithubToken.new(source: -> { token }),
     )
-  end
-
-  def passing_check
-    typed_mock(Dev::EngineResourcesCheck).tap { |check| check.stubs(:check!) }
   end
 
   def image(persist: false, run_env: {})

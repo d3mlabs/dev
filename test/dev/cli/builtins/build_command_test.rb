@@ -228,12 +228,12 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
   test "`--runner` sends the verb to the label as `build <build>` over the snapshot, builds nothing here, and prints the crossing" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
 
     When
     execute(command, "cellbound-3d-release", "--runner", "linux-pool")
 
     Then "the host runs the build by its full name, the runner flag left behind; nothing was built or reported here"
+    1 * @ui.print_remote_crossing(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
     @remote.dispatched_verbs == "build cellbound-3d-linux64-release"
     @remote.dispatched_inputs == { "verbs" => "build cellbound-3d-linux64-release", "runner" => "linux-pool", "fetch" => "false" }
     @remote.sync.synced == ["linux-pool"]
@@ -245,7 +245,6 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
   test "`--runner` skips the question of whether this machine could produce the build: the runner does" do
     Given "the client's linux64 build on the host of a Mac"
     @remote.install_workflow
-    @ui.stubs(:print_remote_crossing)
     placements = host_placements
     placements["cellbound-3d"] = Dev::Cli::TargetPlacement.new(
       target: client, placements: { PLATFORM::Linux64 => Dev::Cli::Placement::Host.new }, host_platform: PLATFORM::Macos,
@@ -255,6 +254,7 @@ class Dev::Cli::Builtins::BuildCommandTest < Minitest::Test
     execute(command(dispatcher: dispatcher(placements: placements)), "cellbound-3d", "--runner", "linux-pool")
 
     Then
+    _ * @ui.print_remote_crossing
     @remote.dispatched_verbs == "build cellbound-3d-linux64-dev"
   end
 

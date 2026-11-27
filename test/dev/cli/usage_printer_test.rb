@@ -18,32 +18,39 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::UsagePrinterTest < Minitest::Test
   # Minimal builtin fake: the printer reads desc and category, and the
-  # argument vocabulary a leaf declares (positionals, synopsis) — nothing
+  # vocabulary a leaf declares (positionals, synopsis, flags) — nothing
   # by default, as for a real builtin.
   class FakeBuiltin < Dev::Cli::BuiltinCommand
-    def initialize(desc:, category:, positionals: [], synopsis: nil)
+    def initialize(desc:, category:, positionals: [], synopsis: nil, flags: [])
       super()
       @desc = desc
       @category = category
       @positionals = positionals
       @synopsis = synopsis
+      @flags = flags
     end
 
-    attr_reader :desc, :category, :positionals, :synopsis
+    attr_reader :desc, :category, :positionals, :synopsis, :flags
 
     def call(args:, context:); end
   end
 
-  # Minimal lifecycle verb fake: its section is the shape's own.
+  # Minimal lifecycle verb fake: its section is the shape's own, and what
+  # it lists, where it runs and what it details are whatever a test hands
+  # in — nothing by default, as for a bare verb.
   class FakeVerb < Dev::Cli::LifecycleCommand
     Env = type_member { { fixed: String } }
 
-    def initialize(desc:)
+    def initialize(desc:, flags: [], listing: nil, placement: nil, details: [])
       super()
       @desc = desc
+      @flags = flags
+      @listing = listing
+      @placement = placement
+      @details = details
     end
 
-    attr_reader :desc
+    attr_reader :desc, :flags, :listing, :placement, :details
 
     def before(args:, context:)
       Dev::Cli::Dispatch::Outcome::Done.new
@@ -291,12 +298,14 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "print_node lists a command's flags after its description: switches by name, value-taking ones with a placeholder, each with its description" do
     Given "a builtin declaring three flags, one undescribed"
     printer = Dev::Cli::UsagePrinter.new
-    command = FakeBuiltin.new(desc: "Enroll this host", category: Dev::Cli::Command::Category::Environment)
-    command.stubs(:flags).returns([
-      Dev::Cli::Flag.new("--org", desc: "enroll at the org scope"),
-      Dev::Cli::Flag.new("--labels", takes_value: true, desc: "comma-separated runner labels"),
-      Dev::Cli::Flag.new("--yes"),
-    ])
+    command = FakeBuiltin.new(
+      desc: "Enroll this host", category: Dev::Cli::Command::Category::Environment,
+      flags: [
+        Dev::Cli::Flag.new("--org", desc: "enroll at the org scope"),
+        Dev::Cli::Flag.new("--labels", takes_value: true, desc: "comma-separated runner labels"),
+        Dev::Cli::Flag.new("--yes"),
+      ],
+    )
     out = StringIO.new
 
     When "printing the node"
@@ -339,8 +348,8 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
         Dev::Cli::Positional.new("build", desc: "which build (default: every accepted one)", optional: true),
         Dev::Cli::Positional.new("declaration", desc: "a declaration to float", optional: true, repeated: true),
       ],
+      flags: [Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")],
     )
-    command.stubs(:flags).returns([Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")])
     out = StringIO.new
 
     When "printing the node"
@@ -503,10 +512,10 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "a verb's own usage lists its subjects after its flags, in its order, labels fitted, each with its environment" do
     Given "a host provisioned from neither image, and a verb listing four builds"
     linux = image("cellbound-3d-linux")
-    verb = FakeVerb.new(desc: "Build a target")
-    verb.stubs(:flags).returns([Dev::Cli::Flag.new("--target", takes_value: true, desc: "the target")])
-    verb.stubs(:listing).returns(
-      Dev::Cli::LifecycleCommand::Listing.new(
+    verb = FakeVerb.new(
+      desc: "Build a target",
+      flags: [Dev::Cli::Flag.new("--target", takes_value: true, desc: "the target")],
+      listing: Dev::Cli::LifecycleCommand::Listing.new(
         heading: "Builds",
         subjects: [
           Dev::Cli::LifecycleCommand::Subject.new(name: "cellbound-3d-win64-dev", desc: "Client", placement: Dev::Cli::Placement::Image.new(image: linux)),
@@ -556,12 +565,14 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "a verb with a placement and details lists them: the environment as its column, each detail on its own line under the row, rows in name order" do
     Given "a deploy group of two channels, one placed in an image this host is not, one on the host, beside an unplaced verb"
     linux = image("cellbound-3d-linux")
-    staging = FakeVerb.new(desc: "rsync to the gamebox")
-    staging.stubs(:placement).returns(Dev::Cli::Placement::Host.new)
-    staging.stubs(:details).returns(["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev", "Protocol: run: ./bin/stage"])
-    steam = FakeVerb.new(desc: "Steam depots")
-    steam.stubs(:placement).returns(Dev::Cli::Placement::Image.new(image: linux))
-    steam.stubs(:details).returns(["Accepts: cellbound-3d-steamworks-win64-release", "Protocol: run: ./bin/steam-upload"])
+    staging = FakeVerb.new(
+      desc: "rsync to the gamebox", placement: Dev::Cli::Placement::Host.new,
+      details: ["Accepts: cellbound-3d-win64-dev, cellbound-3d-linux64-dev", "Protocol: run: ./bin/stage"],
+    )
+    steam = FakeVerb.new(
+      desc: "Steam depots", placement: Dev::Cli::Placement::Image.new(image: linux),
+      details: ["Accepts: cellbound-3d-steamworks-win64-release", "Protocol: run: ./bin/steam-upload"],
+    )
     group = build_group(["deploy"], desc: "Ship an artifact to a channel", category: Dev::Cli::Command::Category::Lifecycle,
       children: { "staging" => staging, "steam" => steam, "mirror" => FakeVerb.new(desc: "A bare verb") })
     out = StringIO.new
@@ -588,10 +599,11 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
 
   test "a placed verb's own usage says its environment in a sentence, then its details, before its flags" do
     Given
-    staging = FakeVerb.new(desc: "rsync to the gamebox")
-    staging.stubs(:placement).returns(Dev::Cli::Placement::Host.new)
-    staging.stubs(:details).returns(["Accepts: rspock", "Protocol: run: ./bin/stage"])
-    staging.stubs(:flags).returns([Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")])
+    staging = FakeVerb.new(
+      desc: "rsync to the gamebox", placement: Dev::Cli::Placement::Host.new,
+      details: ["Accepts: rspock", "Protocol: run: ./bin/stage"],
+      flags: [Dev::Cli::Flag.new("--dry-run", desc: "select and report, ship nothing")],
+    )
     out = StringIO.new
 
     When
@@ -614,8 +626,7 @@ class Dev::Cli::UsagePrinterTest < Minitest::Test
   test "a verb placed in an image this host is not says it runs on a remote host, where a project command would say a container" do
     Given
     linux = image("cellbound-3d-linux")
-    steam = FakeVerb.new(desc: "Steam depots")
-    steam.stubs(:placement).returns(Dev::Cli::Placement::Image.new(image: linux))
+    steam = FakeVerb.new(desc: "Steam depots", placement: Dev::Cli::Placement::Image.new(image: linux))
     out = StringIO.new
 
     When

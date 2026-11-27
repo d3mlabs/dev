@@ -25,14 +25,21 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
   end
 
   def succeeded
-    ["", "", stub(success?: true)]
+    ["", "", exit_status(0)]
+  end
+
+  # The env every bundle lock runs under: the generated Gemfile.
+  #
+  # @param dir [String] the project root
+  # @return [Hash{String => String}]
+  def gemfile_env(dir)
+    { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s }
   end
 
   test "lock generates a Gemfile mapping dev groups to bundler groups" do
     Given "gem declarations in the default and test groups"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).returns(succeeded)
     locker = build_locker(dir, shadowenv_exec, ruby_version: "4.0.9")
     decls = bundler_declarations do
       gem "ffi", "^1.17"
@@ -46,6 +53,7 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     gemfile = (Pathname(dir) / "Gemfile").read
 
     Then "the Gemfile names the verb that regenerates it, and pins the source, the locked ruby, default gem, and grouped gem with options — ranges in bundler's grammar"
+    _ * shadowenv_exec.capture3 >> succeeded
     gemfile.include?("run `dev deps update`")
     gemfile.include?(%(source "https://rubygems.org"))
     gemfile.include?(%(ruby "4.0.9"))
@@ -61,16 +69,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "a locker over the spawn seam"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.expects(:capture3)
-      .with("bundle", "lock", "--update", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
-      .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
 
     When "locking with no unlock given — the bare verb's shape"
     locker.lock(bundler_declarations { gem "ffi" })
 
-    Then "bundle lock --update was sent to the seam, not spawned bare (asserted on the mock)"
-    true
+    Then "bundle lock --update was sent to the seam, not spawned bare"
+    1 * shadowenv_exec.capture3("bundle", "lock", "--update", env: gemfile_env(dir)) >> succeeded
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -80,9 +85,6 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "a locker over the spawn seam, two gems declared, one of them and a brew formula named"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.expects(:capture3)
-      .with("bundle", "lock", "--update", "rake", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
-      .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
     decls = bundler_declarations do
       gem "ffi"
@@ -92,8 +94,8 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     When "dev deps update rake cmake"
     locker.lock(decls, unlock: Dev::Deps::UnlockSet.new(names: ["rake", "cmake"]))
 
-    Then "bundle lock --update rake was sent (asserted on the mock)"
-    true
+    Then "bundle lock --update rake was sent"
+    1 * shadowenv_exec.capture3("bundle", "lock", "--update", "rake", env: gemfile_env(dir)) >> succeeded
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -103,16 +105,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "a subset re-lock naming only a brew formula"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.expects(:capture3)
-      .with("bundle", "lock", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
-      .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
 
     When "dev deps update cmake"
     locker.lock(bundler_declarations { gem "ffi" }, unlock: Dev::Deps::UnlockSet.new(names: ["cmake"]))
 
-    Then "plain bundle lock: Gemfile.lock keeps every gem that still satisfies the Gemfile (asserted on the mock)"
-    true
+    Then "plain bundle lock: Gemfile.lock keeps every gem that still satisfies the Gemfile"
+    1 * shadowenv_exec.capture3("bundle", "lock", env: gemfile_env(dir)) >> succeeded
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -122,16 +121,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "a locker over the spawn seam"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.expects(:capture3)
-      .with("bundle", "lock", "--update", env: { "BUNDLE_GEMFILE" => (Pathname(dir) / "Gemfile").to_s })
-      .returns(succeeded)
     locker = build_locker(dir, shadowenv_exec)
 
     When "dev deps update, bare"
     locker.lock(bundler_declarations { gem "ffi" }, unlock: Dev::Deps::UnlockSet.all)
 
-    Then "bundle lock --update was sent (asserted on the mock)"
-    true
+    Then "bundle lock --update was sent"
+    1 * shadowenv_exec.capture3("bundle", "lock", "--update", env: gemfile_env(dir)) >> succeeded
 
     Cleanup
     FileUtils.rm_rf(dir)
@@ -141,13 +137,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "no bundler declarations"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.expects(:capture3).never
     locker = build_locker(dir, shadowenv_exec)
 
     When "locking"
     locker.lock([])
 
     Then "no Gemfile is written"
+    0 * shadowenv_exec.capture3
     !(Pathname(dir) / "Gemfile").exist?
 
     Cleanup
@@ -158,13 +154,13 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
     Given "a bundle lock that will fail"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
     shadowenv_exec = Dev::Deps::ShadowenvExec.new(project_root: dir)
-    shadowenv_exec.stubs(:capture3).returns(["", "could not resolve", stub(success?: false)])
     locker = build_locker(dir, shadowenv_exec)
 
     When "locking"
     locker.lock(bundler_declarations { gem "ffi" })
 
     Then
+    _ * shadowenv_exec.capture3 >> ["", "could not resolve", exit_status(1)]
     raises Dev::Deps::BundlerLocker::LockError
 
     Cleanup
@@ -172,15 +168,15 @@ class Dev::Deps::BundlerLockerTest < Minitest::Test
   end
 
   test "the seam defaults to the project's own shadowenv" do
-    Given "a locker built without an explicit seam"
+    Given "a project root, and a seam for the constructor to answer with"
     dir = Dir.mktmpdir("dev-bundler-locker-test-")
-    Dev::Deps::ShadowenvExec.expects(:new).with(project_root: Pathname(dir)).returns(stub)
+    seam = Dev::Deps::ShadowenvExec.new(project_root: dir)
 
-    When "constructing"
+    When "constructing without an explicit seam"
     Dev::Deps::BundlerLocker.new(project_root: dir)
 
-    Then "the default seam was built over the project root (asserted on the mock)"
-    true
+    Then "the default seam was built over the project root"
+    1 * Dev::Deps::ShadowenvExec.new(project_root: Pathname(dir)) >> seam
 
     Cleanup
     FileUtils.rm_rf(dir)

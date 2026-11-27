@@ -10,14 +10,20 @@ require "dev/deps/package"
 require "dev/deps/package_id"
 require "dev/deps/package_version"
 require "dev/deps/repository"
+require "dev/http_client"
 require "support/recording_ui"
 require "digest"
 require "fileutils"
 require "json"
+require "open3"
 require "pathname"
 require "stringio"
 require "tmpdir"
 
+# The command is given the registry (what dev's integrations contribute for
+# a project) and a factory for the resolver over that universe; a test
+# scripts the universe through the registry double and the resolution
+# through the resolver double, and reads the lock the command writes.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
   include SorbetHelper
@@ -59,8 +65,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       metadata: { "from" => "ghcr.io/d3mlabs/floor", "platform" => "linux/amd64", "platforms" => ["linux/amd64"],
                   "registry" => "ghcr.io/d3mlabs", "apt" => ["dos2unix"] },
     )
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [image_pin]))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -68,6 +74,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "the lock's image entry carries the digest this dev computes"
+    _ * resolver.resolve(anything) >> [image_pin]
     locked = Dev::Deps::Lockfile.new(dir: root).read.find { |dep| dep.integration == :image }
     locked.metadata["digest"] == Dev::EnvironmentImage.from_pin(image_pin).digest
 
@@ -84,17 +91,20 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       Dev::Deps.define { gem "rake" }
     RUBY
     locker = mock
-    locker.expects(:lock).with { |*args| args.fetch(0).map(&:name) == ["rake"] }
-    Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    registry = catalog
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "the locker received the bundler declarations (asserted on the mock)"
+    Then "the locker received the bundler declarations"
+    _ * registry.repositories(project_root: root) >> {}
+    1 * registry.lockers(project_root: root, ruby_version: nil) >> { bundler: locker }
+    1 * locker.lock(declarations_of { gem "rake" }, unlock: Dev::Deps::UnlockSet.all)
+    _ * resolver.resolve(anything) >> []
     $stdout.string.include?("lockfiles updated")
 
     Cleanup
@@ -112,31 +122,37 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
         gem "rake"
       end
     RUBY
+    manifest = declarations_of do
+      ruby "~4.0"
+      gem "rake"
+    end
     ruby_pin = Dev::Deps::Dependency.new(name: "ruby", integration: :ruby, group: :app, version: "4.0.9", hash: nil,
       metadata: { "tap" => "d3mlabs/d3mlabs", "version_suffix" => "4.0.9" })
     resolver = mock
-    resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby] }.returns([ruby_pin])
-    resolver.expects(:resolve).with { |*args| args.fetch(0).map(&:integration) == [:ruby, :bundler] }.returns([ruby_pin])
-    Dev::Deps::Resolver.expects(:new).returns(resolver)
-    brew_index_refreshed
-    order = sequence("install the interpreter, then lock")
+    brew_repo = typed_mock(Dev::Deps::BrewRepository)
     brew = mock
-    brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
-    ui = RecordingUi.new
-    Dev::Deps::Registry.expects(:host_integrations)
-      .with { |**kwargs| kwargs.fetch(:project_root) == root && kwargs.fetch(:project_name) == "TestProject" && kwargs.fetch(:ui).equal?(ui) }
-      .returns({ brew: brew, ruby: brew })
     locker = mock
-    locker.expects(:lock).in_sequence(order)
-    Dev::Deps::Registry.expects(:lockers).with(project_root: root, ruby_version: "4.0.9").returns({ bundler: locker })
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    ui = RecordingUi.new
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
+    # call order: the locker runs bundle lock under the Ruby the install just activated, so install-then-lock is the contract
+    order = sequence("install the interpreter, then lock")
+    brew.expects(:install_all).with([ruby_pin]).in_sequence(order)
+    locker.expects(:lock).in_sequence(order)
 
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root, ui: ui))
 
-    Then "bundle lock ran under the locked Ruby, whose exact version is the Gemfile's ruby directive (asserted on the mocks); the install spoke in its own frame"
+    Then "bundle lock ran under the locked Ruby, whose exact version is the Gemfile's ruby directive; the install spoke in its own frame"
+    _ * registry.repositories(project_root: root) >> { ruby: brew_repo }
+    1 * brew_repo.refresh_index!
+    1 * resolver.resolve(manifest.select { |decl| decl.integration == :ruby }) >> [ruby_pin]
+    1 * resolver.resolve(manifest) >> [ruby_pin]
+    1 * registry.host_integrations(project_root: root, project_name: "TestProject", store: instance_of(Dev::Deps::LocalStore), ui: ui) >>
+      { brew: brew, ruby: brew }
+    1 * registry.lockers(project_root: root, ruby_version: "4.0.9") >> { bundler: locker }
     $stdout.string.include?("lockfiles updated")
     Dev::Deps::Lockfile.new(dir: root).read.map { |dep| [dep.integration, dep.name, dep.version] } == [[:ruby, "ruby", "4.0.9"]]
     ui.rows == [[:frame, "ruby: 1 pin", 0]]
@@ -153,19 +169,22 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       require "dev/deps"
       Dev::Deps.define { gem "rake" }
     RUBY
-    Dev::Deps::Registry.expects(:host_integrations).never
     locker = mock
-    locker.expects(:lock)
-    Dev::Deps::Registry.expects(:lockers).with(project_root: root, ruby_version: nil).returns({ bundler: locker })
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    registry = catalog
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "no Ruby is provisioned for a project that declares none (asserted on the mocks)"
+    Then "no Ruby is provisioned for a project that declares none"
+    _ * registry.repositories(project_root: root) >> {}
+    0 * registry.host_integrations(anything)
+    1 * registry.lockers(project_root: root, ruby_version: nil) >> { bundler: locker }
+    1 * locker.lock(anything, unlock: anything)
+    _ * resolver.resolve(anything) >> []
     $stdout.string.include?("lockfiles updated")
 
     Cleanup
@@ -187,8 +206,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       Dev::Deps::Dependency.new(name: "xcodes", integration: :brew, group: :build, version: "1.6.2", hash: nil,
         metadata: { "tap" => "xcodesorg/made", "host" => "darwin", "format" => "source" }),
     ]
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -196,6 +215,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "only the source formula the image build installs is named — format matters there, and the Mac-only one never reaches the image"
+    _ * resolver.resolve(anything) >> resolved
     $stdout.string.include?("wwise-cli has no x86_64_linux bottle")
     !$stdout.string.include?("cmake has no")
     !$stdout.string.include?("jq has no")
@@ -218,8 +238,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       Dev::Deps::Dependency.new(name: "cmake", integration: :brew, group: :build, version: "3.31", hash: nil,
         metadata: {}),
     ]
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: resolved))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -227,6 +247,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "one lockfile holds both pins and the retired file is gone"
+    _ * resolver.resolve(anything) >> resolved
     !(root / "build-deps.lock").exist?
     Dev::Deps::Lockfile.new(dir: root).read.map(&:name).sort == ["boost", "cmake"]
 
@@ -247,16 +268,21 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     RUBY
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), pip_pin("kimimaro", "5.8.5")])
     today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: today))
-    brew_index_refreshed
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    brew_repo = typed_mock(Dev::Deps::BrewRepository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
-    Then "brew update ran once (asserted on the stub); the lock is today's, every move named, nothing kept"
+    Then "brew update ran once; the lock is today's, every move named, nothing kept"
+    _ * registry.repositories(project_root: root) >> { brew: brew_repo }
+    1 * brew_repo.refresh_index!
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
+    _ * resolver.resolve(anything) >> today
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
     pins == { "cmake" => ["4.4.5", "homebrew/core@7d2877eb"], "kimimaro" => ["5.9.0", "kimimaro==5.9.0"] }
     $stdout.string.include?("dev: moved cmake 4.4.4 → 4.4.5\n")
@@ -275,17 +301,21 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       require "dev/deps"
       Dev::Deps.define { #{declaration} }
     RUBY
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: []))
-    Dev::Deps::Registry.stubs(:lockers).returns({})
-    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!).times(refreshes)
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    brew_repo = typed_mock(Dev::Deps::BrewRepository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update #{words.join(" ")}"
     command.call(args: parsed_args(command, words), context: build_context(root))
 
-    Then "brew update ran as often as asserted on the stub"
+    Then "brew update ran as often as the row says"
+    _ * registry.repositories(project_root: root) >> { brew: brew_repo, python: brew_repo }
+    refreshes * brew_repo.refresh_index!
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
+    _ * resolver.resolve(anything) >> []
     $stdout.string.include?("lockfiles updated")
 
     Cleanup
@@ -307,10 +337,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       require "dev/deps"
       Dev::Deps.define { brew "cmake" }
     RUBY
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.5", commit: "7d2877eb")]))
-    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!)
-      .raises(Dev::Deps::BrewRepository::IndexRefreshError.new(stderr: "fatal: unable to access github.com"))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    brew_repo = typed_mock(Dev::Deps::BrewRepository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     old_stderr = $stderr
     $stdout = StringIO.new
@@ -320,6 +350,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "the lock is written from the index at hand, and stderr says the refresh did not happen"
+    _ * registry.repositories(project_root: root) >> { brew: brew_repo }
+    1 * brew_repo.refresh_index! >> raises(Dev::Deps::BrewRepository::IndexRefreshError.new(stderr: "fatal: unable to access github.com"))
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
+    _ * resolver.resolve(anything) >> [brew_pin("cmake", "4.4.5", commit: "7d2877eb")]
     Dev::Deps::Lockfile.new(dir: root).read.map(&:version) == ["4.4.5"]
     $stderr.string.include?("dev: warning: brew update failed (fatal: unable to access github.com) — resolving against the index brew has")
     $stdout.string.include?("lockfiles updated")
@@ -343,8 +377,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     RUBY
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), brew_pin("jq", "1.7", commit: "0f1ba9ea"), pip_pin("kimimaro", "5.8.5")])
     today = [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), brew_pin("jq", "1.8", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: today))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -352,6 +386,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: parsed_args(command, ["jq"]), context: build_context(root))
 
     Then "jq moved to today's pin with today's commit; cmake and kimimaro are the lock's, tap_commit included"
+    _ * resolver.resolve(anything) >> today
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.metadata["tap_commit"]]] }
     pins == { "cmake" => ["4.4.4", "0f1ba9ea"], "jq" => ["1.8", "7d2877eb"], "kimimaro" => ["5.8.5", nil] }
     $stdout.string.include?("dev: moved jq 1.7 → 1.8 (named)")
@@ -376,8 +411,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     RUBY
     unsourced = Dev::Deps::Dependency.new(name: "kimimaro", integration: :pip, group: :app, version: "5.8.5", hash: nil, metadata: {})
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea"), unsourced])
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -385,6 +420,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: parsed_args(command, ["cmake"]), context: build_context(root))
 
     Then "kimimaro is today's with a source from now on, and the move names the cause"
+    _ * resolver.resolve(anything) >> [brew_pin("cmake", "4.4.5", commit: "7d2877eb"), pip_pin("kimimaro", "5.9.0")]
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
     pins == { "cmake" => ["4.4.5", "homebrew/core@7d2877eb"], "kimimaro" => ["5.9.0", "kimimaro==5.9.0"] }
     $stdout.string.include?("dev: moved cmake 4.4.4 → 4.4.5 (named)")
@@ -407,25 +443,31 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
         gem "ffi"
       end
     RUBY
+    gems = declarations_of do
+      brew "cmake"
+      gem "rake"
+      gem "ffi"
+    end.select { |decl| decl.integration == :bundler }
     gem_pin = ->(name, version) do
       Dev::Deps::Dependency.new(name:, integration: :bundler, group: :app, version:, hash: nil, source: version, metadata: {})
     end
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4"), gem_pin.call("rake", "13.2.1"), gem_pin.call("ffi", "1.16.3")])
     locker = mock
-    locker.expects(:lock).with do |declarations, unlock:|
-      declarations.map(&:name) == ["rake", "ffi"] && unlock == Dev::Deps::UnlockSet.new(names: ["rake"])
-    end
-    Dev::Deps::Registry.expects(:lockers).returns({ bundler: locker })
     today = [brew_pin("cmake", "4.4.5"), gem_pin.call("rake", "13.3.0"), gem_pin.call("ffi", "1.17.0")]
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: today))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update rake"
     command.call(args: parsed_args(command, ["rake"]), context: build_context(root))
 
-    Then "the locker was told to float rake (asserted on the mock); rake is today's, the others are the lock's"
+    Then "the locker was told to float rake; rake is today's, the others are the lock's"
+    _ * registry.repositories(project_root: root) >> {}
+    1 * registry.lockers(project_root: root, ruby_version: nil) >> { bundler: locker }
+    1 * locker.lock(gems, unlock: Dev::Deps::UnlockSet.new(names: ["rake"]))
+    _ * resolver.resolve(anything) >> today
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, dep.version] }
     pins == { "cmake" => "4.4.4", "rake" => "13.3.0", "ffi" => "1.16.3" }
 
@@ -443,9 +485,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     RUBY
     Dev::Deps::Lockfile.new(dir: root).lock([brew_pin("cmake", "4.4.4", commit: "0f1ba9ea")], manifest_digest: Digest::SHA256.file((root / "dependencies.rb").to_s).hexdigest)
     before = (root / "deps.lock").read
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [brew_pin("cmake", "4.4.4", commit: "7d2877eb")]))
-    brew_index_refreshed
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    brew_repo = typed_mock(Dev::Deps::BrewRepository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -453,6 +496,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "deps.lock is byte-identical: the lock's commit stands for a pin that did not move"
+    _ * registry.repositories(project_root: root) >> { brew: brew_repo }
+    1 * brew_repo.refresh_index!
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
+    _ * resolver.resolve(anything) >> [brew_pin("cmake", "4.4.4", commit: "7d2877eb")]
     (root / "deps.lock").read == before
     !$stdout.string.include?("dev: moved")
 
@@ -472,9 +519,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       end
     RUBY
     Dev::Deps::Lockfile.new(dir: root).lock([gh_pin("ai-flow", "1.4.0", "b" * 40)])
-    Dev::Deps::Registry.expects(:repositories).returns({ gh: ai_flow_repository })
-    Dev::Deps::Registry.stubs(:lockers).returns({})
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:)
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -482,6 +528,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "^1 follows v1 back to 1.3.0 at its commit; >= 1.4 is the greatest tag; the report says which rule chose each"
+    _ * registry.repositories(project_root: root) >> { gh: Dev::Deps::GhRepository.new }
+    _ * Open3.capture3("gh", "api", "repos/d3mlabs/ai-flow/releases?per_page=100&page=1") >> [AI_FLOW_RELEASES, "", exit_status(0)]
+    _ * Open3.capture3("gh", "api", "repos/d3mlabs/ai-flow/tags?per_page=100&page=1") >> [AI_FLOW_TAGS, "", exit_status(0)]
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.source]] }
     pins == { "ai-flow" => ["1.3.0", "a" * 40], "ai-flow-newest" => ["1.4.0", "b" * 40] }
     $stdout.string.include?("dev: moved ai-flow 1.4.0 → 1.3.0 (series head v1 → 1.3.0)\n")
@@ -506,9 +556,8 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
                   "assets" => [{ "name" => "ai-flow-1.3.0.zip", "size" => 1, "sha256" => "a3" }], "asset_pattern" => "*.zip" })
     Dev::Deps::Lockfile.new(dir: root).lock([locked], manifest_digest: Digest::SHA256.file((root / "dependencies.rb").to_s).hexdigest)
     before = (root / "deps.lock").read
-    Dev::Deps::Registry.expects(:repositories).returns({ gh: ai_flow_repository })
-    Dev::Deps::Registry.stubs(:lockers).returns({})
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:)
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -516,6 +565,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: parsed_args(command, ["ai-flow"]), context: build_context(root))
 
     Then "the named pin is reported unchanged with the rule that confirmed it; the lock is byte-identical and said to be current"
+    _ * registry.repositories(project_root: root) >> { gh: Dev::Deps::GhRepository.new }
+    _ * Open3.capture3("gh", "api", "repos/d3mlabs/ai-flow/releases?per_page=100&page=1") >> [AI_FLOW_RELEASES, "", exit_status(0)]
+    _ * Open3.capture3("gh", "api", "repos/d3mlabs/ai-flow/tags?per_page=100&page=1") >> [AI_FLOW_TAGS, "", exit_status(0)]
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
     (root / "deps.lock").read == before
     $stdout.string.include?("dev: ai-flow 1.3.0 unchanged (series head v1 → 1.3.0)\n")
     $stdout.string.include?("dev: deps.lock is current.\n")
@@ -533,8 +586,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     write_floor_manifest(root)
     Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("clang-format", "17.0.6")]))
     floor_before = (root / "deps.lock").read[/image:.*?(?=\npip:)/m]
-    Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    ghcr = typed_mock(Dev::HttpClient)
+    pip_index = typed_mock(Dev::Deps::Repository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:)
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -542,6 +597,10 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: parsed_args(command, ["clang-format"]), context: build_context(root))
 
     Then "the floor's lock section is byte-identical, clang-format moved, and the output says what the registry refused"
+    _ * registry.repositories(project_root: root) >> { image: denied_oci_repository(ghcr), pip: pip_index }
+    _ * ghcr.get(anything, headers: anything) >> Dev::HttpClient::Response.new(code: 403, headers: {}, body: "denied")
+    _ * pip_index.find(responds_with(:name, "clang-format")) >> clang_format_package("18.1.8")
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
     (root / "deps.lock").read[/image:.*?(?=\npip:)/m] == floor_before
     Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, dep.version] } == { "cellbound-3d-linux" => "ue5.8-3", "clang-format" => "18.1.8" }
     $stdout.string.include?("dev: kept (registry unreachable): cellbound-3d-linux ue5.8-3 — the registry refused gh's token")
@@ -558,13 +617,19 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     write_floor_manifest(root)
     Dev::Deps::Lockfile.new(dir: root).lock(Dev::EnvironmentImage.stamp([floor_pin, pip_pin("clang-format", "17.0.6")]))
     before = (root / "deps.lock").read
-    Dev::Deps::Registry.expects(:repositories).returns({ image: denied_oci_repository, pip: pip_repository("18.1.8") })
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    ghcr = typed_mock(Dev::HttpClient)
+    pip_index = typed_mock(Dev::Deps::Repository)
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:)
 
     When "running dev deps update"
     command.call(args: no_args, context: build_context(root))
 
     Then "the registry's own error, naming the scope to add; the lock is untouched"
+    _ * registry.repositories(project_root: root) >> { image: denied_oci_repository(ghcr), pip: pip_index }
+    _ * ghcr.get(anything, headers: anything) >> Dev::HttpClient::Response.new(code: 403, headers: {}, body: "denied")
+    _ * pip_index.find(responds_with(:name, "clang-format")) >> clang_format_package("18.1.8")
+    _ * registry.lockers(project_root: root, ruby_version: nil) >> {}
     error = raises Dev::Deps::OciRepository::AccessDeniedError
     error.message.include?("read:packages")
     (root / "deps.lock").read == before
@@ -583,15 +648,15 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
         gem "rake"
       end
     RUBY
-    Dev::Deps::Resolver.expects(:new).never
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver_factory = typed_mock(Proc)
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory:)
 
     When "running dev deps update jq"
-    error = assert_raises(Dev::Cli::Builtins::UpdateDepsCommand::UnknownDeclarationError) do
-      command.call(args: parsed_args(command, ["jq"]), context: build_context(root))
-    end
+    command.call(args: parsed_args(command, ["jq"]), context: build_context(root))
 
-    Then "the error names the unknown name and the manifest's, and no lock was written"
+    Then "the error names the unknown name and the manifest's; no resolver was built and no lock was written"
+    0 * resolver_factory.call(anything, anything, anything)
+    error = raises Dev::Cli::Builtins::UpdateDepsCommand::UnknownDeclarationError
     error.message.include?("declares no jq")
     error.message.include?("cmake, rake")
     !(root / "deps.lock").exist?
@@ -629,21 +694,25 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
                     "platforms" => { "arm64_sequoia" => { "hash" => "SHA256=m", "link" => "https://x/m" } } })
     end
     Dev::Deps::Lockfile.new(dir: root).lock([ruby_pin.call("4.0.6", "0f1ba9ea")])
-    Dev::Deps::Resolver.expects(:new).returns(stub(resolve: [ruby_pin.call("4.0.9", "7d2877eb")]))
+    resolver = mock
     brew = mock
-    brew.expects(:install_all).with { |*args| args.fetch(0).map(&:version) == ["4.0.6"] }
-    Dev::Deps::Registry.expects(:host_integrations).returns({ brew: brew, ruby: brew })
     locker = mock
-    locker.expects(:lock)
-    Dev::Deps::Registry.expects(:lockers).with(project_root: root, ruby_version: "4.0.6").returns({ bundler: locker })
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    registry = catalog
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(registry:, resolver_factory: ->(*_universe) { resolver })
     old_stdout = $stdout
     $stdout = StringIO.new
 
     When "running dev deps update rake"
     command.call(args: parsed_args(command, ["rake"]), context: build_context(root))
 
-    Then "the lock still pins 4.0.6 (install and locker asserted on the mocks)"
+    Then "the lock still pins 4.0.6; the install and the locker saw that version, not today's"
+    _ * registry.repositories(project_root: root) >> {}
+    _ * resolver.resolve(anything) >> [ruby_pin.call("4.0.9", "7d2877eb")]
+    1 * registry.host_integrations(project_root: root, project_name: "TestProject", store: instance_of(Dev::Deps::LocalStore), ui: anything) >>
+      { brew: brew, ruby: brew }
+    1 * brew.install_all([ruby_pin.call("4.0.6", "0f1ba9ea")])
+    1 * registry.lockers(project_root: root, ruby_version: "4.0.6") >> { bundler: locker }
+    1 * locker.lock(anything, unlock: anything)
     Dev::Deps::Lockfile.new(dir: root).read.map(&:version) == ["4.0.6"]
 
     Cleanup
@@ -655,8 +724,11 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     Given "an empty manifest, and the resolver construction observed"
     root = Pathname.new(Dir.mktmpdir("update-deps-needs-"))
     received = nil
-    Dev::Deps::Resolver.expects(:new).with { |**kwargs| received = kwargs.fetch(:needs) }.returns(stub(resolve: []))
-    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    resolver = mock
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new(resolver_factory: lambda { |_repositories, _schemes, needs|
+      received = needs
+      resolver
+    })
     old_stdout = $stdout
     $stdout = StringIO.new
 
@@ -664,6 +736,7 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "xcode's and wwise's needs are in the table, as brew declarations"
+    _ * resolver.resolve(anything) >> []
     received.fetch(:xcode).map(&:name) == ["xcodes"]
     received.fetch(:wwise).map(&:name) == ["wwise-cli"]
     received.values.flatten.map(&:integration).uniq == [:brew]
@@ -697,6 +770,36 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
 
   FLOOR = "ghcr.io/d3mlabs/unreal-engine-build-base:ue5.8-3"
 
+  # d3mlabs/ai-flow as `gh api` lists it: releases 1.3.0 and 1.4.0, and
+  # the series tag v1 at 1.3.0's commit — a deploy rolled back below the
+  # greatest tag.
+  AI_FLOW_RELEASES = JSON.generate([
+    { "tag_name" => "1.4.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.4.0.zip", "size" => 1, "digest" => "sha256:b4" }] },
+    { "tag_name" => "1.3.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.3.0.zip", "size" => 1, "digest" => "sha256:a3" }] },
+  ])
+  AI_FLOW_TAGS = JSON.generate([
+    { "name" => "v1", "commit" => { "sha" => "a" * 40 } },
+    { "name" => "1.4.0", "commit" => { "sha" => "b" * 40 } },
+    { "name" => "1.3.0", "commit" => { "sha" => "a" * 40 } },
+  ])
+
+  # The registry role: what dev's integrations contribute for a project.
+  # Its static tables — the schemes and the integration classes the needs
+  # table is read from — are the real ones; what a test cares about
+  # (repositories, lockers, host integrations) it states as interactions.
+  def catalog
+    registry = typed_mock(Dev::Deps::Registry, class_of: true)
+    registry.define_singleton_method(:schemes) { Dev::Deps::Registry.schemes }
+    registry.define_singleton_method(:integration_classes) { Dev::Deps::Registry.integration_classes }
+    registry
+  end
+
+  # The declarations a manifest body produces, equal by value to what the
+  # command reads from the project's dependencies.rb.
+  def declarations_of(&manifest)
+    Dev::Deps.define(&manifest).declarations
+  end
+
   # cellbound-3d's shape at dev#373: an image floor and the pip tool being added.
   def write_floor_manifest(root)
     File.write(root / "dependencies.rb", <<~RUBY)
@@ -724,40 +827,12 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     Dev::Deps::Dependency.new(name:, integration: :pip, group: :app, version:, hash: nil, source: "#{name}==#{version}", metadata: {})
   end
 
-  # Every bare update of a manifest brew answers for runs `brew update`
-  # once; the test suite forbids the real one.
-  def brew_index_refreshed
-    Dev::Deps::BrewRepository.any_instance.expects(:refresh_index!).once
-  end
-
-  # A real OciRepository whose registry refuses the token outright.
-  def denied_oci_repository
+  # A real OciRepository over the given HTTP client, with a gh token to offer.
+  def denied_oci_repository(http)
     auth = typed_mock(Dev::GhAuth)
-    auth.stubs(token: "t", login: "u")
-    repository = Dev::Deps::OciRepository.new(auth:)
-    repository.stubs(:get).returns(Dev::Deps::OciRepository::Response.new(code: 403, headers: {}, body: "denied"))
-    repository
-  end
-
-  # d3mlabs/ai-flow as the gh CLI lists it: releases 1.3.0 and 1.4.0, the
-  # series tag v1 at 1.3.0's commit — a deploy rolled back below the
-  # greatest tag.
-  def ai_flow_repository
-    repository = Dev::Deps::GhRepository.new
-    repository.stubs(:run_gh_api).with("repos/d3mlabs/ai-flow/releases?per_page=100&page=1").returns([
-      JSON.generate([
-        { "tag_name" => "1.4.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.4.0.zip", "size" => 1, "digest" => "sha256:b4" }] },
-        { "tag_name" => "1.3.0", "draft" => false, "assets" => [{ "name" => "ai-flow-1.3.0.zip", "size" => 1, "digest" => "sha256:a3" }] },
-      ]), "", stub(success?: true)
-    ])
-    repository.stubs(:run_gh_api).with("repos/d3mlabs/ai-flow/tags?per_page=100&page=1").returns([
-      JSON.generate([
-        { "name" => "v1", "commit" => { "sha" => "a" * 40 } },
-        { "name" => "1.4.0", "commit" => { "sha" => "b" * 40 } },
-        { "name" => "1.3.0", "commit" => { "sha" => "a" * 40 } },
-      ]), "", stub(success?: true)
-    ])
-    repository
+    auth.define_singleton_method(:token) { "t" }
+    auth.define_singleton_method(:login) { "u" }
+    Dev::Deps::OciRepository.new(auth:, http:)
   end
 
   # A gh pin as the Resolver mints it: its source is the tag's commit.
@@ -766,16 +841,12 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
       metadata: { "repo" => "d3mlabs/ai-flow", "commit" => sha, "asset_pattern" => "*.zip" })
   end
 
-  # A pip index offering clang-format at one version.
-  def pip_repository(version)
-    repository = typed_mock(Dev::Deps::Repository)
-    repository.stubs(:find).with { |id| id.name == "clang-format" }.returns(
-      Dev::Deps::Package.new(
-        id: Dev::Deps::PackageId.new(integration: :pip, name: "clang-format", source: nil),
-        versions: [Dev::Deps::PackageVersion.new(version:)],
-      ),
+  # clang-format on a pip index, at one version.
+  def clang_format_package(version)
+    Dev::Deps::Package.new(
+      id: Dev::Deps::PackageId.new(integration: :pip, name: "clang-format", source: nil),
+      versions: [Dev::Deps::PackageVersion.new(version:)],
     )
-    repository
   end
 
   # A bottled core-tap formula pin as BrewRepository resolves it: its source

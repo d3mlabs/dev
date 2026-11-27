@@ -111,12 +111,12 @@ class Dev::Cli::TransportTest < Minitest::Test
     Given "a tree, and the lifecycle's sync constructor watched"
     root = Pathname("/proj")
     sync = typed_mock(Dev::Lifecycle::SnapshotSync)
-    Dev::Lifecycle::SnapshotSync.expects(:new).with(root: root).once.returns(sync)
 
     When
     built = Dev::Cli::Transport::DEFAULT_SYNC_FOR.call(root)
 
     Then
+    1 * Dev::Lifecycle::SnapshotSync.new(root: root) >> sync
     built.equal?(sync)
   end
 

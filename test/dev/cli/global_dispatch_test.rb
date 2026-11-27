@@ -134,12 +134,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     dispatch = build_dispatch(clone_accessor: clone_accessor)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we dispatch the duplicate clone"
     dispatch.run(["clone", "dev"])
 
     Then "the error names the existing path and hints at dev cd"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("already exists")
     $stderr.string.include?("dev cd dev")
 
@@ -207,12 +208,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we dispatch the ambiguous query"
     dispatch.run(["cd", "--resolve", "dev"])
 
     Then "ten candidates are shown, the rest summarized, with the Tab hint"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("ambiguous")
     $stderr.string.scan(%r{^  org\d+/dev$}).size == 10
     $stderr.string.include?("… and 2 more")
@@ -229,12 +231,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we dispatch an unmatched query"
     dispatch.run(["cd", "--resolve", "nonexistent"])
 
     Then "the error names the query"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("no repo matching 'nonexistent'")
 
     Cleanup
@@ -248,12 +251,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     dispatch = build_dispatch(cd_accessor: Dev::Cd::Accessor.new(root: root, hook_installer: quiet_hook_installer))
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "the Ruby process is reached by a bare dev cd"
     dispatch.run(["cd"])
 
     Then "stderr carries the accessor's one hint and no second explanation"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.lines == ["dev: the dev cd shell hook is installed but not active in this shell — open a new shell (or source your shell RC), then run `dev cd <repo>` again.\n"]
 
     Cleanup
@@ -299,12 +303,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     cwd = Dir.mktmpdir("dispatch-cwd-")
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we dispatch a verb the config group lacks"
     Dir.chdir(cwd) { dispatch.run(["config", "frobnicate"]) }
 
     Then "the full path is named, with the hint to list the group"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("Command 'config frobnicate' not found")
     $stderr.string.include?("Run 'dev config' to see its commands.")
 
@@ -338,12 +343,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     cwd = Dir.mktmpdir("dispatch-cwd-")
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(1).once
 
     When "we dispatch an unknown plan subcommand"
     Dir.chdir(cwd) { dispatch.run(["plan", "bogus"]) }
 
     Then "the tree's not-found error is printed (no DevYamlNotFoundError)"
+    e = raises SystemExit
+    e.status == 1
     $stderr.string.include?("Command 'plan bogus' not found")
 
     Cleanup
@@ -398,12 +404,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     cwd = Dir.mktmpdir("dispatch-cwd-")
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(2).once
 
     When "we dispatch a leaf with a flag it does not declare"
     Dir.chdir(cwd) { dispatch.run(["config", "get", "plans_repo", "--hlep"]) }
 
     Then "the flag and the node are named, the usage follows, and the verb never ran"
+    e = raises SystemExit
+    e.status == 2
     $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config get'\n"
     $stderr.string.include?("Usage: dev config get <key>")
     config.last_call.nil?
@@ -430,12 +437,13 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
     dispatch = build_dispatch(config_accessor: RecordingConfigAccessor.new)
     old_stderr = $stderr
     $stderr = StringIO.new
-    Kernel.expects(:exit).with(2).once
 
     When "we dispatch the group with a typo'd flag"
     dispatch.run(["config", "--hlep"])
 
     Then "the group's usage follows the flag message"
+    e = raises SystemExit
+    e.status == 2
     $stderr.string.lines.first == "dev: unknown flag '--hlep' for 'dev config'\n"
     $stderr.string.include?("Usage: dev config <command> [args...]")
 
@@ -446,7 +454,6 @@ class Dev::Cli::GlobalDispatchTest < Minitest::Test
   test "a programming error inside a global builtin re-raises with its backtrace — never a silent exit" do
     Given "a builtin calling an accessor whose signature went stale"
     dispatch = build_dispatch(cred_accessor: StaleCredAccessor.new)
-    Kernel.expects(:exit).never
 
     When "we dispatch to it"
     dispatch.run(["cred", "get", "github_token"])

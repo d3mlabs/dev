@@ -26,13 +26,12 @@ class Dev::Cli::Builtins::CredGetCommandTest < Minitest::Test
     out = StringIO.new
     ui = typed_mock(Dev::Ui)
     accessor = typed_mock(Dev::CredentialAccessor)
-    accessor.expects(:get).with(["wwise", "email"], ui: ui, out: out).once
     command = Dev::Cli::Builtins::CredGetCommand.new(accessor: accessor, out: out)
 
     When "running cred get"
     command.call(args: parsed_args(command, ["wwise", "email"]), context: Dev::Cli::ExecutionContext.new(ui: ui))
 
-    Then "the expectation on the accessor holds"
-    true
+    Then "the accessor gets the credential"
+    1 * accessor.get(["wwise", "email"], ui: ui, out: out)
   end
 end

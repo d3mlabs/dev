@@ -58,22 +58,26 @@ class Dev::CredentialsTest < Minitest::Test
   end
 
   test "resolve_run_env injects what is available (ENV, then storage) and silently skips the rest" do
-    Given "three run_env entries: one in ENV, one in storage, one nowhere"
+    Given "three run_env entries: one in ENV, one in the credentials file, one nowhere"
+    tmpdir = Dir.mktmpdir("credentials-test-")
+    ENV["XDG_CONFIG_HOME"] = tmpdir
     env_var = "TEST_RUN_ENV_A_#{Process.pid}"
     ENV[env_var] = "from-env"
-    Dev::Credentials.stubs(:load).returns(nil)
-    Dev::Credentials.stubs(:load).with("wwise", "token").returns("from-store")
+    Dev::Credentials.store_to_file("wwise", "token", "from-store")
     run_env = { env_var => "a/b", "WWISE_TOKEN" => "wwise/token", "MISSING" => "x/y" }
 
     When "resolving"
     result = Dev::Credentials.resolve_run_env(run_env)
 
-    Then "only the two resolvable entries appear, and nothing prompts"
+    Then "only the two resolvable entries appear, and nothing prompts — the chain on its file backend, whatever this host has"
+    _ * Dev::Credentials.keychain_available? >> false
     result == { env_var => "from-env", "WWISE_TOKEN" => "from-store" }
     0 * Dev::Credentials.prompt_and_store
 
     Cleanup
     ENV.delete(env_var)
+    ENV.delete("XDG_CONFIG_HOME")
+    FileUtils.rm_rf(tmpdir)
   end
 
   test "resolve_run_env of an empty declaration is empty without touching storage" do
@@ -179,29 +183,23 @@ class Dev::CredentialsTest < Minitest::Test
   test "load_from_keychain returns value from security CLI" do
     Given "a keychain entry"
     stdout = "my-secret-key\n"
-    Open3.stubs(:capture3)
-         .with("security", "find-generic-password",
-           "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
-         .returns([stdout, "", stub(success?: true)])
 
     When "loading from keychain"
     result = Dev::Credentials.load_from_keychain("curseforge", "api_key")
 
     Then "it returns the chomped value"
+    _ * Open3.capture3("security", "find-generic-password", "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w") >>
+      [stdout, "", exit_status(0)]
     result == "my-secret-key"
   end
 
   test "load_from_keychain returns nil when entry not found" do
-    Given "no keychain entry"
-    Open3.stubs(:capture3)
-         .with("security", "find-generic-password",
-           "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w")
-         .returns(["", "security: SecKeychainSearchCopyNext", stub(success?: false)])
-
-    When "loading from keychain"
+    When "loading from keychain with no entry"
     result = Dev::Credentials.load_from_keychain("curseforge", "api_key")
 
     Then "it returns nil"
+    _ * Open3.capture3("security", "find-generic-password", "-a", "d3mlabs/dev", "-s", "curseforge/api_key", "-w") >>
+      ["", "security: SecKeychainSearchCopyNext", exit_status(1)]
     result.nil?
   end
 
@@ -260,7 +258,6 @@ class Dev::CredentialsTest < Minitest::Test
     Given "a credentials file home and a terminal that accepts the offer and pastes a key"
     tmpdir = Dir.mktmpdir("credentials-test-")
     ENV["XDG_CONFIG_HOME"] = tmpdir
-    Dev::Credentials.stubs(:keychain_available?).returns(false)
     ui = AnsweringUi.new(answer: true, secret: "cf-pasted")
 
     When "prompting for a credential"
@@ -270,6 +267,7 @@ class Dev::CredentialsTest < Minitest::Test
     )
 
     Then "the browser opened on the page, the value is answered and stored, and the Ui saw the fact but not the secret"
+    _ * Dev::Credentials.keychain_available? >> false
     1 * Kernel.system("open", "https://console.curseforge.com")
     value == "cf-pasted"
     Dev::Credentials.load_from_file("curseforge", "api_key") == "cf-pasted"
@@ -286,7 +284,6 @@ class Dev::CredentialsTest < Minitest::Test
     Given "a terminal that declines the offer and pastes a key"
     tmpdir = Dir.mktmpdir("credentials-test-")
     ENV["XDG_CONFIG_HOME"] = tmpdir
-    Dev::Credentials.stubs(:keychain_available?).returns(false)
     ui = AnsweringUi.new(answer: false, secret: "cf-pasted")
 
     When "prompting for a credential"
@@ -296,6 +293,7 @@ class Dev::CredentialsTest < Minitest::Test
     )
 
     Then
+    _ * Dev::Credentials.keychain_available? >> false
     0 * Kernel.system(any_parameters)
     value == "cf-pasted"
     ui.secrets_asked == ["Paste your CurseForge API key"]
@@ -309,7 +307,6 @@ class Dev::CredentialsTest < Minitest::Test
     Given "no ENV value, nothing stored, and a terminal that pastes"
     tmpdir = Dir.mktmpdir("credentials-test-")
     ENV["XDG_CONFIG_HOME"] = tmpdir
-    Dev::Credentials.stubs(:keychain_available?).returns(false)
     ui = AnsweringUi.new(secret: "pasted-token")
 
     When "resolving the credential"
@@ -319,6 +316,7 @@ class Dev::CredentialsTest < Minitest::Test
     )
 
     Then "the paste is the answer, stored for next time"
+    _ * Dev::Credentials.keychain_available? >> false
     result == "pasted-token"
     ui.secrets_asked == ["Paste your Test token"]
     Dev::Credentials.load_from_file("test", "token") == "pasted-token"

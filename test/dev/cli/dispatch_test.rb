@@ -101,15 +101,12 @@ class Dev::Cli::DispatchTest < Minitest::Test
       .answers(["run", "view"], with: GREEN)
     ui = typed_mock(Dev::Ui)
     remote = Dev::Cli::Dispatch::Remote.new(transport: transport(gh, root:), root:, ui:)
-    crossing = nil
-    ui.expects(:print_remote_crossing).with { |destination:, workspace:| crossing = [destination, workspace] }
 
     When
     remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "x"])) { flunk("the env was resolved") }
 
     Then
-    crossing.fetch(0) == "on ue-engine-hosted"
-    crossing.fetch(1).match?(/\Asnapshot \h{12}\z/)
+    1 * ui.print_remote_crossing(destination: "on ue-engine-hosted", workspace: regexp_matches(/\Asnapshot \h{12}\z/))
 
     Cleanup
     FileUtils.rm_rf(workspace)
@@ -170,8 +167,6 @@ class Dev::Cli::DispatchTest < Minitest::Test
     # dispatch creates one — the run whose mounts are under test.
     engine = recording_engine { |args| args[0, 2] != ["container", "inspect"] }
     ui = typed_mock(Dev::Ui)
-    crossing = nil
-    ui.expects(:print_remote_crossing).with { |destination:, workspace:| crossing = [destination, workspace] }
     remote = Dev::Cli::Dispatch::Remote.new(
       transport: local_container(engine, root:, image: image(persist: true), token: "gho_host"),
       root:, ui:,
@@ -182,7 +177,7 @@ class Dev::Cli::DispatchTest < Minitest::Test
 
     Then "Done; the service container was created with the checkout mounted once, then one exec in the checkout with GH_TOKEN named, the verb its argv; the origin as it was"
     outcome == Dev::Cli::Dispatch::Outcome::Done.new
-    crossing == ["in cellbound-3d-linux (container)", "the checkout, mounted"]
+    1 * ui.print_remote_crossing(destination: "in cellbound-3d-linux (container)", workspace: "the checkout, mounted")
     created = engine.runs.find { |verb, flag, *_rest| verb == "run" && flag == "-d" }
     created.each_cons(2).include?(["-v", "#{checkout}:#{checkout}"])
     created.each_cons(2).count { |flag, mount| flag == "-v" && mount.start_with?(checkout.to_s) } == 1

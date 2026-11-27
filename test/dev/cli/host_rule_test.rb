@@ -73,11 +73,12 @@ class Dev::Cli::HostRuleTest < Minitest::Test
   end
 
   test "inside is a host fact, read from the container marker by default" do
-    Given
-    Dev::ContainerContext.stubs(:inside?).returns(true)
+    When "a rule is built on the default, in a container"
+    default = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker))
 
-    Expect
-    Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: @marker)).inside_container?
+    Then
+    1 * Dev::ContainerContext.inside? >> true
+    default.inside_container?
     !rule.inside_container?
   end
 

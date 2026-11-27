@@ -69,29 +69,27 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
   test "--check runs the inspector's check, not its report" do
     Given "a status factory handing back an inspector that expects check"
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:check).once
-    status.expects(:report).never
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When "running status --check with no project"
     command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then
-    true
+    1 * status.check
+    0 * status.report
   end
 
   test "a PostureDriftError from --check reaches the boundary unwrapped" do
     Given "an inspector whose check finds drift"
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:check).raises(Dev::RunnerStatus::PostureDriftError, "host posture: 1 of 2 facts drifted")
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When
-    error = assert_raises(Dev::RunnerStatus::PostureDriftError) do
-      command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
-    end
+    command.call(args: Dev::Cli::ParsedArgs.new(words: ["--check"], switches: ["--check"]), context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then
+    1 * status.check >> raises(Dev::RunnerStatus::PostureDriftError, "host posture: 1 of 2 facts drifted")
+    error = raises Dev::RunnerStatus::PostureDriftError
     error.message == "host posture: 1 of 2 facts drifted"
   end
 
@@ -99,7 +97,6 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "a status factory recording its wiring; a checkout declaring ue-farm"
     seen = []
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:report).once
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(
       runner_status_factory: ->(container_required, project_root, declarations, ui) {
         seen << [container_required, project_root, declarations, ui]
@@ -113,59 +110,71 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root: root, ui: ui, runner_roles: { "ue-farm" => FARM }))
 
     Then "the container fact, the checkout, its declarations and the Ui reach the inspector"
+    1 * status.report
     seen == [[true, Pathname.new(root), { "ue-farm" => FARM }, ui]]
   end
 
   test "status works projectless (the machine view needs no checkout)" do
     Given "a status factory"
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:report).once
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(runner_status_factory: ->(_container, _root, _declarations, _ui) { status })
 
     When "running status with no project"
     command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: typed_mock(Dev::Ui)))
 
     Then
-    true
+    1 * status.report
   end
 
   test "the default factory builds the real inspector" do
-    Given "a command with its default wiring, the construction boundary intercepted"
+    Given "a command with its default wiring"
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:report).once
     ui = typed_mock(Dev::Ui)
-    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: nil, roles: Dev::RunnerRoleAliases::ALL, ui: ui).returns(status)
     command = Dev::Cli::Builtins::RunnerStatusCommand.new
 
     When "running status outside a checkout"
     command.call(args: no_args, context: Dev::Cli::ExecutionContext.new(ui: ui))
 
-    Then "the expectation on the construction boundary holds: no lock, no repo, the aliases alone as roles"
-    true
+    Then "the construction boundary: no lock, no repo, the aliases alone as roles"
+    1 * Dev::RunnerStatus.new(container_required: false, pins: [], repo: nil, roles: Dev::RunnerRoleAliases::ALL, ui: ui) >> status
+    1 * status.report
   end
 
-  test "in a checkout the default factory hands the inspector the checkout's repo — or nil when gh cannot name it — and its roles bound to it" do
-    Given "a checkout at 2.1.0 declaring a grouped ue-farm, with an empty lock, gh answering (or not)"
+  test "in a checkout the default factory hands the inspector the checkout's repo and its roles bound to it" do
+    Given "a checkout at 2.1.0 declaring a grouped ue-farm, with an empty lock"
     root = Pathname.new(Dir.mktmpdir)
     File.write(root.join(Dev::Lifecycle::ProjectVersion::FILE_NAME), "2.1.0\n")
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:report).once
-    Dev::RunnerSetup.expects(:current_repo).then.raises(Dev::RunnerSetup::Error, "could not resolve the repo via gh: offline") if repo.nil?
-    Dev::RunnerSetup.expects(:current_repo).returns(repo) unless repo.nil?
     ui = typed_mock(Dev::Ui)
-    Dev::RunnerStatus.expects(:new).with(container_required: false, pins: [], repo: repo, roles: roles, ui: ui).returns(status)
     command = Dev::Cli::Builtins::RunnerStatusCommand.new
 
     When
     command.call(args: no_args, context: build_context(root: root.to_s, ui: ui, runner_roles: { "ue-farm" => GROUPED_FARM }))
 
-    Then "with a repo, the declaration binds to it at the checkout's series beside the aliases; without one, the aliases alone"
-    true
+    Then "gh names the repo; the declaration binds to it at the checkout's series beside the aliases"
+    1 * Dev::RunnerSetup.current_repo >> "d3mlabs/dev"
+    1 * Dev::RunnerStatus.new(
+      container_required: false, pins: [], repo: "d3mlabs/dev",
+      roles: Dev::RunnerRoleAliases::ALL.merge("ue-farm" => GROUPED_FARM.bind(repo: "d3mlabs/dev", version: "2.1.0")), ui: ui,
+    ) >> status
+    1 * status.report
+  end
 
-    Where
-    repo           | roles
-    "d3mlabs/dev"  | Dev::RunnerRoleAliases::ALL.merge("ue-farm" => GROUPED_FARM.bind(repo: "d3mlabs/dev", version: "2.1.0"))
-    nil            | Dev::RunnerRoleAliases::ALL
+  test "in a checkout gh cannot name, the default factory hands the inspector no repo and the aliases alone" do
+    Given "a checkout at 2.1.0 declaring a grouped ue-farm, with an empty lock"
+    root = Pathname.new(Dir.mktmpdir)
+    File.write(root.join(Dev::Lifecycle::ProjectVersion::FILE_NAME), "2.1.0\n")
+    status = typed_mock(Dev::RunnerStatus)
+    ui = typed_mock(Dev::Ui)
+    command = Dev::Cli::Builtins::RunnerStatusCommand.new
+
+    When
+    command.call(args: no_args, context: build_context(root: root.to_s, ui: ui, runner_roles: { "ue-farm" => GROUPED_FARM }))
+
+    Then "gh is offline; an unresolvable checkout is no repo"
+    1 * Dev::RunnerSetup.current_repo >> raises(Dev::RunnerSetup::Error, "could not resolve the repo via gh: offline")
+    1 * Dev::RunnerStatus.new(container_required: false, pins: [], repo: nil, roles: Dev::RunnerRoleAliases::ALL, ui: ui) >> status
+    1 * status.report
   end
 
   test "roles_at_hand binds the checkout's declarations to its repo at v<major>, the aliases beside them" do
@@ -214,18 +223,18 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     pins = Dev::Deps::Lockfile.new(dir: root).read
     loader = FakeReferencedRoleLoader.new(AGENT_REFERENCE => REFERENCED_AGENT)
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:report).once
-    Dev::RunnerSetup.expects(:current_repo).returns("d3mlabs/cellbound-3d")
     ui = typed_mock(Dev::Ui)
-    Dev::RunnerStatus.expects(:new).with(
-      container_required: false, pins: pins, repo: "d3mlabs/cellbound-3d", roles: Dev::RunnerRoleAliases::ALL.merge("agent" => REFERENCED_AGENT), ui: ui,
-    ).returns(status)
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(referenced_role_loader: loader)
 
     When
     command.call(args: no_args, context: build_context(root: root.to_s, ui: ui, runner_roles: { "agent" => AGENT_REFERENCE }))
 
     Then "the lane is reported under the referenced role; the loader saw the reference and the lock"
+    1 * Dev::RunnerSetup.current_repo >> "d3mlabs/cellbound-3d"
+    1 * Dev::RunnerStatus.new(
+      container_required: false, pins: pins, repo: "d3mlabs/cellbound-3d", roles: Dev::RunnerRoleAliases::ALL.merge("agent" => REFERENCED_AGENT), ui: ui,
+    ) >> status
+    1 * status.report
     pins.length == 1
     loader.loads == [[AGENT_REFERENCE, pins]]
   end
@@ -234,7 +243,6 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     Given "a factory recording the entries it is handed; a loader that must not be asked"
     seen = []
     status = typed_mock(Dev::RunnerStatus)
-    status.expects(:check).once
     loader = FakeReferencedRoleLoader.new({})
     command = Dev::Cli::Builtins::RunnerStatusCommand.new(
       referenced_role_loader: loader,
@@ -251,6 +259,7 @@ class Dev::Cli::Builtins::RunnerStatusCommandTest < Minitest::Test
     )
 
     Then "the declaration alone reaches the inspector"
+    1 * status.check
     seen == [{ "ue-farm" => FARM }]
     loader.loads == []
   end

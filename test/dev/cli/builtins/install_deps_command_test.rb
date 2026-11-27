@@ -27,20 +27,19 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     lock(root, gem_dep)
     order = sequence("trust before install")
     trust = typed_mock(Dev::ShadowenvTrust)
-    trust.expects(:ensure!).with(project_root: root).once.in_sequence(order)
     installer = typed_mock(Dev::Deps::Installer)
+    host_service = typed_mock(Dev::HostService)
+    # call order: the integrations spawn under the project's shadowenv, which refuses a directory this user has not yet trusted
+    trust.expects(:ensure!).with(project_root: root).once.in_sequence(order)
     installer.expects(:install).once.in_sequence(order)
-    command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations, _ui) { installer },
-      host_service: quiet_host_service,
-      shadowenv_trust: trust,
-    )
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
 
     Then "the sequence held"
-    true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -51,23 +50,20 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    installer.expects(:install)
-      .with(env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil)
-      .once
     host_service = typed_mock(Dev::HostService)
-    host_service.expects(:sync_skills).with(project_root: root).once
-    host_service.expects(:sync_learnings).with(project_root: root).once
-    command = Dev::Cli::Builtins::InstallDepsCommand.new(
-      installer_factory: ->(_lockfile, _integrations, _ui) { installer },
-      host_service: host_service,
-      shadowenv_trust: quiet_shadowenv_trust,
-    )
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
 
     Then "the hooks received the project in hand"
-    true
+    _ * trust.ensure! >> true
+    1 * installer.install(
+      env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil
+    )
+    1 * host_service.sync_skills(project_root: root)
+    1 * host_service.sync_learnings(project_root: root)
 
     Cleanup
     FileUtils.rm_rf(root)
@@ -78,12 +74,17 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-group-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:)
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install --group build"
     command.call(args: parsed_args(command, ["--group", "build"]), context: build_context(root))
 
     Then "the installer received the narrowed selection"
+    _ * trust.ensure! >> true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:build], except: [], integration_types: nil
     )
@@ -97,12 +98,17 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-group-gems-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:)
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install --group=app"
     command.call(args: parsed_args(command, ["--group=app"]), context: build_context(root))
 
     Then "the app group installed"
+    _ * trust.ensure! >> true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: [:app], except: [], integration_types: nil
     )
@@ -116,12 +122,17 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-integration-"))
     lock(root, gem_dep, brew_build_dep, gh_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:)
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install --group build --integration brew"
     command.call(args: parsed_args(command, ["--group", "build", "--integration", "brew"]), context: build_context(root))
 
     Then "the installer received both narrowings"
+    _ * trust.ensure! >> true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host,
       groups: [:build], except: [], integration_types: [:brew]
@@ -136,12 +147,17 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-except-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:)
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service:, trust:)
 
     When "running dev deps install --except app"
     command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
 
     Then "the installer received the exclusion"
+    _ * trust.ensure! >> true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
     )
@@ -155,12 +171,14 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:, inside_container: true)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service: typed_mock(Dev::HostService), trust:, inside_container: true)
 
     When "running dev deps install with no flags"
     command.call(args: no_args, context: build_context(root))
 
     Then "the whole lock is installed, same as on a host — the locked Ruby included, as a brew pin from Linuxbrew"
+    _ * trust.ensure! >> true
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [], integration_types: nil
     )
@@ -174,12 +192,14 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-except-"))
     lock(root, gem_dep, brew_build_dep)
     installer = typed_mock(Dev::Deps::Installer)
-    command = build_command(installer:, inside_container: true)
+    trust = typed_mock(Dev::ShadowenvTrust)
+    command = build_command(installer:, host_service: typed_mock(Dev::HostService), trust:, inside_container: true)
 
     When "running dev deps install --except app"
     command.call(args: parsed_args(command, ["--except", "app"]), context: build_context(root))
 
     Then "the user's exclusion is the whole exclusion, and with no gems selected no Ruby is provisioned"
+    _ * trust.ensure! >> true
     1 * installer.install(
       env: Dev::Deps.detect_env, host: Dev::Deps.detect_host, groups: nil, except: [:app], integration_types: nil
     )
@@ -192,16 +212,16 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     Given "an inside command whose factory records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-inside-wiring-"))
     installer = typed_mock(Dev::Deps::Installer)
-    installer.stubs(:install)
     factory_inputs = []
     host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
       installer_factory: ->(lockfile, integrations, ui) {
         factory_inputs << [lockfile, integrations, ui]
         installer
       },
       host_service: host_service,
-      shadowenv_trust: quiet_shadowenv_trust,
+      shadowenv_trust: trust,
       inside_container: true,
     )
 
@@ -209,6 +229,8 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: build_context(root))
 
     Then "every installing type is wired inside — the container is a host with its own data root — and the host-side hooks do not run"
+    _ * trust.ensure! >> true
+    _ * installer.install
     _, integrations, _ = factory_inputs.fetch(0)
     integrations.keys.sort == Dev::Deps::Registry.host_integrations(
       project_root: root, project_name: "TestProject", store: Dev::Deps::LocalStore.new(data_root: root.to_s), ui: Dev::NoUi.new,
@@ -229,19 +251,24 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     root = Pathname.new(Dir.mktmpdir("install-deps-pinned-"))
     installer = typed_mock(Dev::Deps::Installer)
     factory_inputs = []
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
       installer_factory: ->(lockfile, integrations, ui) {
         factory_inputs << [lockfile, integrations, ui]
         installer
       },
-      host_service: quiet_host_service,
-      shadowenv_trust: quiet_shadowenv_trust,
+      host_service: host_service,
+      shadowenv_trust: trust,
     )
 
     When "running dev deps install --group build --integration brew --pinned-taps"
     command.call(args: parsed_args(command, %w[--group build --integration brew --pinned-taps]), context: build_context(root))
 
     Then "brew pins taps; the group and integration narrowing are what was named"
+    _ * trust.ensure! >> true
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     _, integrations, _ = factory_inputs.fetch(0)
     integrations.fetch(:brew).pin_taps?
     1 * installer.install(env: anything, host: anything, groups: [:build], except: [], integration_types: [:brew])
@@ -254,15 +281,16 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     Given "a factory that records its inputs"
     root = Pathname.new(Dir.mktmpdir("install-deps-wiring-"))
     installer = typed_mock(Dev::Deps::Installer)
-    installer.stubs(:install)
     factory_inputs = []
+    host_service = typed_mock(Dev::HostService)
+    trust = typed_mock(Dev::ShadowenvTrust)
     command = Dev::Cli::Builtins::InstallDepsCommand.new(
       installer_factory: ->(lockfile, integrations, ui) {
         factory_inputs << [lockfile, integrations, ui]
         installer
       },
-      host_service: quiet_host_service,
-      shadowenv_trust: quiet_shadowenv_trust,
+      host_service: host_service,
+      shadowenv_trust: trust,
     )
     context = build_context(root)
 
@@ -270,6 +298,10 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     command.call(args: no_args, context: context)
 
     Then "the installer got the project-rooted lockfile, the host integration set and the Ui the run speaks through"
+    _ * trust.ensure! >> true
+    _ * installer.install
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     lockfile, integrations, ui = factory_inputs.fetch(0)
     lockfile.is_a?(Dev::Deps::Lockfile)
     integrations.key?(:bundler)
@@ -286,12 +318,15 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     # pins nothing (install dispatches nothing). Only the machine-global
     # boundary — the host service — is faked.
     root = Pathname.new(Dir.mktmpdir("install-deps-default-"))
-    command = Dev::Cli::Builtins::InstallDepsCommand.new(host_service: quiet_host_service)
+    host_service = typed_mock(Dev::HostService)
+    command = Dev::Cli::Builtins::InstallDepsCommand.new(host_service: host_service)
 
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
 
     Then "the real install pass writes nothing but the project's own (trusted, empty) .shadowenv.d"
+    _ * host_service.sync_skills
+    _ * host_service.sync_learnings
     Dir.children(root) == [".shadowenv.d"]
     Dir.children(root / ".shadowenv.d").none? { |entry| entry.end_with?(".lisp") }
 
@@ -301,21 +336,18 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
 
   private
 
-  def build_command(installer: typed_mock(Dev::Deps::Installer), inside_container: false)
+  # The trust and host service are collaborators the command calls; their
+  # own tests own the real behaviour, so each test states their answers.
+  def build_command(
+    installer: typed_mock(Dev::Deps::Installer), host_service: typed_mock(Dev::HostService),
+    trust: typed_mock(Dev::ShadowenvTrust), inside_container: false
+  )
     Dev::Cli::Builtins::InstallDepsCommand.new(
       installer_factory: ->(_lockfile, _integrations, _ui) { installer },
-      host_service: quiet_host_service,
-      shadowenv_trust: quiet_shadowenv_trust,
+      host_service: host_service,
+      shadowenv_trust: trust,
       inside_container:,
     )
-  end
-
-  # A trust that answers without touching the host: the trust test owns the
-  # real behaviour, here it is a collaborator the command calls.
-  def quiet_shadowenv_trust
-    trust = typed_mock(Dev::ShadowenvTrust)
-    trust.stubs(:ensure!).returns(true)
-    trust
   end
 
   # Writes a real deps.lock under the project root —
@@ -337,13 +369,6 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
   def gh_build_dep
     Dev::Deps::Dependency.new(name: "UnrealEngine", integration: :gh, group: :build,
       version: "5.6.1-css-83", hash: nil, metadata: { "repo" => "satisfactorymodding/UnrealEngine" })
-  end
-
-  def quiet_host_service
-    host_service = typed_mock(Dev::HostService)
-    host_service.stubs(:sync_skills)
-    host_service.stubs(:sync_learnings)
-    host_service
   end
 
   def build_context(project_root)

@@ -458,9 +458,10 @@ module Dev
     # @raise [OutsideDataRootError] when the path is not under the host's data root
     sig { params(host_path: Pathname).returns(Pathname) }
     def inside_path(host_path)
-      relative = host_path.expand_path.relative_path_from(Pathname(Dev::DataRoot.path))
+      data_root = Dev::DataRoot.path(host_os: @host_os)
+      relative = host_path.expand_path.relative_path_from(Pathname(data_root))
       if relative.each_filename.first == ".."
-        raise OutsideDataRootError, "#{host_path} is not under the data root #{Dev::DataRoot.path}; the container has no path for it"
+        raise OutsideDataRootError, "#{host_path} is not under the data root #{data_root}; the container has no path for it"
       end
 
       Pathname(data_root_mount) / relative
@@ -502,7 +503,7 @@ module Dev
     # @return [String]
     sig { returns(String) }
     def data_root_mount
-      @host_os == "linux" ? Dev::DataRoot.path : DATA_ROOT_MOUNT
+      @host_os == "linux" ? Dev::DataRoot.path(host_os: @host_os) : DATA_ROOT_MOUNT
     end
 
     # Env for a container dev creates: the inside marker (see

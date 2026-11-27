@@ -27,30 +27,28 @@ class Dev::Cli::Builtins::HelpCommandTest < Minitest::Test
     root = build_root({ "test" => Dev::Cli::ProjectCommand.new(run: "rspec", desc: "Run tests") })
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_node).with(path: [], command: root, out: out).once
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { root })
 
     When "running help"
     command.call(args: no_args, context: build_context)
 
-    Then "the printer expectation holds"
-    true
+    Then "the printer renders the root at the empty path"
+    1 * usage_printer.print_node(path: [], command: root, out: out)
   end
 
   test "the tree is consulted at call time, not construction time" do
     Given "a provider over a root assigned only after help is constructed"
     root = nil
-    printed = []
+    out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.stubs(:print_node).with { |command:, **| printed << command }
-    command = build_help(usage_printer: usage_printer, root_provider: -> { root })
+    command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { root })
     root = build_root({ "up" => Dev::Cli::ProjectCommand.new(run: "./bin/up.rb", desc: "Setup") })
 
     When "running help"
     command.call(args: no_args, context: build_context)
 
     Then "the late-assigned root is what renders"
-    printed.fetch(0) == root
+    1 * usage_printer.print_node(path: [], command: root, out: out)
   end
 
   test "help <path> renders the usage of the node the path reaches" do
@@ -59,14 +57,13 @@ class Dev::Cli::Builtins::HelpCommandTest < Minitest::Test
     outer = build_group(["test"], children: { "unit" => inner })
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_node).with(path: ["test", "unit"], command: inner, out: out).once
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { build_root({ "test" => outer }) })
 
     When "asking for help on the nested path"
     command.call(args: parsed_args(command, ["test", "unit"]), context: build_context)
 
-    Then "the printer expectation holds"
-    true
+    Then "the printer renders the inner group at its path"
+    1 * usage_printer.print_node(path: ["test", "unit"], command: inner, out: out)
   end
 
   test "help <path> walks through a runnable command's children to a leaf" do
@@ -75,14 +72,13 @@ class Dev::Cli::Builtins::HelpCommandTest < Minitest::Test
     test = Dev::Cli::ProjectCommand.new(run: "./bin/test.sh", children: { "unit" => leaf })
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_node).with(path: ["test", "unit"], command: leaf, out: out).once
     command = build_help(usage_printer: usage_printer, out: out, root_provider: -> { build_root({ "test" => test }) })
 
     When "asking for help on the leaf"
     command.call(args: parsed_args(command, ["test", "unit"]), context: build_context)
 
-    Then "the printer expectation holds"
-    true
+    Then "the printer renders the leaf at its path"
+    1 * usage_printer.print_node(path: ["test", "unit"], command: leaf, out: out)
   end
 
   test "help <path> on an unknown path raises UnknownCommandError naming the path" do

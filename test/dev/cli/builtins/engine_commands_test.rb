@@ -45,7 +45,6 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
     Given "a project with an `engine:` block"
     resources = Dev::EngineResources::Hint.new(cpus: 8, memory_gib: 24)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: resources).once
     out = StringIO.new
 
     When "bringing the engine up"
@@ -53,20 +52,20 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
       .call(args: no_args, context: project_context(engine: resources))
 
     Then
+    1 * provisioner.provision!(resources: resources)
     out.string == "dev: engine up.\n"
   end
 
   test "engine up outside a project (or in one without a hint) provisions at the engine's defaults" do
     Given "#{description}"
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:provision!).with(resources: nil).once
     context = in_project ? project_context(engine: nil) : no_project
 
     When "bringing the engine up"
     Dev::Cli::Builtins::EngineUpCommand.new(provisioner: provisioner, out: StringIO.new).call(args: no_args, context: context)
 
     Then
-    true
+    1 * provisioner.provision!(resources: nil)
 
     Where
     description                      | in_project
@@ -76,137 +75,137 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   # --- down -------------------------------------------------------------------
 
-  def engine_with(records)
-    engine = typed_mock(Dev::ContainerEngine)
-    engine.stubs(:running_containers).returns(records)
-    engine
-  end
-
-  def down_command(engine:, provisioner:, out: StringIO.new)
-    provisioner.stubs(:engine).returns(engine)
+  def down_command(provisioner:, out: StringIO.new)
     Dev::Cli::Builtins::EngineDownCommand.new(provisioner: provisioner, out: out, home: "/Users/jp")
   end
 
   test "engine down on an idle engine just stops it" do
     Given "nothing running"
-    engine = engine_with([])
-    engine.expects(:run).never
+    engine = typed_mock(Dev::ContainerEngine)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:assert_stoppable!).once
-    provisioner.expects(:stop!).once
     out = StringIO.new
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project)
+    down_command(provisioner: provisioner, out: out).call(args: no_args, context: no_project)
 
     Then
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> []
+    0 * engine.run
+    1 * provisioner.assert_stoppable!
+    1 * provisioner.stop!
     out.string == "dev: engine stopped.\n"
   end
 
   test "engine down stops dev's own containers from any checkout without asking, then the engine" do
     Given "one managed container running"
     order = sequence("containers then engine")
-    engine = engine_with([MANAGED])
+    engine = typed_mock(Dev::ContainerEngine)
+    provisioner = typed_mock(Dev::EngineProvisioner)
+    # call order: the containers stop before the engine hosting them does
     engine.expects(:run).with(["stop", "-t", "0", MANAGED.name], out: File::NULL, err: File::NULL)
       .once.in_sequence(order).returns(true)
-    provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:assert_stoppable!)
     provisioner.expects(:stop!).once.in_sequence(order)
     ui = AnsweringUi.new
     out = StringIO.new
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
+    down_command(provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
 
     Then "the checkout is named, not the container; nothing was asked"
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> [MANAGED]
+    _ * provisioner.assert_stoppable!
     out.string == "dev: stopped build container: snappy (~/src/snappy)\ndev: engine stopped.\n"
     ui.asked.empty?
   end
 
   test "engine down fails loudly when a container will not stop, leaving the engine up" do
     Given "a managed container whose stop fails"
-    engine = engine_with([MANAGED])
-    engine.stubs(:run).returns(false)
+    engine = typed_mock(Dev::ContainerEngine)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:assert_stoppable!)
-    provisioner.expects(:stop!).never
 
     When "bringing the engine down"
     error = assert_raises(Dev::Cli::Builtins::EngineDownCommand::StopFailedError) do
-      down_command(engine: engine, provisioner: provisioner).call(args: no_args, context: no_project)
+      down_command(provisioner: provisioner).call(args: no_args, context: no_project)
     end
 
     Then "the container is named"
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> [MANAGED]
+    _ * engine.run >> false
+    _ * provisioner.assert_stoppable!
+    0 * provisioner.stop!
     error.message == "could not stop container #{MANAGED.name}."
   end
 
   test "engine down asks through the Ui seam before stopping containers dev does not manage, no being the default: #{description} (dev#533)" do
     Given "a foreign container running and a terminal that answers #{answer.inspect}"
-    engine = engine_with([FOREIGN])
-    stop = engine.expects(:run).with(["stop", "-t", "0", FOREIGN.name], out: File::NULL, err: File::NULL).returns(true)
+    engine = typed_mock(Dev::ContainerEngine)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:assert_stoppable!)
     ui = AnsweringUi.new(answer:)
-    if stopped
-      stop.once
-      provisioner.expects(:stop!).once
-    else
-      stop.never
-      provisioner.expects(:stop!).never
-    end
     out = StringIO.new
 
     When "bringing the engine down"
     error = begin
-      down_command(engine: engine, provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
+      down_command(provisioner: provisioner, out: out).call(args: no_args, context: no_project(ui:))
       nil
     rescue Dev::Cli::Builtins::EngineDownCommand::EngineBusyError => e
       e
     end
 
     Then "the foreign container is listed first; the question defaults to no; anything but yes is a refusal naming it"
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> [FOREIGN]
+    _ * provisioner.assert_stoppable!
+    stops * engine.run(["stop", "-t", "0", FOREIGN.name], out: File::NULL, err: File::NULL) >> true
+    stops * provisioner.stop!
     out.string.include?("my-postgres (not managed by dev)")
     ui.questions == [AnsweringUi::Question.new(text: "dev: stop them too?", default: false)]
     error.nil? == stopped
     error.nil? || error.message.include?("my-postgres")
 
     Where
-    description      | answer | stopped
-    "yes"            | true   | true
-    "no"             | false  | false
-    "no terminal"    | nil    | false
+    description      | answer | stopped | stops
+    "yes"            | true   | true    | 1
+    "no"             | false  | false   | 0
+    "no terminal"    | nil    | false   | 0
   end
 
   test "engine down --force stops everything without asking" do
     Given "a managed and a foreign container"
-    engine = engine_with([MANAGED, FOREIGN])
-    engine.expects(:run).with(["stop", "-t", "0", MANAGED.name], out: File::NULL, err: File::NULL).once.returns(true)
-    engine.expects(:run).with(["stop", "-t", "0", FOREIGN.name], out: File::NULL, err: File::NULL).once.returns(true)
+    engine = typed_mock(Dev::ContainerEngine)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:assert_stoppable!)
-    provisioner.expects(:stop!).once
     ui = AnsweringUi.new
 
     When "forcing the engine down"
-    command = down_command(engine: engine, provisioner: provisioner)
+    command = down_command(provisioner: provisioner)
     command.call(args: parsed_args(command, ["--force"]), context: no_project(ui:))
 
     Then
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> [MANAGED, FOREIGN]
+    _ * provisioner.assert_stoppable!
+    1 * engine.run(["stop", "-t", "0", MANAGED.name], out: File::NULL, err: File::NULL) >> true
+    1 * engine.run(["stop", "-t", "0", FOREIGN.name], out: File::NULL, err: File::NULL) >> true
+    1 * provisioner.stop!
     ui.asked.empty?
   end
 
   test "engine down on an engine dev does not own refuses before touching any container" do
     Given "an explicit DOCKER_HOST with a managed container running"
-    engine = engine_with([MANAGED])
-    engine.expects(:run).never
+    engine = typed_mock(Dev::ContainerEngine)
     provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.expects(:assert_stoppable!).raises(Dev::EngineProvisioner::UnmanagedEngineError, "DOCKER_HOST is set")
-    provisioner.expects(:stop!).never
 
     When "bringing the engine down"
-    down_command(engine: engine, provisioner: provisioner).call(args: no_args, context: no_project)
+    down_command(provisioner: provisioner).call(args: no_args, context: no_project)
 
     Then
+    _ * provisioner.engine >> engine
+    _ * engine.running_containers >> [MANAGED]
+    0 * engine.run
+    1 * provisioner.assert_stoppable! >> raises(Dev::EngineProvisioner::UnmanagedEngineError, "DOCKER_HOST is set")
+    0 * provisioner.stop!
     raises Dev::EngineProvisioner::UnmanagedEngineError
   end
 
@@ -223,9 +222,9 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
     Dev::PrefixVolumes::Volume.new(name: name, user: user, stale: stale, mounted_by: mounted_by)
   end
 
-  def status_output(engine_status)
-    provisioner = typed_mock(Dev::EngineProvisioner)
-    provisioner.stubs(:status).returns(engine_status)
+  # Runs `engine status` over the provisioner and returns what it printed;
+  # the test states the provisioner's report as an interaction.
+  def status_output(provisioner)
     out = StringIO.new
     Dev::Cli::Builtins::EngineStatusCommand.new(provisioner: provisioner, out: out, home: "/Users/jp")
       .call(args: no_args, context: no_project)
@@ -234,14 +233,19 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on colima: the VM line, then what runs in it" do
     Given "a running VM with one managed and one foreign container"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     report = status(
       kind: :colima, running: true, stoppable: true, resources: Dev::EngineResources.new(cpus: 8, memory_gib: 16),
       colima: Dev::ColimaProvisioner::Vm.new(running: true, cpus: 8, memory_gib: 16, disk_gib: 100), containers: [MANAGED, FOREIGN],
       prefix_volumes: [prefix_volume("dev-linuxbrew", user: nil, stale: false)],
     )
 
-    Expect
-    status_output(report) == <<~OUT
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output == <<~OUT
       engine: colima VM — running, 8 cpus / 16 GiB
       containers running:
         snappy (~/src/snappy)
@@ -253,10 +257,15 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on a stopped or absent colima VM says so and has nothing to list" do
     Given "#{description}"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     report = status(kind: :colima, running: false, stoppable: true, resources: resources, colima: vm)
 
-    Expect
-    status_output(report) == expected
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output == expected
 
     Where
     description | vm                                                                                    | resources                                        | expected
@@ -266,6 +275,7 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on bare Linux: the daemon line and its converge facts" do
     Given "an active dockerd with everything converged"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     linux = Dev::LinuxEngineProvisioner::Status.new(
       docker_path: "/usr/bin/docker", desktop_shim: false, dockerd_active: true, buildx: true,
       in_docker_group: true, systemd_enabled: nil,
@@ -278,8 +288,12 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
         prefix_volume("dev-linuxbrew-runner", user: "runner", stale: false),
       ])
 
-    Expect
-    status_output(report) == <<~OUT
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output == <<~OUT
       engine: dockerd — running, 12 cpus / 32 GiB
       dockerd: converged (docker group, buildx)
       containers running: none
@@ -292,14 +306,19 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on Linux names what is not converged, including a Docker Desktop shim" do
     Given "a distro where Desktop's shim owns docker and the user is not in the group"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     linux = Dev::LinuxEngineProvisioner::Status.new(
       docker_path: "/usr/bin/docker", desktop_shim: true, dockerd_active: false, buildx: false,
       in_docker_group: false, systemd_enabled: false,
     )
     report = status(kind: :docker, running: false, stoppable: true, resources: nil, linux: linux)
 
-    Expect
-    status_output(report) == <<~OUT
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output == <<~OUT
       engine: dockerd — stopped
       dockerd: not converged — Docker Desktop shim owns docker, not in the docker group, no buildx, systemd off in wsl.conf (dev engine up fixes this)
       containers running: none
@@ -309,6 +328,7 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on WSL2 adds the .wslconfig line: #{description}" do
     Given "the host facts"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     linux = Dev::LinuxEngineProvisioner::Status.new(
       docker_path: "/usr/bin/docker", desktop_shim: false, dockerd_active: true, buildx: true,
       in_docker_group: true, systemd_enabled: true,
@@ -321,8 +341,12 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
     report = status(kind: :docker, running: true, stoppable: true,
       resources: Dev::EngineResources.new(cpus: 8, memory_gib: 24), linux: linux, wsl: wsl)
 
-    Expect
-    status_output(report).lines.fetch(2) == "#{wsl_line}\n"
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output.lines.fetch(2) == "#{wsl_line}\n"
 
     Where
     description          | interop | configured_cpus | configured_memory | wsl_line
@@ -334,10 +358,15 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status on an explicit DOCKER_HOST reports the daemon and that dev will not manage it" do
     Given "#{description}"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     report = status(kind: :explicit, running: running, stoppable: false, resources: resources)
 
-    Expect
-    status_output(report).lines.fetch(0) == "#{line}\n"
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output.lines.fetch(0) == "#{line}\n"
 
     Where
     description | running | resources                                        | line
@@ -347,10 +376,15 @@ class Dev::Cli::Builtins::EngineCommandsTest < Minitest::Test
 
   test "engine status with a docker record on macOS names Docker Desktop as the unmanaged engine" do
     Given "bare docker on darwin, no linux facts"
+    provisioner = typed_mock(Dev::EngineProvisioner)
     report = status(kind: :docker, running: true, stoppable: false, resources: Dev::EngineResources.new(cpus: 6, memory_gib: 12))
 
-    Expect
-    status_output(report).lines.fetch(0) == "engine: dockerd (Docker Desktop, not managed by dev) — running, 6 cpus / 12 GiB\n"
+    When "asking for the status"
+    output = status_output(provisioner)
+
+    Then
+    _ * provisioner.status >> report
+    output.lines.fetch(0) == "engine: dockerd (Docker Desktop, not managed by dev) — running, 6 cpus / 12 GiB\n"
   end
 
   private

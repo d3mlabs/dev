@@ -520,12 +520,12 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "`--runner` sends `package <build>#{suffix}` to the label; nothing is built, packaged or reported here" do
     Given
     @remote.install_workflow
-    @ui.expects(:print_remote_crossing).with(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
 
     When
     execute(command, "cellbound-3d-release", *extra, "--runner", "linux-pool")
 
     Then
+    1 * @ui.print_remote_crossing(destination: "on linux-pool", workspace: ScriptedRemote::WORKSPACE)
     @remote.dispatched_verbs == "package cellbound-3d-linux64-release#{suffix}"
     @remote.dispatched_inputs.fetch("fetch") == "false"
     @remote.download.nil?
@@ -542,13 +542,13 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   test "`--fetch` asks the workflow to upload, then downloads the artifact by the build's name into the build's store directory" do
     Given
     @remote.install_workflow
-    @ui.stubs(:print_remote_crossing)
     the_build = build("cellbound-3d-linux64-release")
 
     When
     execute(command, "cellbound-3d-release", "--runner", "linux-pool", "--fetch")
 
     Then
+    _ * @ui.print_remote_crossing
     @remote.dispatched_inputs == { "verbs" => "package cellbound-3d-linux64-release", "runner" => "linux-pool", "fetch" => "true" }
     @remote.download == ["run", "download", "42", "--name", "cellbound-3d-linux64-release", "--dir", store.dir(the_build).to_s]
     store.dir(the_build).directory?

@@ -174,11 +174,14 @@ class Dev::LinuxDataRootProvisionerTest < Minitest::Test
     Given "a root at 2775 whose gid names no group (the group database is the boundary)"
     FileUtils.mkdir_p(@root)
     File.chmod(0o2775, @root)
-    Etc.stubs(:getgrgid).raises(ArgumentError, "can't find group for 65534")
 
-    Expect
-    provisioner.status.writable
-    !provisioner.status.shared
+    When
+    status = provisioner.status
+
+    Then
+    _ * Etc.getgrgid >> raises(ArgumentError, "can't find group for 65534")
+    status.writable
+    !status.shared
     @executor.runs.empty?
   end
 

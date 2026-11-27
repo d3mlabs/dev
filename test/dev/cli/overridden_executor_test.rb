@@ -48,62 +48,45 @@ class Dev::Cli::OverriddenExecutorTest < Minitest::Test
     )
   end
 
-  # Recording strategy mocks: stages captures every dispatch in order, and
-  # any message a test doesn't stub is an unexpected invocation — so each
-  # test also proves the other tail message was never sent.
-  def build_strategies(stages)
-    builtin_executor = typed_mock(Dev::Cli::BuiltinExecutor)
-    builtin_executor.stubs(:execute).with { |cmd, args:, context:|
-      stages << [:builtin_stage, cmd, args, context]
-      true }
-    project_executor = typed_mock(Dev::Cli::ProjectExecutor)
-    { builtin_executor: builtin_executor, project_executor: project_executor }
-  end
-
   # Regression lineage of dev#85: a stamping slot's project tail must be
   # the waiting message, so the caller's installed stamp after execute
   # stays reachable.
   test "a stamping slot runs the builtin stage first, then the waiting project tail" do
-    Given "a stamping overridden slot over recording strategies"
+    Given "a stamping overridden slot over strict strategies"
     command = build_command(stamps: true)
     context = build_context
-    stages = []
-    strategies = build_strategies(stages)
-    strategies.fetch(:project_executor).stubs(:run_waiting).with { |cmd, args:|
-      stages << [:project_tail, cmd, args]
-      true }
-    executor = Dev::Cli::OverriddenExecutor.new(**strategies)
-
+    builtin_executor = typed_mock(Dev::Cli::BuiltinExecutor)
+    project_executor = typed_mock(Dev::Cli::ProjectExecutor)
+    executor = Dev::Cli::OverriddenExecutor.new(builtin_executor:, project_executor:)
     args = Dev::Cli::ParsedArgs.new(words: ["--fast"], switches: ["--fast"])
+    # call order: the builtin stage is the slot's super(); the project tail owns the slot after it, never before
+    stage_then_tail = sequence("builtin stage, then project tail")
+    builtin_executor.expects(:execute).with(command.builtin, args: args, context: context).once.in_sequence(stage_then_tail)
+    project_executor.expects(:run_waiting).with(command.project, args: ["--fast"]).once.in_sequence(stage_then_tail)
 
     When "executing the overridden command"
     executor.execute(command, args: args, context: context)
 
-    Then "builtin super() ran first, and the tail was run_waiting with the words"
-    stages == [
-      [:builtin_stage, command.builtin, args, context],
-      [:project_tail, command.project, ["--fast"]],
-    ]
+    Then "builtin super() ran first, the tail was run_waiting with the words, and the exec tail was never sent"
+    0 * project_executor.exec_into
   end
 
   test "a non-stamping slot runs the builtin stage first, then the exec tail-call" do
-    Given "a non-stamping overridden slot over recording strategies"
+    Given "a non-stamping overridden slot over strict strategies"
     command = build_command(stamps: false)
     context = build_context
-    stages = []
-    strategies = build_strategies(stages)
-    strategies.fetch(:project_executor).stubs(:exec_into).with { |cmd, args:|
-      stages << [:project_tail, cmd, args]
-      true }
-    executor = Dev::Cli::OverriddenExecutor.new(**strategies)
+    builtin_executor = typed_mock(Dev::Cli::BuiltinExecutor)
+    project_executor = typed_mock(Dev::Cli::ProjectExecutor)
+    executor = Dev::Cli::OverriddenExecutor.new(builtin_executor:, project_executor:)
+    # call order: the exec tail replaces the process, so a builtin stage after it would never run
+    stage_then_tail = sequence("builtin stage, then project tail")
+    builtin_executor.expects(:execute).with(command.builtin, args: no_args, context: context).once.in_sequence(stage_then_tail)
+    project_executor.expects(:exec_into).with(command.project, args: []).once.in_sequence(stage_then_tail)
 
     When "executing the overridden command"
     executor.execute(command, args: no_args, context: context)
 
-    Then "builtin super() ran first, and the tail was exec_into with the words"
-    stages == [
-      [:builtin_stage, command.builtin, no_args, context],
-      [:project_tail, command.project, []],
-    ]
+    Then "builtin super() ran first, the tail was exec_into with the words, and the waiting tail was never sent"
+    0 * project_executor.run_waiting
   end
 end

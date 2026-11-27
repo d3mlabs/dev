@@ -336,17 +336,10 @@ module Dev
       # @raise [FormulaApiError] if the API does not answer 2xx
       sig { params(name: String).returns(T::Hash[String, T.untyped]) }
       def api_formula(name)
-        response = get_formula_api(name)
+        response = Net::HTTP.get_response(URI("#{FORMULA_API}/#{name}.json"))
         raise FormulaApiError.new(name:, code: response.code.to_s) unless response.is_a?(Net::HTTPSuccess)
 
         JSON.parse(T.must(response.body))
-      end
-
-      # @param name [String] formula name
-      # @return [Net::HTTPResponse]
-      sig { params(name: String).returns(Net::HTTPResponse) }
-      def get_formula_api(name)
-        Net::HTTP.get_response(URI("#{FORMULA_API}/#{name}.json"))
       end
     end
   end

@@ -24,8 +24,9 @@ require "support/sorbet_helper"
 require "support/provisioning_guard_helper"
 require "support/host_probe_guard_helper"
 require "support/parsed_args_helper"
-require "support/http_response_helper"
 require "support/value_semantics_assertions"
+require "support/exit_statuses"
+require "support/http_responses"
 require "minitest/hell" if ENV["MT_HELL"]
 
 # Arm the provisioning kill-switch for every test process (dev#208): a test
@@ -42,8 +43,9 @@ ENV[Dev::HostProbeGuard::ENV_VAR] = "1"
 Minitest::Test.include(ProvisioningGuardHelper)
 Minitest::Test.include(HostProbeGuardHelper)
 Minitest::Test.include(ParsedArgsHelper)
-Minitest::Test.include(HttpResponseHelper)
 Minitest::Test.include(ValueSemanticsAssertions)
+Minitest::Test.include(ExitStatuses)
+Minitest::Test.include(HttpResponses)
 
 # Minitest Reporters (optional; rspock uses RakeRerunReporter)
 begin

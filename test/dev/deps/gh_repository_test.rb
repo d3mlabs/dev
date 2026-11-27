@@ -5,6 +5,9 @@ require "test_helper"
 require "dev/deps/gh_repository"
 require "json"
 
+# GhRepository is the adapter over the gh CLI, so the `gh api` calls it makes
+# are its contract and each answer is a real capture3 triple: how it reads
+# the status and the stdout/stderr is the behaviour under test.
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::GhRepositoryTest < Minitest::Test
   SLUG = "satisfactorymodding/UnrealEngine"
@@ -39,42 +42,43 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     { "name" => name, "commit" => { "sha" => sha } }
   end
 
-  # Stub the two list endpoints the repository enumerates (single page each).
-  # An empty releases list is cross-checked against /releases/latest, so a
+  # The two list endpoints the repository enumerates, one page each. An
+  # empty releases list is cross-checked against /releases/latest, so a
   # tag-only universe also answers that with the 404 a release-less repo gives.
-  def stub_universe(repo, slug: SLUG, releases: [], tags: [])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{slug}/releases?per_page=100&page=1")
-        .returns([JSON.generate(releases), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{slug}/tags?per_page=100&page=1")
-        .returns([JSON.generate(tags), "", stub(success?: true)])
-    stub_no_latest_release(repo, slug: slug) if releases.empty?
+  def releases_path(slug: SLUG, page: 1)
+    "repos/#{slug}/releases?per_page=100&page=#{page}"
   end
 
-  def stub_no_latest_release(repo, slug: SLUG)
-    repo.stubs(:run_gh_api)
-        .with("repos/#{slug}/releases/latest")
-        .returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
+  def tags_path(slug: SLUG, page: 1)
+    "repos/#{slug}/tags?per_page=100&page=#{page}"
   end
 
-  def stub_latest_release(repo, tag, slug: SLUG)
-    repo.stubs(:run_gh_api)
-        .with("repos/#{slug}/releases/latest")
-        .returns([JSON.generate({ "tag_name" => tag }), "", stub(success?: true)])
+  def latest_release_path(slug: SLUG)
+    "repos/#{slug}/releases/latest"
+  end
+
+  def gh_ok(payload)
+    [JSON.generate(payload), "", exit_status(0)]
+  end
+
+  def gh_failure(err)
+    ["", err, exit_status(1)]
+  end
+
+  def gh_not_found
+    gh_failure("gh: Not Found (HTTP 404)")
   end
 
   test "find enumerates tags and releases into one facts-complete universe" do
     Given "a repo with a released tag and a source-only tag"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      releases: [RELEASE_JSON],
-      tags: [tag_json("5.6.1-css-83", "css83sha"), tag_json("5.6.1-release", "relsha")])
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then "the released tag carries commit + all assets; the bare tag just its commit"
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([RELEASE_JSON])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("5.6.1-css-83", "css83sha"), tag_json("5.6.1-release", "relsha")])
     package.versions.map(&:version).sort == ["5.6.1-css-83", "5.6.1-release"]
     released = package.version("5.6.1-css-83")
     released.digest.nil?
@@ -90,34 +94,34 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   test "find orders releases last, newest at the end — the unconstrained pick" do
     Given "two releases (API lists newest first) and a bare tag"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      releases: [
-        { "tag_name" => "v2.0", "draft" => false, "assets" => [] },
-        { "tag_name" => "v1.0", "draft" => false, "assets" => [] },
-      ],
-      tags: [tag_json("v2.0", "sha2"), tag_json("v1.0", "sha1"), tag_json("wip", "sha3")])
+    releases = [
+      { "tag_name" => "v2.0", "draft" => false, "assets" => [] },
+      { "tag_name" => "v1.0", "draft" => false, "assets" => [] },
+    ]
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then "tag-only first, then releases oldest to newest — last wins unconstrained"
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok(releases)
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v2.0", "sha2"), tag_json("v1.0", "sha1"), tag_json("wip", "sha3")])
     package.versions.map(&:version) == ["wip", "v1.0", "v2.0"]
   end
 
   test "find skips draft releases — no tag exists until publish" do
     Given "a draft release alongside a published one"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      releases: [
-        { "tag_name" => "v2.0-draft", "draft" => true, "assets" => [] },
-        { "tag_name" => "v1.0", "draft" => false, "assets" => [] },
-      ],
-      tags: [tag_json("v1.0", "sha1")])
+    releases = [
+      { "tag_name" => "v2.0-draft", "draft" => true, "assets" => [] },
+      { "tag_name" => "v1.0", "draft" => false, "assets" => [] },
+    ]
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok(releases)
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1.0", "sha1")])
     package.versions.map(&:version) == ["v1.0"]
   end
 
@@ -126,61 +130,48 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     repo = Dev::Deps::GhRepository.new
     page_one = (1..100).map { |i| tag_json("v#{i}", "sha#{i}") }
     page_two = [tag_json("v101", "sha101")]
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/releases?per_page=100&page=1")
-        .returns([JSON.generate([]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=1")
-        .returns([JSON.generate(page_one), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=2")
-        .returns([JSON.generate(page_two), "", stub(success?: true)])
-    stub_no_latest_release(repo)
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path(page: 1)) >> gh_ok(page_one)
+    _ * Open3.capture3("gh", "api", tags_path(page: 2)) >> gh_ok(page_two)
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     package.versions.size == 101
   end
 
   test "find retries an empty releases list that /releases/latest contradicts" do
     Given "a releases list that answers [] once (a GitHub replica flake) while /releases/latest names a release"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:pause)
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/releases?per_page=100&page=1")
-        .returns([JSON.generate([]), "", stub(success?: true)])
-        .then.returns([JSON.generate([RELEASE_JSON]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=1")
-        .returns([JSON.generate([tag_json("5.6.1-css-83", "css83sha")]), "", stub(success?: true)])
-    stub_latest_release(repo, "5.6.1-css-83")
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then "the universe carries the release's facts, not the flake's tag-only view"
+    _ * Kernel.sleep
+    # Mocha serves the most recently declared matching expectation first, so
+    # the retry's answer is declared before the first call's.
+    1 * Open3.capture3("gh", "api", releases_path) >> gh_ok([RELEASE_JSON])
+    1 * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("5.6.1-css-83", "css83sha")])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_ok({ "tag_name" => "5.6.1-css-83" })
     package.version("5.6.1-css-83").metadata["assets"].map { |a| a["sha256"] } == ["aaaa1111", "bbbb2222", "cccc3333"]
   end
 
   test "find accepts an empty releases list that /releases/latest confirms — a tag-only repo" do
     Given "no releases and /releases/latest answering 404"
     repo = Dev::Deps::GhRepository.new
-    repo.expects(:pause).never
-    repo.expects(:run_gh_api)
-        .with("repos/#{SLUG}/releases?per_page=100&page=1")
-        .once
-        .returns([JSON.generate([]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=1")
-        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
-    stub_no_latest_release(repo)
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then "one list call, no retry: the tag is the whole universe"
+    0 * Kernel.sleep
+    1 * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1", "sha")])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     package.versions.map(&:version) == ["v1"]
     !package.version("v1").metadata.key?("assets")
   end
@@ -188,76 +179,70 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   test "find raises InconsistentReleasesError when the releases list stays empty against /releases/latest" do
     Given "a releases list that answers [] on every attempt while /releases/latest names a release"
     repo = Dev::Deps::GhRepository.new
-    repo.expects(:pause).times(Dev::Deps::GhRepository::RELEASES_RETRIES)
-    repo.expects(:run_gh_api)
-        .with("repos/#{SLUG}/releases?per_page=100&page=1")
-        .times(1 + Dev::Deps::GhRepository::RELEASES_RETRIES)
-        .returns([JSON.generate([]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=1")
-        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
-    stub_latest_release(repo, "v1")
+    retries = Dev::Deps::GhRepository::RELEASES_RETRIES
+    attempts = 1 + retries
 
     When "finding"
     repo.find(prebuilt_id)
 
     Then "it refuses rather than lock a universe missing its release facts"
+    retries * Kernel.sleep
+    attempts * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1", "sha")])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_ok({ "tag_name" => "v1" })
     raises Dev::Deps::GhRepository::InconsistentReleasesError
   end
 
   test "find raises ApiError when the /releases/latest cross-check itself fails" do
     Given "an empty releases list and a server error from /releases/latest"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/releases?per_page=100&page=1")
-        .returns([JSON.generate([]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/tags?per_page=100&page=1")
-        .returns([JSON.generate([tag_json("v1", "sha")]), "", stub(success?: true)])
-    repo.stubs(:run_gh_api)
-        .with("repos/#{SLUG}/releases/latest")
-        .returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
 
     When "finding"
     repo.find(prebuilt_id)
 
     Then "an unconfirmed empty list is not believed"
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1", "sha")])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_failure("gh: Internal Server Error (HTTP 500)")
     raises Dev::Deps::GhRepository::ApiError
   end
 
   test "pause sleeps for the backoff — the clock seam the retry tests stub" do
-    Given "a repository and a stubbed clock"
+    Given "a repository"
     repo = Dev::Deps::GhRepository.new
-    Kernel.expects(:sleep).with(2)
 
     When "pausing"
     repo.send(:pause, 2)
 
     Then
-    true
+    1 * Kernel.sleep(2)
   end
 
   test "find claims an empty Resolved declaration set — self-contained by contract" do
     Given "a repo with one tag"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo, tags: [tag_json("v1", "sha")])
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1", "sha")])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     package.version("v1").declarations == Dev::Deps::Declarations::Resolved.new([])
   end
 
   test "find raises PackageNotFoundError for a repo with no tags or releases" do
     Given "an empty universe"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo)
 
     When "finding"
     repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     raises Dev::Deps::Repository::PackageNotFoundError
   end
 
@@ -269,12 +254,13 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
       "draft" => false,
       "assets" => [{ "name" => "tool-Linux.tar.zst", "size" => 100, "digest" => nil }],
     }
-    stub_universe(repo, releases: [release], tags: [tag_json("v1.0", "sha")])
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([release])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok([tag_json("v1.0", "sha")])
     assets = package.version("v1.0").metadata["assets"]
     assets.size == 1
     !assets[0].key?("sha256")
@@ -283,12 +269,12 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   test "find raises RepoAccessError when the repo is invisible — list endpoints 404 only then" do
     Given "a 404 on the releases list"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api).returns(["", "gh: Not Found (HTTP 404)", stub(success?: false)])
 
     When "finding in an inaccessible repo"
     repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", anything) >> gh_not_found
     raises Dev::Deps::GhRepository::RepoAccessError
   end
 
@@ -296,42 +282,43 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     Given "gh demanding authentication"
     repo = Dev::Deps::GhRepository.new
     err = "To get started with GitHub CLI, please run: gh auth login"
-    repo.stubs(:run_gh_api).returns(["", err, stub(success?: false)])
 
     When "finding without authentication"
     repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", anything) >> gh_failure(err)
     raises Dev::Deps::GhRepository::AuthenticationError
   end
 
   test "find raises ApiError for other gh failures" do
     Given "a server error from gh"
     repo = Dev::Deps::GhRepository.new
-    repo.stubs(:run_gh_api).returns(["", "gh: Internal Server Error (HTTP 500)", stub(success?: false)])
 
     When "finding during an API outage"
     repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", anything) >> gh_failure("gh: Internal Server Error (HTTP 500)")
     raises Dev::Deps::GhRepository::ApiError
   end
 
   test "find reports a series tag as its series' head — the version tag cut at the commit it points at — and as a version" do
     Given "a repo deploying heads: v1 at 1.3.0's commit while 1.4.0 is the greatest tag; no v2 yet for the 2.0.0 release"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      releases: [
-        { "tag_name" => "2.0.0", "draft" => false, "assets" => [] },
-        { "tag_name" => "1.4.0", "draft" => false, "assets" => [] },
-        { "tag_name" => "1.3.0", "draft" => false, "assets" => [] },
-      ],
-      tags: [tag_json("v1", "sha13"), tag_json("2.0.0", "sha20"), tag_json("1.4.0", "sha14"), tag_json("1.3.0", "sha13")])
+    releases = [
+      { "tag_name" => "2.0.0", "draft" => false, "assets" => [] },
+      { "tag_name" => "1.4.0", "draft" => false, "assets" => [] },
+      { "tag_name" => "1.3.0", "draft" => false, "assets" => [] },
+    ]
+    tags = [tag_json("v1", "sha13"), tag_json("2.0.0", "sha20"), tag_json("1.4.0", "sha14"), tag_json("1.3.0", "sha13")]
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then "one head, v1 → 1.3.0; every tag is a version, the series tag included, so `tag: \"v1\"` still names it"
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok(releases)
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok(tags)
     package.heads == [Dev::Deps::SeriesHead.new(series: Dev::Lifecycle::Series.new(1), version: "1.3.0")]
     package.versions.map(&:version).sort == ["1.3.0", "1.4.0", "2.0.0", "v1"]
     package.version("v1").source == "sha13"
@@ -340,31 +327,46 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   test "find reads a head's version through the release-tag prefix, and the greatest when several of the series sit at the commit" do
     Given "v1 at a commit carrying v1.3.0 and a re-tag v1.3.1 of the same tree, beside a tag of another series and a word"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      tags: [tag_json("v1", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.3.1", "sha13"), tag_json("v2.0.0", "sha13"), tag_json("stable", "sha13")])
+    tags = [tag_json("v1", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.3.1", "sha13"), tag_json("v2.0.0", "sha13"), tag_json("stable", "sha13")]
 
     When "finding"
     package = repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok(tags)
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     package.heads.map(&:to_s) == ["v1 → v1.3.1"]
   end
 
   test "find reports no head for a series tag at a commit no release of its series was cut at" do
-    Given "v1 pointing at a commit with no version tag, v2 pointing at a commit of series 1, and a repo with no series tags at all"
+    Given "v1 pointing at a commit with no version tag and v2 pointing at a commit of series 1"
     repo = Dev::Deps::GhRepository.new
-    stub_universe(repo,
-      tags: [tag_json("v1", "shaX"), tag_json("v2", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")])
-    bare = Dev::Deps::GhRepository.new
-    stub_universe(bare, tags: [tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")])
+    tags = [tag_json("v1", "shaX"), tag_json("v2", "sha13"), tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")]
 
-    When "finding both"
+    When "finding"
     pointed = repo.find(prebuilt_id)
-    derived = bare.find(prebuilt_id)
 
-    Then "neither pointer names a version of the universe; the bare repo keeps no heads, so its channel is derived"
+    Then "neither pointer names a version of the universe"
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok(tags)
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     pointed.heads.empty?
     pointed.versions.map(&:version).sort == ["v1", "v1.3.0", "v1.4.0", "v2"]
+  end
+
+  test "find keeps no heads for a repo with no series tags at all — its channel is derived" do
+    Given "a repo with version tags only"
+    bare = Dev::Deps::GhRepository.new
+    tags = [tag_json("v1.3.0", "sha13"), tag_json("v1.4.0", "sha14")]
+
+    When "finding"
+    derived = bare.find(prebuilt_id)
+
+    Then
+    _ * Open3.capture3("gh", "api", releases_path) >> gh_ok([])
+    _ * Open3.capture3("gh", "api", tags_path) >> gh_ok(tags)
+    _ * Open3.capture3("gh", "api", latest_release_path) >> gh_not_found
     derived.heads.empty?
   end
 
@@ -372,12 +374,12 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
     Given "a commit address"
     repo = Dev::Deps::GhRepository.new
     sha = "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
-    repo.expects(:run_gh_api).never
 
     When "lifting"
     version = repo.at(Dev::Deps::PackageId.new(integration: :gh, name: "json", source: "nlohmann/json"), sha)
 
     Then "the address is trusted at resolve; no release facts, existence surfaces at fetch"
+    0 * Open3.capture3
     version.version == sha
     version.digest.nil?
     version.metadata == { "repo" => "nlohmann/json" }
@@ -387,12 +389,12 @@ class Dev::Deps::GhRepositoryTest < Minitest::Test
   test "find raises GhMissingError when the gh CLI is not installed" do
     Given "no gh binary on PATH"
     repo = Dev::Deps::GhRepository.new
-    Open3.stubs(:capture3).raises(Errno::ENOENT.new("gh"))
 
     When "finding without gh installed"
     repo.find(prebuilt_id)
 
     Then
+    _ * Open3.capture3 >> raises(Errno::ENOENT, "gh")
     raises Dev::Deps::GhRepository::GhMissingError
   end
 end

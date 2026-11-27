@@ -80,13 +80,13 @@ class Dev::HostLockTest < Minitest::Test
     Given "a locks dir whose mode this identity cannot set"
     root = Dir.mktmpdir("host-lock-test-")
     FileUtils.mkdir_p(File.join(root, "locks"))
-    FileUtils.stubs(:chmod).raises(Errno::EPERM)
     lock = Dev::HostLock.new(name: "brew", root: root)
 
     When
     value = lock.synchronize { :converged }
 
     Then "the lock is taken in that dir regardless"
+    _ * FileUtils.chmod >> raises(Errno::EPERM)
     value == :converged
     File.exist?(File.join(root, "locks", "brew.lock"))
 

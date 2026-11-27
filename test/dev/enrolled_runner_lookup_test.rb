@@ -118,13 +118,16 @@ class Dev::EnrolledRunnerLookupTest < Minitest::Test
   end
 
   test "the default repo resolver is RunnerSetup.current_repo — the one gh seam register derives its label from" do
-    Given "gh answered at that seam; the registry over a recording executor"
-    Dev::RunnerSetup.expects(:current_repo).once.returns("JPDuchesne/snappy")
+    Given "the registry over a recording executor"
     exec = RecordingExecutor.new { [runner_json(id: 9, name: "JPSFF", custom: ["snappy"]), "", true] }
     lookup = Dev::EnrolledRunnerLookup.new(registry: Dev::RunnerRegistry.new(executor: exec))
 
-    Expect
-    lookup.available == Dev::EnrolledRunner.for("JPDuchesne/snappy")
+    When
+    available = lookup.available
+
+    Then "gh answered at that seam"
+    1 * Dev::RunnerSetup.current_repo >> "JPDuchesne/snappy"
+    available == Dev::EnrolledRunner.for("JPDuchesne/snappy")
   end
 
   private

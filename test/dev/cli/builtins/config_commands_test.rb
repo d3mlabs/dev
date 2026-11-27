@@ -8,8 +8,8 @@ require "dev/cli/builtins/config_set_command"
 require "stringio"
 
 # The three `config` verbs share one shape (accessor + out, one verb call),
-# so one Where-driven file covers them: each row is a leaf class, the
-# accessor verb it forwards to, and the argv it forwards.
+# so one file covers them: the traits are Where-driven over the leaf classes,
+# and each leaf gets one forwarding test naming the accessor verb it calls.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::ConfigCommandsTest < Minitest::Test
   include SorbetHelper
@@ -32,25 +32,43 @@ class Dev::Cli::Builtins::ConfigCommandsTest < Minitest::Test
     Dev::Cli::Builtins::ConfigSetCommand  | 0
   end
 
-  test "#{klass} forwards its argv to the accessor's #{verb}" do
-    Given "an accessor expecting the verb and the injected stream"
+  test "config list forwards the injected stream to the accessor's list" do
+    Given "an accessor behind the list leaf"
     out = StringIO.new
     accessor = typed_mock(Dev::ConfigAccessor)
-    expectation = accessor.expects(verb).once
-    expectation.with(*expected_args, out: out)
-    command = klass.new(accessor: accessor, out: out)
+    command = Dev::Cli::Builtins::ConfigListCommand.new(accessor: accessor, out: out)
 
     When "calling the leaf"
-    command.call(args: parsed_args(command, args), context: build_context)
+    command.call(args: parsed_args(command, []), context: build_context)
 
     Then "the verb was called"
-    true
+    1 * accessor.list(out: out)
+  end
 
-    Where
-    klass                                 | verb  | args                  | expected_args
-    Dev::Cli::Builtins::ConfigListCommand | :list | []                    | []
-    Dev::Cli::Builtins::ConfigGetCommand  | :get  | ["plans_repo"]        | [["plans_repo"]]
-    Dev::Cli::Builtins::ConfigSetCommand  | :set  | ["plans_repo", "a/b"] | [["plans_repo", "a/b"]]
+  test "config get forwards its argv to the accessor's get" do
+    Given "an accessor behind the get leaf"
+    out = StringIO.new
+    accessor = typed_mock(Dev::ConfigAccessor)
+    command = Dev::Cli::Builtins::ConfigGetCommand.new(accessor: accessor, out: out)
+
+    When "calling the leaf"
+    command.call(args: parsed_args(command, ["plans_repo"]), context: build_context)
+
+    Then "the verb was called"
+    1 * accessor.get(["plans_repo"], out: out)
+  end
+
+  test "config set forwards its argv to the accessor's set" do
+    Given "an accessor behind the set leaf"
+    out = StringIO.new
+    accessor = typed_mock(Dev::ConfigAccessor)
+    command = Dev::Cli::Builtins::ConfigSetCommand.new(accessor: accessor, out: out)
+
+    When "calling the leaf"
+    command.call(args: parsed_args(command, ["plans_repo", "a/b"]), context: build_context)
+
+    Then "the verb was called"
+    1 * accessor.set(["plans_repo", "a/b"], out: out)
   end
 
   test "config list rejects trailing arguments with the accessor's usage" do

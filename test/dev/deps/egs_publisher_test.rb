@@ -16,6 +16,7 @@ require "tmpdir"
 transform!(RSpock::AST::Transformation)
 class Dev::Deps::EgsPublisherTest < Minitest::Test
   include LifecycleFixtures
+  include SorbetHelper
 
   NOON = Time.utc(2026, 11, 4, 12, 0, 0)
   DIGEST = "SHA256=#{"ab" * 32}".freeze
@@ -33,6 +34,7 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
     @project = @root / "project"
     @project.mkpath
     @data_root = @root / "data"
+    @credentials = typed_mock(Dev::Credentials, class_of: true)
   end
 
   def teardown
@@ -94,25 +96,28 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
     )
   end
 
-  def credentials
-    Dev::Credentials.stubs(:resolve).with(has_entries(namespace: "egs", key: "client_id", env_var: "EGS_CLIENT_ID")).returns("xyz-client")
-    Dev::Credentials.stubs(:resolve).with(has_entries(namespace: "egs", key: "client_secret", env_var: "EGS_CLIENT_SECRET")).returns("s3cret")
+  # The lookup of one stored egs credential, as the publisher asks for it.
+  def stored(key)
+    has_entries(namespace: "egs", key: key, env_var: "EGS_#{key.upcase}")
   end
 
   def publisher
-    Dev::Deps::EgsPublisher.new(project_root: @project, store: Dev::Deps::LocalStore.new(data_root: @data_root.to_s), host: "darwin")
+    Dev::Deps::EgsPublisher.new(
+      project_root: @project, store: Dev::Deps::LocalStore.new(data_root: @data_root.to_s), host: "darwin", credentials: @credentials,
+    )
   end
 
   test "publish unpacks each archive into a build root, registers it as a binary of its artifact with the secret in the environment, then labels it for the track" do
     Given "the tool installed, credentials stored, a win64 shipment on the live track"
     tool
-    credentials
     scratch = @root / "store/.egs"
 
     When
     receipt = publisher.publish([shipment("cellbound-3d-win64-release")], channel: channel, track: Dev::Lifecycle::Track::Live, scratch:)
 
     Then
+    _ * @credentials.resolve(stored("client_id")) >> "xyz-client"
+    _ * @credentials.resolve(stored("client_secret")) >> "s3cret"
     receipt == Dev::Lifecycle::Receipt.new(summary: "egs 1.2.0+3f2a1c9d8e7b → artifact a-win labelled Live")
     (scratch / "builds/cellbound-3d-win64-release/cellbound-3d-win64-release.bin").read == "cellbound-3d-win64-release"
     (scratch / "cloud/a-win").directory?
@@ -134,7 +139,6 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
   test "a testing deploy takes the testing label" do
     Given
     tool
-    credentials
 
     When
     receipt = publisher.publish(
@@ -143,6 +147,8 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
     )
 
     Then
+    _ * @credentials.resolve(stored("client_id")) >> "xyz-client"
+    _ * @credentials.resolve(stored("client_secret")) >> "s3cret"
     receipt.summary == "egs 1.2.0+3f2a1c9d8e7b → artifact a-win labelled QA"
     calls.last[0].end_with?("-mode=LabelBinary -Label=QA -Platform=Windows")
   end
@@ -150,12 +156,12 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
   test "a build for a platform the store does not serve is refused before anything runs" do
     Given "the tool installed and a linux64 shipment"
     tool
-    credentials
 
     When
     publisher.publish([shipment("cellbound-3d-linux64-release")], channel: channel, track: Dev::Lifecycle::Track::Live, scratch: @root / "store/.egs")
 
     Then
+    0 * @credentials.resolve
     error = raises Dev::Deps::EgsPublisher::UnsupportedPlatformError
     error.message == "cellbound-3d-linux64-release: the Epic Games Store serves win64 and macos builds, not linux64 — narrow the channel's `targets:`"
     !(@root / "calls").exist?
@@ -165,7 +171,6 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
   test "a build with no platform axis is refused too: the store labels a binary by platform" do
     Given "a channel accepting the gem"
     tool
-    credentials
     gem_channel = Dev::Lifecycle::Channel.new(
       name: "egs", accepts: [Dev::Lifecycle::BuildPattern.parse("rspock", all_targets)],
       publisher: Dev::Lifecycle::PublisherSpec::Integration.new(name: "egs"),
@@ -176,6 +181,7 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
     publisher.publish([shipment("rspock")], channel: gem_channel, track: Dev::Lifecycle::Track::Live, scratch: @root / "store/.egs")
 
     Then
+    0 * @credentials.resolve
     error = raises Dev::Deps::EgsPublisher::UnsupportedPlatformError
     error.message == "rspock: the Epic Games Store serves win64 and macos builds, not a build with no platform — narrow the channel's `targets:`"
   end
@@ -204,12 +210,13 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
   test "a failing tool is an UploadFailedError naming the step and carrying the tool's last lines" do
     Given
     tool(exit_with: 3)
-    credentials
 
     When
     publisher.publish([shipment("cellbound-3d-win64-release")], channel: channel, track: Dev::Lifecycle::Track::Live, scratch: @root / "store/.egs")
 
     Then
+    _ * @credentials.resolve(stored("client_id")) >> "xyz-client"
+    _ * @credentials.resolve(stored("client_secret")) >> "s3cret"
     error = raises Dev::Deps::EgsPublisher::UploadFailedError
     error.message == "BuildPatchTool upload of cellbound-3d-win64-release (1.2.0+3f2a1c9d8e7b) exited 3: BuildPatchTool said no"
     calls.size == 1
@@ -217,12 +224,12 @@ class Dev::Deps::EgsPublisherTest < Minitest::Test
 
   test "the options are checked before the tool or the credentials are looked up" do
     Given "a channel missing its product"
-    Dev::Credentials.expects(:resolve).never
 
     When
     publisher.publish([shipment("cellbound-3d-win64-release")], channel: channel(OPTIONS.except("product")), track: Dev::Lifecycle::Track::Live, scratch: @root / "store/.egs")
 
     Then
+    0 * @credentials.resolve
     raises Dev::Deps::EgsChannelOptions::MissingOptionError
   end
 

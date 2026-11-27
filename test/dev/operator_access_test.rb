@@ -153,11 +153,12 @@ class Dev::OperatorAccessTest < Minitest::Test
   end
 
   test "the default refresher is gh's own refresh for the scope, and its exit status is the answer" do
-    Given "gh answering the refresh with #{outcome}"
-    Kernel.expects(:system).once.with("gh", "auth", "refresh", "-h", "github.com", "-s", "admin:org").returns(outcome)
+    When "gh answers the refresh with #{outcome}"
+    refreshed = Dev::OperatorAccess::DEFAULT_REFRESHER.call("admin:org")
 
-    Expect
-    Dev::OperatorAccess::DEFAULT_REFRESHER.call("admin:org") == answer
+    Then
+    1 * Kernel.system("gh", "auth", "refresh", "-h", "github.com", "-s", "admin:org") >> outcome
+    refreshed == answer
 
     Where
     outcome | answer

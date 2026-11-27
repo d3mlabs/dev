@@ -27,6 +27,10 @@ require "dev/cli/global_catalog"
 require "dev/cli/group_executor"
 require "dev/cli/host_rule"
 require "dev/lifecycle"
+require "dev/linux_data_root_provisioner"
+require "dev/platform"
+require "dev/wsl_host"
+require "dev/wsl_runner_host"
 require "dev/cli/lifecycle_executor"
 require "dev/cli/overridden_executor"
 require "dev/cli/placement"
@@ -40,6 +44,7 @@ require "dev/cli/remote_dispatches"
 require "dev/cli/transport"
 require "dev/runner_registry"
 require "dev/runner_setup"
+require "dev/runner_user"
 
 module Dev
   module Cli
@@ -105,6 +110,10 @@ module Dev
       # container over a fake engine and a sync step that touches no git.
       HostsFactory = T.type_alias { T.proc.params(project: ProjectContext).returns(RemoteHosts) }
 
+      # @param host_os [String] the OS this dev composes its builtins for
+      #   ("darwin" / "linux" / "windows"): the platform seams the builtins
+      #   default on (`for_host`) and the placement binder read it from
+      #   here, so a test through the root pins the host once.
       sig do
         params(
           ui: Dev::Ui,
@@ -113,6 +122,7 @@ module Dev
           manifest_loader: ProjectManifestLoader,
           command_service: T.nilable(CommandService),
           host_rule: HostRule,
+          host_os: String,
           hosts_factory: HostsFactory,
           deployments_factory: DeploymentsFactory,
           releases_factory: ReleasesFactory,
@@ -125,6 +135,7 @@ module Dev
         manifest_loader: ProjectManifestLoader.new,
         command_service: nil,
         host_rule: HostRule.new,
+        host_os: Platform.os,
         hosts_factory: lambda { |project|
           RemoteHosts.new(
             containers: ProjectContainer.new(project_root: project.root, engine_hint: project.engine),
@@ -142,6 +153,7 @@ module Dev
         # One answer to "does this image's work run here?" for the command
         # runner, the container bring-up and `dev up`'s inside check alike.
         @host_rule = host_rule
+        @host_os = host_os
         @hosts_factory = hosts_factory
         @deployments_factory = deployments_factory
         @releases_factory = releases_factory
@@ -168,7 +180,8 @@ module Dev
       private
 
       # Assemble the per-run ExecutionContext: always the host half; the
-      # project half only when a manifest exists.
+      # project half only when a manifest exists. The project's root is the
+      # directory of the dev.yml this Runner was given.
       #
       # @param manifest [ProjectManifest, nil]
       # @return [ExecutionContext]
@@ -180,7 +193,7 @@ module Dev
           ui: @ui,
           project: ProjectContext.new(
             name: manifest.name,
-            root: Dev.target_project_root,
+            root: T.must(@dev_yaml_path).dirname,
             engine: manifest.engine,
             runner_roles: manifest.runner_roles,
             channels: manifest.channels,
@@ -253,7 +266,7 @@ module Dev
         return build_projectless_command_service if manifest.nil?
 
         dependency_service = DependencyService.new(
-          staleness: Dev::Deps::Staleness.new(project_root: Dev.target_project_root),
+          staleness: Dev::Deps::Staleness.new(project_root: context.project!.root),
         )
         # Help and completion walk the tree the service serves, and that tree
         # contains them — a self-reference by construction. The provider
@@ -311,7 +324,7 @@ module Dev
       # @raise [ProjectImages::UnknownImageError, ProjectImages::AmbiguousEnvironmentImageError]
       sig { params(manifest: ProjectManifest, project: ProjectContext).returns(Bindings) }
       def bind_placements(manifest, project)
-        binder = PlacementBinder.new(images: project.project_images)
+        binder = PlacementBinder.new(images: project.project_images, host_os: @host_os)
         targets = binder.bind_targets(manifest.targets)
         project_publishers = ProjectPublishers.new(root: project.root, ui: @ui, declared: manifest.channels.keys)
         publishers = project_publishers.contributed
@@ -350,7 +363,7 @@ module Dev
           {
             "help" => Builtins::HelpCommand.new(usage_printer:, out: @out, root_provider:),
             "complete" => Builtins::CompleteCommand.new(out: @out, root_provider:),
-            "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new),
+            "up" => Builtins::UpCommand.new(install_deps_command: Builtins::InstallDepsCommand.new, data_root_provisioner:),
           },
           T::Hash[String, Command],
         )
@@ -453,7 +466,9 @@ module Dev
           "complete" => complete,
           # `up` composes the same install `dev deps install` runs (the user's
           # intent, extended — it receives the args), then the services.
-          "up" => Builtins::UpCommand.new(install_deps_command: install_deps, service_dependencies: services_up, host_rule: @host_rule),
+          "up" => Builtins::UpCommand.new(
+            install_deps_command: install_deps, service_dependencies: services_up, host_rule: @host_rule, data_root_provisioner:,
+          ),
           # Bundler's verbs: update ≈ bundle update, install ≈ bundle install,
           # check ≈ bundle check (inspect and exit non-zero when unsatisfied).
           "deps" => CommandGroup.new(
@@ -608,6 +623,32 @@ module Dev
         verbs
       end
 
+      # The step that makes this host's shared data root exist, or nil
+      # where it does not apply (not Linux, an overridden root).
+      #
+      # @return [Dev::LinuxDataRootProvisioner, nil]
+      sig { returns(T.nilable(Dev::LinuxDataRootProvisioner)) }
+      def data_root_provisioner
+        Dev::LinuxDataRootProvisioner.for_host(host_os: @host_os)
+      end
+
+      # The Windows side a WSL runner needs, or nil off WSL.
+      #
+      # @return [Dev::WslRunnerHost, nil]
+      sig { returns(T.nilable(Dev::WslRunnerHost)) }
+      def wsl_runner_host
+        Dev::WslRunnerHost.for_host(host: Dev::WslHost.new(host_os: @host_os))
+      end
+
+      # The host rule for a runner's identity: on Linux the runner user named
+      # (or the one this host resolves), elsewhere nil.
+      #
+      # @return [Builtins::RunnerRegisterCommand::RunnerUserFactory]
+      sig { returns(Builtins::RunnerRegisterCommand::RunnerUserFactory) }
+      def runner_user_factory
+        ->(name, ui) { Dev::RunnerUser.for_host(name: name, ui: ui, host_os: @host_os) }
+      end
+
       # `runner` is ungated: enrollment is a machine concern (register derives
       # the repo label from the enclosing project; --org needs no project at
       # all), so the command exists everywhere — including the projectless
@@ -622,7 +663,7 @@ module Dev
             desc: "Enroll, inspect or unenroll this host as a self-hosted runner",
             category: Command::Category::Environment,
             children: {
-              "register" => Builtins::RunnerRegisterCommand.new,
+              "register" => Builtins::RunnerRegisterCommand.new(data_root_provisioner:, wsl_runner_host:, runner_user_factory:),
               "status" => Builtins::RunnerStatusCommand.new,
               "unregister" => Builtins::RunnerUnregisterCommand.new,
             },

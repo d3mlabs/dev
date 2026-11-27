@@ -396,7 +396,6 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     Given "a publisher over a terminal that pastes the key, no key anywhere yet, and a mod SMR does not know"
     tmpdir = Dir.mktmpdir("ficsit-cred-")
     ENV["XDG_CONFIG_HOME"] = tmpdir
-    Dev::Credentials.stubs(:keychain_available?).returns(false)
     ui = AnsweringUi.new(answer: false, secret: "smr-key")
     client = FakeFicsitClient.new(upload_answers.merge("GetModId" => { "getModByReference" => nil }))
     repository = Dev::Deps::FicsitRepository.new(client:, ui: ui)
@@ -404,7 +403,8 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
     When "publishing"
     repository.publish(snappy_shipments, channel:, track: Dev::Lifecycle::Track::Live, scratch: @scratch)
 
-    Then "the paste was asked for at this Ui, and is the credential the call carried"
+    Then "the paste was asked for at this Ui, and is the credential the call carried — the chain on its file backend, whatever this host has"
+    _ * Dev::Credentials.keychain_available? >> false
     raises Dev::Deps::FicsitRepository::ModNotFoundError
     ui.secrets_asked == ["Paste your ficsit.app API key"]
     client.calls.map(&:token) == ["smr-key"]
@@ -415,10 +415,11 @@ class Dev::Deps::FicsitRepositoryTest < Minitest::Test
   end
 
   test "the default sleeper is Kernel.sleep: the processing wait really waits outside tests" do
-    Given
-    Kernel.expects(:sleep).with(3).once
+    When "the default sleeper is asked for three seconds"
+    slept = Dev::Deps::FicsitRepository::DEFAULT_SLEEPER.call(3)
 
-    Expect
-    Dev::Deps::FicsitRepository::DEFAULT_SLEEPER.call(3).nil?
+    Then
+    1 * Kernel.sleep(3)
+    slept.nil?
   end
 end

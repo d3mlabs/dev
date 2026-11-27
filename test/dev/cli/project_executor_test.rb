@@ -21,32 +21,27 @@ class Dev::Cli::ProjectExecutorTest < Minitest::Test
     Given "an executor over a runner expecting the exec message"
     command = build_command
     command_runner = typed_mock(Dev::Cli::CommandRunner)
-    command_runner.expects(:exec_into).with(command, args: ["--fast", "spec/a"]).once
-    command_runner.expects(:run_waiting).never
     executor = Dev::Cli::ProjectExecutor.new(command_runner: command_runner)
 
     When "exec_into runs (the mocked runner returns, so the honesty guard raises)"
-    error = nil
-    begin
-      executor.exec_into(command, args: ["--fast", "spec/a"])
-    rescue Dev::Cli::ProjectExecutor::ExecReturnedError => e
-      error = e
-    end
+    executor.exec_into(command, args: ["--fast", "spec/a"])
 
     Then "the runner got the exec message, never the waiting one"
-    !error.nil?
+    1 * command_runner.exec_into(command, args: ["--fast", "spec/a"])
+    0 * command_runner.run_waiting
+    raises Dev::Cli::ProjectExecutor::ExecReturnedError
   end
 
   test "a returning exec boundary raises ExecReturnedError" do
     Given "a runner whose exec message returns control instead of replacing the process"
     command_runner = typed_mock(Dev::Cli::CommandRunner)
-    command_runner.stubs(:exec_into)
     executor = Dev::Cli::ProjectExecutor.new(command_runner: command_runner)
 
     When "exec_into runs"
     executor.exec_into(build_command, args: [])
 
     Then "the never-returns contract raises"
+    _ * command_runner.exec_into
     raises Dev::Cli::ProjectExecutor::ExecReturnedError
   end
 
@@ -54,14 +49,13 @@ class Dev::Cli::ProjectExecutorTest < Minitest::Test
     Given "an executor over a runner expecting the waiting message"
     command = build_command
     command_runner = typed_mock(Dev::Cli::CommandRunner)
-    command_runner.expects(:run_waiting).with(command, args: ["-v"]).once
-    command_runner.expects(:exec_into).never
     executor = Dev::Cli::ProjectExecutor.new(command_runner: command_runner)
 
     When "run_waiting runs"
     executor.run_waiting(command, args: ["-v"])
 
-    Then "control returned for the caller's post-execute steps"
-    true
+    Then "the runner got the waiting message, never the exec one, and control returned"
+    1 * command_runner.run_waiting(command, args: ["-v"])
+    0 * command_runner.exec_into
   end
 end

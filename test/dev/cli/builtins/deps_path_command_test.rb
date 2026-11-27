@@ -25,7 +25,6 @@ class Dev::Cli::Builtins::DepsPathCommandTest < Minitest::Test
     Given "a factory that records its root and an expecting accessor"
     root = Pathname.new("/tmp/deps-test")
     accessor = typed_mock(Dev::Deps::Accessor)
-    accessor.expects(:print_path).with(["ficsit", "some-mod", "linux"]).once
     factory_roots = []
     command = Dev::Cli::Builtins::DepsPathCommand.new(
       accessor_factory: ->(project_root) {
@@ -37,7 +36,8 @@ class Dev::Cli::Builtins::DepsPathCommandTest < Minitest::Test
     When "running deps path"
     command.call(args: parsed_args(command, ["ficsit", "some-mod", "linux"]), context: build_context(root))
 
-    Then "the accessor was scoped to the project root"
+    Then "the accessor was scoped to the project root and asked for the path"
+    1 * accessor.print_path(["ficsit", "some-mod", "linux"])
     factory_roots == [root]
   end
 

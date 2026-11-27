@@ -16,7 +16,7 @@ class Dev::Cli::Builtins::CacheGcCommandTest < Minitest::Test
 
   test "cache gc is a maintenance verb: exempt from the staleness guard, never stamps" do
     Given "a cache command"
-    command = build_command(typed_mock(Dev::Deps::CacheGc))
+    command = build_command(typed_mock(Dev::Deps::CacheGc), typed_mock(Dev::Lifecycle::SnapshotBranches))
 
     Expect "the declarative traits"
     command.staleness_exempt? == true
@@ -26,55 +26,59 @@ class Dev::Cli::Builtins::CacheGcCommandTest < Minitest::Test
   end
 
   test "gc runs with the default retention when --keep is absent" do
-    Given "a cache command over an expecting GC"
+    Given "a cache command over a GC and a quiet snapshot namespace"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: false).once
-    command = build_command(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    command = build_command(gc, branches)
 
     When "running cache gc"
     command.call(args: no_args, context: build_context)
 
-    Then "the expectation on the GC holds"
-    true
+    Then "the GC runs with the default retention"
+    1 * gc.gc(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: false)
+    _ * branches.prune >> []
   end
 
   test "gc drops the tool caches only when --tool-caches is given" do
-    Given "a cache command over an expecting GC"
+    Given "a cache command over a GC and a quiet snapshot namespace"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: true).once
-    command = build_command(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    command = build_command(gc, branches)
 
     When "running cache gc --tool-caches"
     command.call(args: parsed_args(command, ["--tool-caches"]), context: build_context)
 
-    Then "the expectation on the GC holds"
-    true
+    Then "the GC runs with the tool caches included"
+    1 * gc.gc(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: true)
+    _ * branches.prune >> []
   end
 
   test "gc honors the space-separated --keep flag" do
-    Given "a cache command over an expecting GC"
+    Given "a cache command over a GC and a quiet snapshot namespace"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: 5, images: [], tool_caches: false).once
-    command = build_command(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    command = build_command(gc, branches)
 
     When "running cache gc --keep 5"
     command.call(args: parsed_args(command, ["--keep", "5"]), context: build_context)
 
-    Then "the expectation on the GC holds"
-    true
+    Then "the GC runs with the given retention"
+    1 * gc.gc(keep: 5, images: [], tool_caches: false)
+    _ * branches.prune >> []
   end
 
   test "gc honors the inline --keep=N flag" do
-    Given "a cache command over an expecting GC"
+    Given "a cache command over a GC and a quiet snapshot namespace"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: 3, images: [], tool_caches: false).once
-    command = build_command(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    command = build_command(gc, branches)
 
     When "running cache gc --keep=3"
     command.call(args: parsed_args(command, ["--keep=3"]), context: build_context)
 
-    Then "the expectation on the GC holds"
-    true
+    Then "the GC runs with the given retention"
+    1 * gc.gc(keep: 3, images: [], tool_caches: false)
+    _ * branches.prune >> []
   end
 
   test "gc is handed the lock's pinned images: what the docker half keeps" do
@@ -89,33 +93,36 @@ class Dev::Cli::Builtins::CacheGcCommandTest < Minitest::Test
     )
     Dev::Deps::Lockfile.new(dir: Pathname(root)).lock(Dev::EnvironmentImage.stamp([pin]))
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with { |images:, **| images.map(&:name) == ["snappy-linux"] }.once
-    command = build_command(gc)
+    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
+    command = build_command(gc, branches)
 
     When "running cache gc in that checkout"
     command.call(args: no_args, context: build_context(root: Pathname(root)))
 
-    Then "the expectation on the GC holds"
-    true
+    Then "the GC is handed the one pinned image"
+    1 * gc.gc(
+      keep: Dev::Deps::CacheGc::DEFAULT_KEEP,
+      images: all_of(responds_with(:size, 1), includes(responds_with(:name, "snappy-linux"))),
+      tool_caches: false,
+    )
+    _ * branches.prune >> []
 
     Cleanup
     FileUtils.rm_rf(root)
   end
 
-  test "gc prunes the snapshot branches of the project's origin after the local tiers" do
-    Given "a cache command over a GC and a snapshot namespace, both expecting"
-    order = sequence("tiers")
+  test "gc prunes the snapshot branches of the project's origin alongside the local tiers" do
+    Given "a cache command over a GC and a snapshot namespace"
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).once.in_sequence(order)
     branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
-    branches.expects(:prune).with.once.in_sequence(order).returns([])
-    command = build_command(gc, snapshot_branches: branches)
+    command = build_command(gc, branches)
 
     When "running cache gc"
     command.call(args: no_args, context: build_context)
 
-    Then "the expectations hold, in order"
-    true
+    Then "both tiers are collected"
+    1 * gc.gc
+    1 * branches.prune >> []
   end
 
   test "the default factories build the real GC over the project lockfile and the snapshot namespace over its checkout" do
@@ -125,38 +132,26 @@ class Dev::Cli::Builtins::CacheGcCommandTest < Minitest::Test
     # default factories' composition.
     root = Pathname.new("/tmp/cache-test")
     gc = typed_mock(Dev::Deps::CacheGc)
-    gc.expects(:gc).with(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: false).once
-    Dev::Deps::CacheGc.expects(:new)
-      .with { |**kwargs| kwargs.fetch(:lockfile).is_a?(Dev::Deps::Lockfile) }
-      .returns(gc)
     branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
-    branches.expects(:prune).once.returns([])
-    Dev::Lifecycle::SnapshotBranches.expects(:new)
-      .with { |**kwargs| kwargs.fetch(:git).root == root }
-      .returns(branches)
     command = Dev::Cli::Builtins::CacheGcCommand.new
 
     When "running cache gc"
     command.call(args: no_args, context: build_context(root:))
 
-    Then "the expectations on the construction boundaries hold"
-    true
+    Then "the collaborators the factories built are the ones driven"
+    1 * Dev::Deps::CacheGc.new(has_entry(lockfile: instance_of(Dev::Deps::Lockfile))) >> gc
+    1 * Dev::Lifecycle::SnapshotBranches.new(has_entry(git: responds_with(:root, root))) >> branches
+    1 * gc.gc(keep: Dev::Deps::CacheGc::DEFAULT_KEEP, images: [], tool_caches: false)
+    1 * branches.prune >> []
   end
 
   private
 
-  def build_command(gc, snapshot_branches: quiet_snapshot_branches)
+  def build_command(gc, snapshot_branches)
     Dev::Cli::Builtins::CacheGcCommand.new(
       cache_gc_factory: ->(_lockfile, _ui) { gc },
       snapshot_branches_factory: ->(_root) { snapshot_branches },
     )
-  end
-
-  # A namespace with nothing to prune, for the tests about the other tiers.
-  def quiet_snapshot_branches
-    branches = typed_mock(Dev::Lifecycle::SnapshotBranches)
-    branches.stubs(:prune).returns([])
-    branches
   end
 
   def build_context(root: Pathname.new("/tmp/cache-test"))

@@ -954,7 +954,6 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
     reach = typed_mock(Dev::HostReach)
-    reach.expects(:check).never
     executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => false, as_runner("gh", "auth", "status") => false })
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach, operator: "human")
 
@@ -962,6 +961,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "one ? line naming who could not tell and how to find out; no ✗, no login remedy, no reach lines"
+    0 * reach.check
     out.string.include?("? gh login: cannot tell as human (sudo as runner needs a password here) — check with `sudo -iu runner gh auth status`")
     !out.string.include?("no gh login")
     !out.string.include?("✗ ")
@@ -1015,7 +1015,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     ]
     reach = typed_mock(Dev::HostReach)
     target = Dev::HostReach.targets(pins).fetch(0)
-    reach.stubs(:check).with(pins).returns([Dev::HostReach::Verdict.new(target: target, grant: "gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")])
+    verdict = Dev::HostReach::Verdict.new(target: target, grant: "gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull")
     executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true, as_runner("true") => true, as_runner("gh", "auth", "status") => true },
       capture_results: { as_runner("gh", "api", "user", "--jq", ".login") => "d3mlabs-buildhost\n" })
     status = build_status(ui: ui, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
@@ -1024,6 +1024,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then "inside the host frame, after the login"
+    _ * reach.check(pins) >> [verdict]
     ui.rows.include?([:note, "{{x}} runner cannot read d3mlabs/unreal-engine (this checkout's lock) — gh api -X PUT repos/d3mlabs/unreal-engine/collaborators/d3mlabs-buildhost -f permission=pull", 1])
     ui.rows.include?([:note, "{{v}} runner can read package ghcr.io/d3mlabs/unreal-engine-build-base (this checkout's lock)", 1])
   end
@@ -1033,7 +1034,6 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
     reach = typed_mock(Dev::HostReach)
-    reach.expects(:check).never
     executor = CannedStatusExecutor.new(probe_results: { ["id", "-u", "runner"] => true })
     status = build_status(out: out, executor: executor, host_identity: host_identity("runner"), pins: pins, reach: reach)
 
@@ -1041,6 +1041,7 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
+    0 * reach.check
     !out.string.include?("can read")
   end
 
@@ -1050,8 +1051,6 @@ class Dev::RunnerStatusTest < Minitest::Test
     pins = [Dev::Deps::Dependency.new(name: "ue", integration: :gh, group: "build", version: "1", hash: nil, metadata: { "repo" => "d3mlabs/unreal-engine" })]
     identity = host_identity("svc-runner")
     reach = typed_mock(Dev::HostReach)
-    reach.expects(:check).once.with(pins).returns([])
-    Dev::HostReach.expects(:new).once.with(identity: identity).returns(reach)
     executor = CannedStatusExecutor.new(
       probe_results: { ["id", "-u", "svc-runner"] => true, as_runner("true", user: "svc-runner") => true, as_runner("gh", "auth", "status", user: "svc-runner") => true },
       capture_results: { as_runner("gh", "api", "user", "--jq", ".login", user: "svc-runner") => "d3mlabs-buildhost\n" },
@@ -1062,6 +1061,8 @@ class Dev::RunnerStatusTest < Minitest::Test
     status.report
 
     Then
+    1 * Dev::HostReach.new(identity: identity) >> reach
+    1 * reach.check(pins) >> []
     out.string.include?("✓ svc-runner can read d3mlabs/unreal-engine (this checkout's lock)")
   end
 
@@ -1072,13 +1073,13 @@ class Dev::RunnerStatusTest < Minitest::Test
     runner_user = host_identity("svc-runner")
     role = Dev::RunnerRole::Declaration.new(name: "ue-farm", labels: %w[ue gpu], job_identity: "ue-builder").bind(repo: "d3mlabs/cellbound-3d", version: nil)
     built = darwin_identity("ue-builder", executor, shared_root: Dir.mktmpdir, brew: nil, runner_user: "svc-runner")
-    Dev::JobIdentity.expects(:for_host).once.with(user: "ue-builder", runner_user: "svc-runner", executor: executor).returns(built)
     status = build_status(ui: ui, executor: executor, host_identity: runner_user, roles: { "ue-farm" => role }, identity_factory: :default)
 
     When
     status.report
 
     Then "the identity's facts are the one for_host built"
+    1 * Dev::JobIdentity.for_host(user: "ue-builder", runner_user: "svc-runner", executor: executor) >> built
     ui.rows.include?([:note, "{{v}} job identity ue-builder exists", 1])
   end
 
@@ -1118,12 +1119,15 @@ class Dev::RunnerStatusTest < Minitest::Test
   test "a converged WSL runner host: five host facts, every one green" do
     Given
     ui = RecordingUi.new
-    status = build_status(ui: ui, wsl_runner_host: wsl_runner_host)
+    wsl = typed_mock(Dev::WslRunnerHost)
+    status = build_status(ui: ui, wsl_runner_host: wsl)
 
     When
     status.report
 
     Then "inside the host frame, in order"
+    _ * wsl.task >> Dev::WslKeepaliveTask.new(distro: "Ubuntu")
+    _ * wsl.status >> wsl_status
     first = ui.rows.index([:note, "{{v}} systemd running (the runner service is a systemd unit)", 1])
     ui.rows.slice(first, 5) == [
       [:note, "{{v}} systemd running (the runner service is a systemd unit)", 1],
@@ -1139,12 +1143,15 @@ class Dev::RunnerStatusTest < Minitest::Test
     out = StringIO.new
     keepalive = converged_keepalive(running: false, execute: "wsl.exe", arguments: "-d Ubuntu -u root -- /bin/true",
       execution_time_limit: "PT72H", multiple_instances: "Parallel")
-    status = build_status(out: out, wsl_runner_host: wsl_runner_host(keepalive: keepalive))
+    wsl = typed_mock(Dev::WslRunnerHost)
+    status = build_status(out: out, wsl_runner_host: wsl)
 
     When
     status.report
 
     Then
+    _ * wsl.task >> Dev::WslKeepaliveTask.new(distro: "Ubuntu")
+    _ * wsl.status >> wsl_status(keepalive: keepalive)
     out.string.include?("✓ logon keepalive task 'Start-WSL-Ubuntu-Runner' registered")
     out.string.include?("✗ keepalive action does not hold a session (wsl.exe -d Ubuntu -u root -- /bin/true) — WSL stops Ubuntu ~20 s after it exits (run `dev runner register`)")
     out.string.include?("✗ keepalive task not running — Ubuntu stops when the last shell closes (run `dev runner register`, or `Start-ScheduledTask -TaskName 'Start-WSL-Ubuntu-Runner'`)")
@@ -1154,12 +1161,15 @@ class Dev::RunnerStatusTest < Minitest::Test
   test "no keepalive task: one finding, the distro does not start at logon" do
     Given
     out = StringIO.new
-    status = build_status(out: out, wsl_runner_host: wsl_runner_host(keepalive: Dev::WslKeepaliveTask::Observed::ABSENT))
+    wsl = typed_mock(Dev::WslRunnerHost)
+    status = build_status(out: out, wsl_runner_host: wsl)
 
     When
     status.report
 
     Then
+    _ * wsl.task >> Dev::WslKeepaliveTask.new(distro: "Ubuntu")
+    _ * wsl.status >> wsl_status(keepalive: Dev::WslKeepaliveTask::Observed::ABSENT)
     out.string.include?("✗ logon keepalive task 'Start-WSL-Ubuntu-Runner' missing — Ubuntu does not start at logon (run `dev runner register`)")
     !out.string.include?("holds a session")
   end
@@ -1167,12 +1177,15 @@ class Dev::RunnerStatusTest < Minitest::Test
   test "systemd is reported as running, awaiting a restart, or not enabled" do
     Given
     out = StringIO.new
-    status = build_status(out: out, wsl_runner_host: wsl_runner_host(systemd_configured: configured, systemd_active: active))
+    wsl = typed_mock(Dev::WslRunnerHost)
+    status = build_status(out: out, wsl_runner_host: wsl)
 
     When
     status.report
 
     Then
+    _ * wsl.task >> Dev::WslKeepaliveTask.new(distro: "Ubuntu")
+    _ * wsl.status >> wsl_status(systemd_configured: configured, systemd_active: active)
     out.string.include?(line)
 
     Where
@@ -1185,12 +1198,15 @@ class Dev::RunnerStatusTest < Minitest::Test
   test "without interop (a service, an ssh login) the keepalive is unknown — neither glyph — and the line says where to ask from" do
     Given
     ui = RecordingUi.new
-    status = build_status(ui: ui, wsl_runner_host: wsl_runner_host(keepalive: nil))
+    wsl = typed_mock(Dev::WslRunnerHost)
+    status = build_status(ui: ui, wsl_runner_host: wsl)
 
     When
     status.report
 
     Then
+    _ * wsl.task >> Dev::WslKeepaliveTask.new(distro: "Ubuntu")
+    _ * wsl.status >> wsl_status(keepalive: nil)
     ui.rows.include?([:note, "{{?}} logon keepalive 'Start-WSL-Ubuntu-Runner': cannot tell from this session (no WSL interop — a service or an ssh login) — run `dev runner status` from a shell opened in the distro on the Windows desktop", 1])
     ui.rows.none? { |_kind, text, _depth| text.include?("keepalive task") && text.include?("{{x}}") }
   end
@@ -1201,14 +1217,15 @@ class Dev::RunnerStatusTest < Minitest::Test
   test "a session that names no distro (a service) reads the keepalive as unknown, nameless, and the ledger goes on" do
     Given "a WSL runner host without interop whose task cannot be built"
     ui = RecordingUi.new
-    wsl = wsl_runner_host(keepalive: nil)
-    wsl.stubs(:task).raises(Dev::WslHost::DistroUnknownError, "WSL_DISTRO_NAME is not set")
+    wsl = typed_mock(Dev::WslRunnerHost)
     status = build_status(ui: ui, wsl_runner_host: wsl, host: "box", host_os: "linux")
 
     When
     status.check
 
     Then
+    _ * wsl.task >> raises(Dev::WslHost::DistroUnknownError, "WSL_DISTRO_NAME is not set")
+    _ * wsl.status >> wsl_status(keepalive: nil)
     ui.rows == [
       [:frame, "box · linux · systemd", 0],
       [:note, "{{v}} systemd running (the runner service is a systemd unit)", 1],
@@ -1702,16 +1719,13 @@ class Dev::RunnerStatusTest < Minitest::Test
     ["sudo", "-n", "-u", user, "-H", "env", "-C", "/", "PATH=#{HOST_PATH}", *cmd]
   end
 
-  # The WSL runner host as status reads it: the distro's keepalive task and
-  # the facts it would re-derive (dev#261).
-  def wsl_runner_host(systemd_configured: true, systemd_active: true, keepalive: converged_keepalive)
-    wsl = typed_mock(Dev::WslRunnerHost)
-    wsl.stubs(:task).returns(Dev::WslKeepaliveTask.new(distro: "Ubuntu"))
-    wsl.stubs(:status).returns(Dev::WslRunnerHost::Status.new(
+  # The WSL runner host's facts as status reads them: the distro's keepalive
+  # task and the facts it would re-derive (dev#261).
+  def wsl_status(systemd_configured: true, systemd_active: true, keepalive: converged_keepalive)
+    Dev::WslRunnerHost::Status.new(
       systemd_configured: systemd_configured, systemd_active: systemd_active,
       interop: !keepalive.nil?, keepalive: keepalive,
-    ))
-    wsl
+    )
   end
 
   def converged_keepalive(**overrides)

@@ -344,18 +344,18 @@ class Dev::Deps::CacheGcTest < Minitest::Test
   end
 
   test "gc hands the images through to gc_docker beside the tree sweep" do
-    Given "a lock, one pinned image, and a gc whose docker half records what it was asked"
+    Given "a lock, one pinned image, and an engine that records what it was asked"
     dir = Dir.mktmpdir("dev-cache-gc-test-")
     lockfile = lock_engine(dir, version: "5.6.1-css-83")
     image = pinned_image("snappy-linux")
-    gc = build_gc(dir, lockfile)
-    gc.expects(:gc_docker).with(images: [image]).once
+    engine = FakeContainerEngine.new
+    gc = Dev::Deps::CacheGc.new(lockfile: lockfile, store: Dev::Deps::LocalStore.new(data_root: dir), engine: engine)
 
     When
     gc.gc(keep: 2, images: [image])
 
-    Then
-    true
+    Then "the pinned image's repository was listed for stale tags"
+    engine.captures.include?(["images", image.repository, "--format", "{{.Repository}}:{{.Tag}}"])
 
     Cleanup
     FileUtils.rm_rf(dir)

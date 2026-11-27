@@ -84,13 +84,19 @@ module Dev
       # @param host [String] Dev::Platform.os — which binary in the tree is this machine's
       # @param unpacker [Lifecycle::Unpacker] what turns an archive into a build root
       # @param ui [Ui] the terminal a first-time credential is onboarded at
-      sig { params(project_root: Pathname, store: ArtifactStore, host: String, unpacker: Lifecycle::Unpacker, ui: Ui).void }
-      def initialize(project_root:, store: LocalStore.new, host: Dev::Platform.os, unpacker: Lifecycle::Unpacker.new, ui: NoUi.new)
+      # @param credentials [T.class_of(Credentials)] where the client id and secret are kept
+      sig do
+        params(project_root: Pathname, store: ArtifactStore, host: String, unpacker: Lifecycle::Unpacker, ui: Ui,
+          credentials: T.class_of(Credentials)).void
+      end
+      def initialize(project_root:, store: LocalStore.new, host: Dev::Platform.os, unpacker: Lifecycle::Unpacker.new, ui: NoUi.new,
+        credentials: Credentials)
         @lockfile = T.let(Lockfile.new(dir: project_root), Lockfile)
         @store = store
         @host = host
         @unpacker = unpacker
         @ui = ui
+        @credentials = credentials
       end
 
       # Register each shipment as a binary of its artifact and label it for
@@ -174,11 +180,11 @@ module Dev
       # @raise [Credentials::MissingCredentialError]
       sig { returns([String, T::Hash[String, String]]) }
       def client
-        client_id = Credentials.resolve(
+        client_id = @credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "client_id", env_var: "EGS_CLIENT_ID",
           prompt_label: "Epic Games Store client id (the product's BuildPatchTool credentials)", create_url: CREDENTIALS_URL, ui: @ui,
         )
-        secret = Credentials.resolve(
+        secret = @credentials.resolve(
           namespace: CREDENTIAL_NAMESPACE, key: "client_secret", env_var: "EGS_CLIENT_SECRET",
           prompt_label: "Epic Games Store client secret", create_url: CREDENTIALS_URL, ui: @ui,
         )

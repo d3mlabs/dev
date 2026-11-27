@@ -30,13 +30,12 @@ class Dev::Cli::GroupExecutorTest < Minitest::Test
     )
     out = StringIO.new
     usage_printer = typed_mock(Dev::Cli::UsagePrinter)
-    usage_printer.expects(:print_node).with(path: ["deps"], command: group, out: out).once
     executor = Dev::Cli::GroupExecutor.new(usage_printer: usage_printer, out: out)
 
     When "executing the group"
     executor.execute(group)
 
-    Then "the printer expectation holds"
-    true
+    Then "the printer was asked for the group's node on that stream"
+    1 * usage_printer.print_node(path: ["deps"], command: group, out: out)
   end
 end

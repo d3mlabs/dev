@@ -4,7 +4,6 @@
 require "test_helper"
 require "dev"
 require "dev/build_container"
-require "dev/container_engine"
 require "dev/container_github_token"
 require "dev/deps"
 require "dev/deps/dependency"
@@ -12,10 +11,8 @@ require "dev/deps/lockfile"
 require "dev/environment_image"
 require "dev/host_environment"
 require "dev/cli/host_rule"
-require "dev/platform"
 require "dev/project_container"
 require "dev/cli/runner"
-require "dev/shadowenv_llvm"
 require "support/fake_container_engine"
 require "support/scripted_remote"
 require "fileutils"
@@ -43,31 +40,23 @@ class EnvironmentIntegrationTest < Minitest::Test
   def setup
     @original_cwd = Dir.pwd
     @root = Pathname(Dir.mktmpdir("environment-fixture"))
-    Dev.stubs(:target_project_root).returns(@root)
     # A workstation: the fixture is never `dev up`'d, and in CI the
-    # staleness guard turns that into an exit(1) — a real one, which the
-    # tests below that do not expect an exit would take the whole suite
-    # down with (Minitest passes SystemExit through).
-    Dev::Deps.stubs(:detect_env).returns("dev")
-    # A Mac: neither image's platform, so both commands reach their container.
-    Dev::Platform.stubs(:current).returns("darwin-arm64")
-    # The composition root builds every builtin on its platform defaults
-    # (`for_host`): the same Mac, pinned, so they answer nil on every machine.
-    @host_probes = pin_host_platform(os: "darwin")
+    # staleness guard turns that into an exit(1), which the tests below
+    # that do not expect an exit would fail on.
+    @original_ci = ENV.fetch("CI", nil)
+    ENV.delete("CI")
     # Every docker call succeeds (the image is found locally) except the
     # persistent container's existence probe, so a persisted image creates
     # its container and the test can see the shape it was created with.
     @engine = FakeContainerEngine.new(&method(:docker_succeeds?))
-    Dev::ContainerEngine.stubs(:resolve).returns(@engine)
-    Dev::ShadowenvLlvm.stubs(:project_needs_llvm?).returns(false)
     @stderr = StringIO.new
     @original_stderr = $stderr
     $stderr = @stderr
   end
 
   def teardown
-    restore_host_probe_guard(@host_probes)
     $stderr = @original_stderr
+    ENV["CI"] = @original_ci if @original_ci
     Dir.chdir(@original_cwd)
     FileUtils.rm_rf(@root)
     super
@@ -80,18 +69,16 @@ class EnvironmentIntegrationTest < Minitest::Test
       image_pin("snappy-server", "persist" => true, "volumes" => ["/e:/ue"]),
     )
     runner = runner(COMMANDS)
-    execs = record_execs
-    Kernel.stubs(:exit)
 
     When "each command is run"
-    exec!(runner, ["build"])
-    exec!(runner, ["test-server"])
+    statuses = [exec!(runner, ["build"]), exec!(runner, ["test-server"])]
     created = @engine.runs.find(&method(:service_create?))
     mounts = created.each_cons(2).select { |flag, _| flag == "-v" }.map(&:last)
 
     Then "build is a one-shot run of the linux image; test-server an exec into the server image's persistent container, created with its volume and the checkout mounted — both through the engine, each the command in the checkout, nothing exec'd"
     checkout = Dev::BuildContainer.workspace_path(@root)
-    execs.empty?
+    0 * Kernel.exec
+    statuses == [0, 0]
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
     run.last(4) == [linux.ref, "sh", "-c", "./bin/build.sh"]
@@ -118,16 +105,16 @@ class EnvironmentIntegrationTest < Minitest::Test
   test "a container-placed run prints the crossing line once; a host run prints nothing extra" do
     Given
     lock(image_pin("snappy-linux"), image_pin("snappy-server"))
-    ui = fake_ui
+    ui = typed_mock(Dev::Ui)
     runner = runner(COMMANDS, ui:)
-    record_execs
-    Kernel.stubs(:exit)
 
     When
     exec!(runner, ["build"])
     exec!(runner, ["editor"])
 
     Then
+    _ * ui.print_header
+    _ * Kernel.exec
     1 * ui.print_remote_crossing(destination: "in snappy-linux (container)", workspace: "the checkout, mounted")
     0 * ui.print_remote_crossing(destination: includes("host"), workspace: anything)
   end
@@ -166,32 +153,38 @@ class EnvironmentIntegrationTest < Minitest::Test
     Given
     lock(image_pin("snappy-linux"), image_pin("snappy-server"))
     runner = runner(COMMANDS.merge("lint" => { "run" => "./bin/lint.sh" }))
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
 
     When
     runner.run(["help"])
 
     Then "the refusal names the command, both images, and the key to add"
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.include?("dev: `lint` runs in a container but names no image")
     @stderr.string.include?("snappy-linux, snappy-server")
     @stderr.string.include?("environment: <name>")
   end
 
-  test "a command naming an image the lock does not pin fails at load with the pin list, whatever command is asked for" do
+  test "a command naming an image the lock does not pin fails at load with the pin list, whatever command is asked for: #{argv.inspect}" do
     Given
     lock(image_pin("snappy-linux"), image_pin("snappy-server"))
     runner = runner(COMMANDS.merge("deploy" => { "run" => "./bin/deploy.sh", "environment" => "snappy-srv" }))
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).twice
 
     When
-    runner.run(["help"])
-    runner.run(["build"])
+    runner.run(argv)
 
     Then
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.include?("dev: `deploy` runs in `snappy-srv`, which the lock does not pin")
     @stderr.string.include?("snappy-linux, snappy-server")
+
+    Where
+    argv      | _
+    ["help"]  | 0
+    ["build"] | 0
   end
 
   test "a target's build pointed at an image that does not produce its platform is reported at load with the fix named; help lists it unbound and the build refuses until the re-lock (dev#192 K8, dev#450)" do
@@ -203,14 +196,15 @@ class EnvironmentIntegrationTest < Minitest::Test
       out:,
       targets: { "snappy" => { "platforms" => ["win64", "linux64"], "environment" => "snappy-linux" } },
     )
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
-
-    When
     runner.run(["help", "build"])
+
+    When "the unbound build is asked to run"
     runner.run(["build", "snappy-linux64"])
 
     Then "the mismatch is on stderr once per load, the builds list without a column, and the build asked to run is refused as unbound"
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.scan("dev: `snappy-win64` builds in snappy-linux, which does not produce win64").size == 2
     @stderr.string.include?("add `target_platforms :win64` to its image block in dependencies.rb")
     out.string.include?("snappy-win64")
@@ -235,15 +229,14 @@ class EnvironmentIntegrationTest < Minitest::Test
         "snappy-editor" => { "platforms" => ["linux64", "macos"], "environment" => { "linux64" => "snappy-linux", "macos" => "host" } },
       },
     )
-    execs = record_execs
 
     When
     exec!(runner, ["editor"])
 
     Then "no refusal: the lock carries the capability and the command ran"
+    1 * Kernel.exec(anything, "shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c", includes("./bin/editor.sh"))
     !@stderr.string.include?("does not produce")
     !@stderr.string.include?("the lock does not pin")
-    execs.size == 1
     Dev::Deps::Lockfile.new(dir: @root).read.find { |pin| pin.name == "snappy-linux" }.metadata["target_platforms"] == ["win64", "linux64"]
   end
 
@@ -254,14 +247,15 @@ class EnvironmentIntegrationTest < Minitest::Test
     lockfile.lock(lockfile.read.map { |pin| pin.with(metadata: pin.metadata.merge(Dev::EnvironmentImage::DIGEST_KEY => "f" * 64)) })
     out = StringIO.new
     runner = runner(COMMANDS, out:)
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
-
-    When
     runner.run(["help"])
+
+    When "a project command is asked to run"
     runner.run(["build"])
 
     Then
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.scan("run: dev deps update").size >= 1
     out.string.include?("  build        Build the game\n")
     @stderr.string.include?("`./bin/build.sh` has no environment bound")
@@ -271,13 +265,14 @@ class EnvironmentIntegrationTest < Minitest::Test
     Given
     lock(image_pin("snappy-linux"))
     runner = runner({ "build" => { "run" => "./bin/build.sh", "runs_on" => "snappy-linux" }, "editor" => { "run" => "./bin/editor.sh", "runs_on" => "host" } })
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
 
     When
     runner.run(["build"])
 
     Then
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.include?("`runs_on:` is `environment:`")
     @stderr.string.include?("commands.build.runs_on: \"snappy-linux\" → `environment: snappy-linux`")
     @stderr.string.include?("commands.editor.runs_on: \"host\" → `environment: host`")
@@ -292,13 +287,14 @@ class EnvironmentIntegrationTest < Minitest::Test
       build: { "container" => { "image" => "snappy-linux", "registry" => "jpduchesne89", "persist" => true,
                                 "volumes" => ["/e:/ue"], "resources" => { "cpus" => 8 } } },
     )
-    Kernel.expects(:exec).never
-    Kernel.expects(:exit).with(1).once
 
     When
     runner.run(["build"])
 
     Then "one message: each retired key and where it goes"
+    0 * Kernel.exec
+    exit = raises SystemExit
+    exit.status == 1
     @stderr.string.include?("declare an `image` block in dependencies.rb")
     @stderr.string.include?("build.container.image → delete it")
     @stderr.string.include?("build.container.registry → delete it")
@@ -322,30 +318,30 @@ class EnvironmentIntegrationTest < Minitest::Test
     args.first(2) == ["run", "-d"]
   end
 
-  # Run a command whose exec is faked: the recorded exec "returns", which
-  # the executor's never-returns contract reports — expected here.
+  # Run a command to its end and answer its exit status. A container-placed
+  # run exits with the container's status; a host run's exec is faked and
+  # "returns", which the executor's never-returns contract reports — both
+  # expected here, and the host run has no status to answer.
   def exec!(runner, argv)
     runner.run(argv)
+    nil
   rescue Dev::Cli::ProjectExecutor::ExecReturnedError
     nil
+  rescue SystemExit => e
+    e.status
   end
 
-  # Record every exec's argv (the env dropped) instead of execing.
-  def record_execs
-    execs = []
-    Kernel.stubs(:exec).with { |_env, *argv| execs << argv }
-    execs
-  end
-
-  # A Runner over a dev.yml written into the fixture root, on a bare host
-  # (no marker: nothing is native here).
-  def runner(commands, build: nil, targets: nil, ui: fake_ui, out: StringIO.new)
+  # A Runner over a dev.yml written into the fixture root, composed for a
+  # bare Mac (neither image's platform, no marker: nothing is native here,
+  # so both commands reach their container).
+  def runner(commands, build: nil, targets: nil, ui: Dev::NoUi.new, out: StringIO.new)
     yaml = { "name" => "fixture", "commands" => commands }
     yaml["build"] = build if build
     yaml["targets"] = targets if targets
     (@root / "dev.yml").write(YAML.dump(yaml))
     host_rule = Dev::Cli::HostRule.new(host_environment: Dev::HostEnvironment.new(path: (@root / "no-marker").to_s))
-    Dev::Cli::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:, hosts_factory: method(:remote_hosts).to_proc)
+    Dev::Cli::Runner.new(dev_yaml_path: @root / "dev.yml", ui:, out:, host_rule:, host_os: "darwin",
+      hosts_factory: method(:remote_hosts).to_proc)
   end
 
   # The project's container over the fake engine — a host whose gh holds
@@ -376,12 +372,5 @@ class EnvironmentIntegrationTest < Minitest::Test
         "platforms" => ["linux/amd64"], "registry" => "ghcr.io/d3mlabs", "apt" => [],
       }.merge(extra),
     )
-  end
-
-  def fake_ui
-    ui = typed_mock(Dev::Ui)
-    ui.stubs(:print_header)
-    ui.stubs(:print_remote_crossing)
-    ui
   end
 end

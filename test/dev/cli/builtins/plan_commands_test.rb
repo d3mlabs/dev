@@ -58,6 +58,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
     ui = RecordingUi.new
     accessor = typed_mock(Dev::Plan::Accessor)
     sequence = sequence("plan verb")
+    # call order: PlanVerbCommand's one job is running the host refresh before the verb, so the verb sees the links and artifacts it installs
     accessor.expects(:refresh_host).once.in_sequence(sequence)
     accessor.expects(verb).with(*positional, **options).once.in_sequence(sequence)
     factory_uis = []
@@ -88,13 +89,13 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
   test "#{klass} rejects #{args.inspect} with the accessor's usage error: #{reason}" do
     Given "a leaf over an accessor that only expects the host refresh"
     accessor = typed_mock(Dev::Plan::Accessor)
-    accessor.expects(:refresh_host).once
     command = klass.new(accessor_factory: ->(_ui) { accessor })
 
     When "calling it with a malformed argv"
     command.call(args: parsed_args(command, args), context: build_context)
 
     Then
+    1 * accessor.refresh_host
     raises Dev::Plan::Accessor::UsageError
 
     Where
@@ -116,6 +117,7 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
     input = StringIO.new('{"file_path":"x"}')
     accessor = typed_mock(Dev::Plan::Accessor)
     sequence = sequence("hook")
+    # call order: the hook's one job is running the host refresh before handing over the payload
     accessor.expects(:refresh_host).once.in_sequence(sequence)
     accessor.expects(:hook_after_edit).with(input).once.in_sequence(sequence)
     command = LEAVES[:hook].new(accessor_factory: ->(_ui) { accessor }, input: input)
@@ -130,13 +132,13 @@ class Dev::Cli::Builtins::PlanCommandsTest < Minitest::Test
   test "#{klass} rejects stray arguments with the accessor's usage error" do
     Given "a leaf over an accessor that only expects the host refresh"
     accessor = typed_mock(Dev::Plan::Accessor)
-    accessor.expects(:refresh_host).once
     command = klass.new(accessor_factory: ->(_ui) { accessor })
 
     When "calling it with an argument it takes none of"
     command.call(args: parsed_args(command, ["extra"]), context: build_context)
 
     Then
+    1 * accessor.refresh_host
     raises Dev::Plan::Accessor::UsageError
 
     Where
