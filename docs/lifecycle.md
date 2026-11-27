@@ -943,8 +943,8 @@ path a build tool records reads the same from both sides. Nothing is
 pushed, no token is needed for the tree, and a Mac with no network
 builds in its container. The one thing the host's checkout does not
 share is `.shadowenv.d/`: its lisps bind the host's interpreters, so the
-container's own, `.shadowenv.d-container/` (ignored, written by `dev up`
-inside), is mounted over it. The container's exit status is the verdict,
+container has its own, nested under `.shadowenv.d-container/` (ignored,
+written by `dev up` inside), which shadowenv inside is pointed at. The container's exit status is the verdict,
 and its output is the terminal's directly.
 
 **The invocation** the host runs is the one typed, with the build fully

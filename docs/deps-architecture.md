@@ -355,12 +355,12 @@ which activates the store path). `ShadowenvPath`
 renders the PATH files: a `provide` record names the activated set, the
 file is rewritten only when the set changed, and an integration that
 knows no project (an image bootstrap, a test) activates nothing.
-`ShadowenvFile` writes every activation file into the project's
-`.shadowenv.d/` and trusts it; which side's directory that is, the mount
-decides — the container has the host's `.shadowenv.d-container/` mounted
-over `.shadowenv.d/` (`BuildContainer::CONTAINER_SHADOWENV_DIR`), so the
-two sides write the same filenames into two directories and neither
-rewrites the other's file. `dev deps path` stays the answer for a script
+`ShadowenvFile` writes every activation file into this side's
+`.shadowenv.d/` and trusts it; which directory that is, `ProjectShadowenv`
+decides — the project root's on the host, the one nested under
+`.shadowenv.d-container/` inside the container, where `shadowenv exec
+--dir` is pointed — so the two sides write the same filenames into two
+directories and neither rewrites the other's file. `dev deps path` stays the answer for a script
 that needs the absolute path rather than PATH.
 
 ## Requirement semantics per integration

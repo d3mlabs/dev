@@ -291,8 +291,9 @@ class Dev::Cli::Builtins::InstallDepsCommandTest < Minitest::Test
     When "running dev deps install"
     command.call(args: no_args, context: build_context(root))
 
-    Then "the real install pass leaves the empty project untouched"
-    Dir.children(root).empty?
+    Then "the real install pass writes nothing but the project's own (trusted, empty) .shadowenv.d"
+    Dir.children(root) == [".shadowenv.d"]
+    Dir.children(root / ".shadowenv.d").none? { |entry| entry.end_with?(".lisp") }
 
     Cleanup
     FileUtils.rm_rf(root)

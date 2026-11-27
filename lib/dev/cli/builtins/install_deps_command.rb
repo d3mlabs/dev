@@ -126,11 +126,13 @@ module Dev
           integration_types = symbol_flags(args, INTEGRATION_FLAG)
           lockfile = Dev::Deps::Lockfile.new(dir: project.root)
 
-          # The integrations spawn under the project's shadowenv (bundler, pip
+          # The integrations spawn under this side's shadowenv (bundler, pip
           # — ShadowenvExec), which refuses a directory this user has not
-          # trusted. Trust is the user's, not the files': a fresh container's
-          # builder over an already-written .shadowenv.d has none, and the
-          # writers only trust after a write (Dev::ShadowenvTrust).
+          # trusted and, given none at all, searches upward — into the host's
+          # from inside the container. Trust is the user's, not the files': a
+          # fresh container's builder over an already-written .shadowenv.d
+          # has none, and the writers only trust after a write; so the
+          # directory is made and trusted first (Dev::ShadowenvTrust).
           @shadowenv_trust.ensure!(project_root: project.root)
           installer = @installer_factory.call(lockfile, integrations(project, ui: context.ui, pin_taps:), context.ui)
           installer.install(env:, host:, groups:, except:, integration_types:)

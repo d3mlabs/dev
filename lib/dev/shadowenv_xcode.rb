@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/project_shadowenv"
 
 module Dev
   # Shadowenv Xcode provisioning: generates .shadowenv.d/520_xcode.lisp so
@@ -21,7 +22,7 @@ module Dev
     # provisions the given developer dir.
     sig { params(developer_dir: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def provisioned?(developer_dir, project_root:)
-      lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
+      lisp_path = ProjectShadowenv.new(project_root).dir / LISP_FILENAME
       return false unless File.exist?(lisp_path)
 
       File.read(lisp_path).include?(%((env/set "DEVELOPER_DIR" "#{developer_dir}")))
@@ -40,13 +41,12 @@ module Dev
       ).returns(T::Boolean)
     end
     def setup!(project_root:, version:, developer_dir:)
-      shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
+      shadowenv = ProjectShadowenv.new(project_root)
+      shadowenv_d = shadowenv.dir
       FileUtils.mkdir_p(shadowenv_d)
       File.write(File.join(shadowenv_d, LISP_FILENAME), generate_xcode_lisp(version, developer_dir))
 
-      Dir.chdir(project_root.to_s) do
-        system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
+      system("shadowenv", "trust", chdir: shadowenv.search_root.to_s, out: File::NULL, err: File::NULL)
 
       true
     end

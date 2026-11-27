@@ -112,7 +112,7 @@ class EnvironmentIntegrationTest < Minitest::Test
     exec!(runner, ["editor"])
 
     Then "shadowenv exec on this host, no docker"
-    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--", "sh", "-c", includes("./bin/editor.sh"))
+    1 * Kernel.exec(has_entries("RUBYLIB" => anything), "shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c", includes("./bin/editor.sh"))
   end
 
   test "a container-placed run prints the crossing line once; a host run prints nothing extra" do

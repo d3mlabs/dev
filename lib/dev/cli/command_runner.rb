@@ -11,6 +11,7 @@ require "dev/cli/host_rule"
 require "dev/cli/placement"
 require "dev/cli/transport"
 require "dev/project_container"
+require "dev/project_shadowenv"
 require "dev/shadowenv_llvm"
 
 module Dev
@@ -72,12 +73,6 @@ module Dev
     # itself, the host can.
     class CommandRunner
       extend T::Sig
-
-      # The argv that precedes `sh -c` for a direct run: the project's
-      # shadowenv, whose lisps `dev deps install` wrote — the locked kegs on
-      # PATH, the locked Ruby and Python activated — on the host and inside
-      # the container alike.
-      SHELL_PREFIX = T.let(%w[shadowenv exec --].freeze, T::Array[String])
 
       # Raised by run_waiting when the child command exits nonzero, carrying
       # its exit status so the caller can skip success-contingent post-steps
@@ -142,6 +137,7 @@ module Dev
         @project_root = project_root
         @host_rule = host_rule
         @containers = containers
+        @shadowenv = T.let(ProjectShadowenv.new(project_root), ProjectShadowenv)
       end
 
       # Hand the process over to the command: exec-replace, the right shape
@@ -302,6 +298,18 @@ module Dev
         ShadowenvLlvm.setup!(project_root: project_root, llvm_prefix: prefix)
       end
 
+      # The argv that precedes `sh -c` for a direct run: the project's
+      # shadowenv, whose lisps `dev deps install` wrote — the locked kegs on
+      # PATH, the locked Ruby and Python activated. `--dir` names this
+      # side's shadowenv (ProjectShadowenv): the project root on the host,
+      # the container's nested directory inside.
+      #
+      # @return [Array<String>]
+      sig { returns(T::Array[String]) }
+      def shell_prefix
+        ["shadowenv", "exec", "--dir", @shadowenv.search_root.to_s, "--"]
+      end
+
       # Runs the bare shell command with no footer, so an interactive (repl)
       # session owns the terminal end to end.
       #
@@ -311,7 +319,7 @@ module Dev
       sig { params(shell_command: String, wait: T::Boolean).void }
       def run_bare(shell_command, wait:)
         Dir.chdir(@project_root)
-        run_child([child_env, *SHELL_PREFIX, "sh", "-c", shell_command], wait:)
+        run_child([child_env, *shell_prefix, "sh", "-c", shell_command], wait:)
       end
 
       # Runs the command inside a shell wrapper that prints a colored
@@ -323,7 +331,7 @@ module Dev
       sig { params(shell_command: String, wait: T::Boolean).void }
       def run_with_status_footer(shell_command, wait:)
         Dir.chdir(@project_root)
-        run_child([child_env, *SHELL_PREFIX, "sh", "-c", <<~SH], wait:)
+        run_child([child_env, *shell_prefix, "sh", "-c", <<~SH], wait:)
           #{shell_command}
           __dev_status=$?
           if [ $__dev_status -eq 0 ]; then

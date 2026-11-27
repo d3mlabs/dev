@@ -18,7 +18,7 @@ class ShadowenvFileTest < Minitest::Test
     written = Dev::ShadowenvFile.write!(project_root: tmpdir, filename: "510_ruby.lisp", body: BODY)
 
     Then "the file is the body verbatim, shadowenv was trusted"
-    1 * Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL) >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: tmpdir, out: File::NULL, err: File::NULL) >> true
     written == true
     File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp")) == BODY
 
@@ -53,9 +53,29 @@ class ShadowenvFileTest < Minitest::Test
     written = Dev::ShadowenvFile.write!(project_root: tmpdir, filename: "510_ruby.lisp", body: BODY)
 
     Then
-    1 * Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL) >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: tmpdir, out: File::NULL, err: File::NULL) >> true
     written == true
     File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp")) == BODY
+
+    Cleanup
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  test "write! inside the build container places the lisp in the container's nested .shadowenv.d and trusts from there, leaving the host's directory alone" do
+    Given "a project root with the host's lisps, this dev inside the container"
+    tmpdir = Dir.mktmpdir("shadowenv-file-test-")
+    FileUtils.mkdir_p(File.join(tmpdir, ".shadowenv.d"))
+    File.write(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp"), "(provide \"ruby\" \"host\")\n")
+
+    When
+    written = Dev::ShadowenvFile.write!(project_root: tmpdir, filename: "510_ruby.lisp", body: BODY)
+
+    Then "the container's directory is created under .shadowenv.d-container/, the host's lisp is untouched, trust ran in the container's search root"
+    1 * Dev::ContainerContext.inside? >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: File.join(tmpdir, ".shadowenv.d-container"), out: File::NULL, err: File::NULL) >> true
+    written == true
+    File.read(File.join(tmpdir, ".shadowenv.d-container", ".shadowenv.d", "510_ruby.lisp")) == BODY
+    File.read(File.join(tmpdir, ".shadowenv.d", "510_ruby.lisp")) == "(provide \"ruby\" \"host\")\n"
 
     Cleanup
     FileUtils.rm_rf(tmpdir)

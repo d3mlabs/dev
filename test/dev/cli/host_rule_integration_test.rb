@@ -78,7 +78,7 @@ class HostRuleIntegrationTest < Minitest::Test
 
     Then
     execs.size == 1
-    execs[0].first(5) == ["shadowenv", "exec", "--", "sh", "-c"]
+    execs[0].first(7) == ["shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c"]
     execs[0].last.include?("./bin/build.sh")
     @engine.runs.empty?
   end
@@ -93,13 +93,13 @@ class HostRuleIntegrationTest < Minitest::Test
     When
     exec!(runner, ["build"])
 
-    Then "one docker run of the lock's image through the engine; the data root, the checkout and the container's shadowenv directory are the bind mounts; the checkout the workdir; DEV_DATA_ROOT named on argv, valued in the spawn env; the command last"
+    Then "one docker run of the lock's image through the engine; the data root and the checkout are the bind mounts; the checkout the workdir; DEV_DATA_ROOT named on argv, valued in the spawn env; the command last"
     execs.empty?
     run = @engine.runs.find { |verb, *_rest| verb == "run" }
     run.first(2) == ["run", "--rm"]
     run.include?(image.ref)
     run.last(3) == ["sh", "-c", "./bin/build.sh"]
-    bind_mounts(run) == ["#{@data_root}:#{@data_root}", "#{checkout}:#{checkout}", "#{checkout}/.shadowenv.d-container:#{checkout}/.shadowenv.d"]
+    bind_mounts(run) == ["#{@data_root}:#{@data_root}", "#{checkout}:#{checkout}"]
     run.each_cons(2).include?(["-w", checkout])
     run.each_cons(2).include?(["-e", "DEV_DATA_ROOT"])
     @engine.run_envs.fetch(@engine.runs.index(run))["DEV_DATA_ROOT"] == @data_root
@@ -148,7 +148,7 @@ class HostRuleIntegrationTest < Minitest::Test
 
     Then
     execs.size == 1
-    execs[0].first(5) == ["shadowenv", "exec", "--", "sh", "-c"]
+    execs[0].first(7) == ["shadowenv", "exec", "--dir", @root.to_s, "--", "sh", "-c"]
   end
 
   private

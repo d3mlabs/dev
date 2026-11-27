@@ -1,12 +1,15 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 require "pathname"
+require_relative "project_shadowenv"
 
 module Dev
   # Trust for a project's `.shadowenv.d`, established for the user running
-  # dev — `shadowenv trust` in the project root.
+  # dev — `shadowenv trust` where this side's shadowenv is searched from
+  # (ProjectShadowenv#search_root).
   #
   # shadowenv's trust is a signature over the directory made with the
   # caller's key (`~/.config/shadowenv/trust-key-v2`), recorded as a
@@ -15,8 +18,8 @@ module Dev
   # directory cannot run its shadowenv however current its activation files
   # are. That user is real: the `builder` of a freshly created build
   # container, whose home (and key) is new while the container's shadowenv
-  # directory, mounted from the checkout (BuildContainer), already carries
-  # the lisps a previous container wrote. The activation writers trust
+  # directory in the checkout already carries the lisps a previous
+  # container wrote. The activation writers trust
   # only after a write they made, so with nothing to rewrite nobody
   # trusted, and the first
   # `shadowenv exec` of the install — bundler's — was refused: `directory
@@ -33,16 +36,23 @@ module Dev
     # `shadowenv trust` exited nonzero, or shadowenv is not on PATH.
     class TrustFailedError < StandardError; end
 
-    # Trust the project's `.shadowenv.d` for the running user.
+    # Trust this side's `.shadowenv.d` for the running user, making it
+    # first when it does not exist yet. An empty, trusted directory is the
+    # "nothing activated yet" state; a missing one is not — shadowenv
+    # searches upward from `--dir`, and the nearest `.shadowenv.d` above
+    # the container's search root is the host's, whose lisps name the
+    # host's prefixes. The host's directory sits at the project root, so
+    # the same rule there keeps a parent directory's shadowenv out too.
     #
-    # @param project_root [Pathname, String] the project root (`.shadowenv.d` lives there)
-    # @return [Boolean] true when trust ran, false when there was nothing to trust yet
+    # @param project_root [Pathname, String] the project root (this side's shadowenv is under it)
+    # @return [Boolean] true — trust ran
     # @raise [TrustFailedError] when shadowenv refuses or is missing
     sig { params(project_root: T.any(Pathname, String)).returns(T::Boolean) }
     def ensure!(project_root:)
-      root = Pathname(project_root)
-      return false unless (root / ".shadowenv.d").directory?
+      shadowenv = ProjectShadowenv.new(project_root)
+      FileUtils.mkdir_p(shadowenv.dir)
 
+      root = shadowenv.search_root
       _out, err, status = Open3.capture3("shadowenv", "trust", chdir: root.to_s)
       raise TrustFailedError, "shadowenv trust failed in #{root}: #{err.strip}" unless status.success?
 

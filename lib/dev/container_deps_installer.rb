@@ -14,7 +14,7 @@ module Dev
   # this is the install of the whole linux lock — toolchain, gh trees,
   # gems — into the container's volumes, and the lisps it writes land in
   # the container's own shadowenv directory of the mounted checkout
-  # (BuildContainer::CONTAINER_SHADOWENV_DIR). The image's run_env
+  # (ProjectShadowenv::CONTAINER_SEARCH_ROOT). The image's run_env
   # and the host's gh token ride in as every command's do: the private
   # releases the container fetches for itself need the auth the host
   # already holds.

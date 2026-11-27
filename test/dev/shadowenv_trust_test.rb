@@ -53,7 +53,27 @@ class ShadowenvTrustTest < Minitest::Test
     FileUtils.rm_rf(dir)
   end
 
-  test "a project with no .shadowenv.d yet is left alone — the writers create and trust it" do
+  test "inside the build container, the container's nested shadowenv is what gets trusted, from its own search root" do
+    Given "a project carrying the host's .shadowenv.d and the container's under .shadowenv.d-container/, this dev inside"
+    dir = Dir.mktmpdir("shadowenv-trust-test-")
+    project = Pathname(dir) / "project"
+    FileUtils.mkdir_p(project / ".shadowenv.d")
+    FileUtils.mkdir_p(project / ".shadowenv.d-container" / ".shadowenv.d")
+    bin = install_recording_shadowenv(dir)
+
+    When "ensuring trust"
+    trusted = with_path(bin) { Dev::ShadowenvTrust.new.ensure!(project_root: project) }
+
+    Then "shadowenv trust ran in .shadowenv.d-container/, where it finds the container's .shadowenv.d"
+    1 * Dev::ContainerContext.inside? >> true
+    trusted == true
+    File.read("#{dir}/calls") == "#{(project / ".shadowenv.d-container").realpath}\ntrust\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "a project with no .shadowenv.d yet gets this side's made and trusted, so a spawn under it finds its own directory and not a parent's" do
     Given "a bare project root"
     dir = Dir.mktmpdir("shadowenv-trust-test-")
     project = Pathname(dir) / "project"
@@ -63,9 +83,30 @@ class ShadowenvTrustTest < Minitest::Test
     When "ensuring trust"
     trusted = with_path(bin) { Dev::ShadowenvTrust.new.ensure!(project_root: project) }
 
-    Then "nothing ran"
-    trusted == false
-    !File.exist?("#{dir}/calls")
+    Then "the empty .shadowenv.d exists and shadowenv trust ran in the project root"
+    trusted == true
+    (project / ".shadowenv.d").directory?
+    File.read("#{dir}/calls") == "#{project.realpath}\ntrust\n"
+
+    Cleanup
+    FileUtils.rm_rf(dir)
+  end
+
+  test "inside the build container with no shadowenv of its own yet, the nested directory is made and trusted — shadowenv would otherwise search up into the host's" do
+    Given "a project carrying only the host's .shadowenv.d, this dev inside"
+    dir = Dir.mktmpdir("shadowenv-trust-test-")
+    project = Pathname(dir) / "project"
+    FileUtils.mkdir_p(project / ".shadowenv.d")
+    bin = install_recording_shadowenv(dir)
+
+    When "ensuring trust"
+    trusted = with_path(bin) { Dev::ShadowenvTrust.new.ensure!(project_root: project) }
+
+    Then "the container's .shadowenv.d exists under .shadowenv.d-container/ and shadowenv trust ran there"
+    1 * Dev::ContainerContext.inside? >> true
+    trusted == true
+    (project / ".shadowenv.d-container" / ".shadowenv.d").directory?
+    File.read("#{dir}/calls") == "#{(project / ".shadowenv.d-container").realpath}\ntrust\n"
 
     Cleanup
     FileUtils.rm_rf(dir)
