@@ -28,15 +28,25 @@ module Dev
       # PEP 440's exact-version operator, which a pin's source is spelled with.
       EXACT_REQUIREMENT = "=="
 
-      # Report a project's version universe from PyPI's JSON API.
+      # Report a project's version universe from PyPI's JSON API: the
+      # releases pip has a file to install from.
       #
       # One API call yields every published version with its files' SHA256
-      # digests — no downloads. Each version's digest is its sdist's, falling
-      # back to the first file's; yanked or file-less versions carry nil.
-      # Each version's source is the requirement pip installs exactly it
-      # by, `name==version`. Edges stay empty: pip resolves the transitive
-      # tree itself at install (PipIntegration), exactly as before.
-      # Constraint evaluation moves to Pep440Scheme.
+      # digests — no downloads. A release with no files, or none that is
+      # not yanked (PEP 592), is outside the universe: pip never picks one
+      # for a requirement, and a lock naming it would not install. Each
+      # version's digest is its sdist's, falling back to the first file's,
+      # among the files pip would consider. Each version's source is the
+      # requirement pip installs exactly it by, `name==version`. Edges stay
+      # empty: pip resolves the transitive tree itself at install
+      # (PipIntegration). Constraint evaluation is Pep440Scheme's, which
+      # is where a pre-release is kept out unless asked for.
+      #
+      # pip's one exception — a `==` requirement still installs a yanked
+      # release, with a warning — is deliberately not mirrored: a lock dev
+      # writes is a fresh choice, and the yank says not to make it. A pin
+      # the lock already carries installs by its `name==version` source
+      # regardless, as pip allows.
       #
       # @param id [PackageId] name is the PyPI project name
       # @return [Package]
@@ -45,11 +55,13 @@ module Dev
       sig { override.params(id: PackageId).returns(Package) }
       def find(id)
         releases = project_json(id.name)["releases"] || {}
-        versions = releases.map do |version, files|
-          # pip resolves the transitive tree itself at install time.
+        versions = releases.filter_map do |version, files|
+          installable = installable_files(files)
+          next if installable.empty?
+
           PackageVersion.new(
             version: version,
-            digest: release_digest(files),
+            digest: release_digest(installable),
             source: "#{id.name}#{EXACT_REQUIREMENT}#{version}",
             declarations: Declarations::ToolOwned.new,
           )
@@ -84,10 +96,22 @@ module Dev
         Net::HTTP.get_response(URI("#{PYPI_HOST}/pypi/#{name}/json"))
       end
 
-      # A release's integrity digest: the sdist's SHA256 when one exists
-      # (platform-independent), else the first file's, else nil.
+      # The files pip would install a release from: the ones not yanked.
+      # PyPI yanks per file (PEP 592); a release is yanked when all of its
+      # files are, and a partly yanked one is still installable from the rest.
       #
       # @param files [Array<Hash>] the release's file objects
+      # @return [Array<Hash>] the files not yanked
+      sig { params(files: T::Array[T::Hash[String, T.untyped]]).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def installable_files(files)
+        files.reject { |file| file["yanked"] == true }
+      end
+
+      # A release's integrity digest: the sdist's SHA256 when one exists
+      # (platform-independent), else the first file's, else nil when the
+      # file publishes no SHA256.
+      #
+      # @param files [Array<Hash>] the release's installable file objects, at least one
       # @return [String, nil]
       sig { params(files: T::Array[T::Hash[String, T.untyped]]).returns(T.nilable(String)) }
       def release_digest(files)

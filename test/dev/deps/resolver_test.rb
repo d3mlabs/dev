@@ -20,6 +20,7 @@ require "dev/deps/version_scheme"
 require "dev/lifecycle/series"
 require "dev/deps/brew_scheme"
 require "dev/deps/gem_scheme"
+require "dev/deps/pep440_scheme"
 require "dev/deps/semver_scheme"
 require "dev/deps/steam_scheme"
 require "dev/deps/tag_scheme"
@@ -150,6 +151,27 @@ class Dev::Deps::ResolverTest < Minitest::Test
 
     Then "the highest in-range version wins — not the highest overall"
     result[0].version == "3.13.1"
+  end
+
+  test "a pip range locks #{expected} from {0.26.0, 0.27.0rc1} under #{requirement.inspect} (dev#349)" do
+    Given "PyPI's universe for scikit-image the day 0.27.0rc1 was published"
+    repo = StubRepository.new(universes: {
+      "scikit-image" => [version("0.26.0"), version("0.27.0rc1")],
+    })
+    declarations = [
+      declaration(name: "scikit-image", integration: :pip, group: :app, requirement:),
+    ]
+
+    When "resolving with Pep440Scheme"
+    result = resolver_for(:pip, repo, scheme: Dev::Deps::Pep440Scheme.new).resolve(declarations)
+
+    Then "a pre-release is locked only where the requirement names one, as pip installs"
+    result[0].version == expected
+
+    Where
+    requirement   | expected
+    ">=0.22"      | "0.26.0"
+    ">=0.27.0rc1" | "0.27.0rc1"
   end
 
   # A gh-shaped universe deploying heads: 1.3.0, 1.4.0 and 2.0.0 cut, v1
