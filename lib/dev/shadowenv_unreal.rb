@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/project_shadowenv"
 
 module Dev
   # Shadowenv Unreal Engine provisioning: resolves the UE engine root, generates
@@ -50,7 +51,7 @@ module Dev
     # from the given UE root.
     sig { params(ue_root: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def provisioned?(ue_root, project_root:)
-      lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
+      lisp_path = ProjectShadowenv.new(project_root).dir / LISP_FILENAME
       return false unless File.exist?(lisp_path)
       content = File.read(lisp_path)
       content.include?(%(provide "unreal")) && content.include?(ue_root)
@@ -76,14 +77,13 @@ module Dev
         return false
       end
 
-      shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
+      shadowenv = ProjectShadowenv.new(project_root)
+      shadowenv_d = shadowenv.dir
       FileUtils.mkdir_p(shadowenv_d)
       lisp_path = File.join(shadowenv_d, LISP_FILENAME)
       File.write(lisp_path, generate_unreal_lisp(root, ue_project:))
 
-      Dir.chdir(project_root.to_s) do
-        system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
+      system("shadowenv", "trust", chdir: shadowenv.search_root.to_s, out: File::NULL, err: File::NULL)
 
       true
     end

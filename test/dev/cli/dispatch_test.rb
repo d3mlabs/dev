@@ -180,14 +180,12 @@ class Dev::Cli::DispatchTest < Minitest::Test
     When
     outcome = remote.dispatch(Dev::Lifecycle::VerbInvocation.new(words: ["build", "cellbound-3d-win64-dev"])) { flunk("the env was resolved") }
 
-    Then "Done; the service container was created with the checkout and its container-side shadowenv mounted, then one exec in the checkout with GH_TOKEN named, the verb its argv; the origin as it was"
+    Then "Done; the service container was created with the checkout mounted once, then one exec in the checkout with GH_TOKEN named, the verb its argv; the origin as it was"
     outcome == Dev::Cli::Dispatch::Outcome::Done.new
     crossing == ["in cellbound-3d-linux (container)", "the checkout, mounted"]
     created = engine.runs.find { |verb, flag, *_rest| verb == "run" && flag == "-d" }
     created.each_cons(2).include?(["-v", "#{checkout}:#{checkout}"])
-    created.each_cons(2).include?(["-v", "#{checkout}/.shadowenv.d-container:#{checkout}/.shadowenv.d"])
-    (root / ".shadowenv.d").directory?
-    (root / ".shadowenv.d-container").directory?
+    created.each_cons(2).count { |flag, mount| flag == "-v" && mount.start_with?(checkout.to_s) } == 1
     exec = engine.runs.find { |verb, *_rest| verb == "exec" }
     exec == ["exec", "-e", "GH_TOKEN", "-w", checkout, Dev::BuildContainer.service_container_name(image(persist: true).ref, root), "dev", "build", "cellbound-3d-win64-dev"]
     engine.run_envs.fetch(engine.runs.index(exec)) == { "GH_TOKEN" => "gho_host" }

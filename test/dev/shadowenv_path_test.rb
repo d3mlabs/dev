@@ -36,7 +36,7 @@ class ShadowenvPathTest < Minitest::Test
     )
 
     Then "the file holds the generated lisp, shadowenv was trusted, and the call reports the write"
-    1 * Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL) >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: tmpdir, out: File::NULL, err: File::NULL) >> true
     changed == true
     File.read(File.join(tmpdir, ".shadowenv.d", FILENAME)) ==
       Dev::ShadowenvPath.generate_path_lisp(provide: ["brew", "cmake@4.4.3"], paths: ["/x/bin"])
@@ -84,7 +84,7 @@ class ShadowenvPathTest < Minitest::Test
     )
 
     Then "the file now names only the new path"
-    1 * Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL) >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: tmpdir, out: File::NULL, err: File::NULL) >> true
     changed == true
     content = File.read(File.join(shadowenv_d, FILENAME))
     content.include?("/new/bin")
@@ -108,7 +108,7 @@ class ShadowenvPathTest < Minitest::Test
     Dev::ShadowenvPath.setup!(project_root: tmpdir, filename: FILENAME, provide: ["brew", ""], paths: [])
 
     Then "the file carries the provide and no prepend"
-    1 * Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL) >> true
+    1 * Kernel.system("shadowenv", "trust", chdir: tmpdir, out: File::NULL, err: File::NULL) >> true
     content = File.read(File.join(shadowenv_d, FILENAME))
     content.include?('(provide "brew" "")')
     !content.include?("prepend-to-pathlist")

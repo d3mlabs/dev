@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/project_shadowenv"
 require "dev/provisioning_guard"
 
 module Dev
@@ -32,7 +33,7 @@ module Dev
     # @return [Boolean]
     sig { params(lua_version: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def provisioned?(lua_version, project_root:)
-      lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
+      lisp_path = ProjectShadowenv.new(project_root).dir / LISP_FILENAME
       return false unless File.exist?(lisp_path)
 
       content = File.read(lisp_path)
@@ -49,14 +50,13 @@ module Dev
     def setup!(lua_version:, project_root:)
       ensure_homebrew_lua!(lua_version)
 
-      shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
+      shadowenv = ProjectShadowenv.new(project_root)
+      shadowenv_d = shadowenv.dir
       FileUtils.mkdir_p(shadowenv_d)
       lisp_path = File.join(shadowenv_d, LISP_FILENAME)
       File.write(lisp_path, generate_lua_lisp(lua_version))
 
-      Dir.chdir(project_root.to_s) do
-        Kernel.system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
+      Kernel.system("shadowenv", "trust", chdir: shadowenv.search_root.to_s, out: File::NULL, err: File::NULL)
 
       true
     end

@@ -48,7 +48,7 @@ module Dev
     HOST_VENV_DIR = ".venv"
     # The build container's link, beside the host's in the bind-mounted
     # project: suffixed as the container's shadowenv directory is
-    # (BuildContainer::CONTAINER_SHADOWENV_DIR).
+    # (ProjectShadowenv::CONTAINER_SEARCH_ROOT).
     CONTAINER_VENV_DIR = ".venv-container"
     # Both links as the repo-relative .gitignore lines covering them —
     # beside the paths they cover, collected by Dev::Footprint. Bare names,

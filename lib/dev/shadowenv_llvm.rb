@@ -3,6 +3,7 @@
 
 require "fileutils"
 require "pathname"
+require "dev/project_shadowenv"
 
 module Dev
   # Shadowenv LLVM provisioning: resolves the Homebrew LLVM prefix, generates
@@ -33,7 +34,7 @@ module Dev
     # the given prefix. This is the fast-path check run before every dev command.
     sig { params(llvm_prefix: String, project_root: T.any(String, Pathname)).returns(T::Boolean) }
     def provisioned?(llvm_prefix, project_root:)
-      lisp_path = File.join(project_root.to_s, ".shadowenv.d", LISP_FILENAME)
+      lisp_path = ProjectShadowenv.new(project_root).dir / LISP_FILENAME
       return false unless File.exist?(lisp_path)
       content = File.read(lisp_path)
       content.include?(%(provide "llvm")) && content.include?(llvm_prefix)
@@ -49,14 +50,13 @@ module Dev
         return false
       end
 
-      shadowenv_d = File.join(project_root.to_s, ".shadowenv.d")
+      shadowenv = ProjectShadowenv.new(project_root)
+      shadowenv_d = shadowenv.dir
       FileUtils.mkdir_p(shadowenv_d)
       lisp_path = File.join(shadowenv_d, LISP_FILENAME)
       File.write(lisp_path, generate_llvm_lisp(prefix))
 
-      Dir.chdir(project_root.to_s) do
-        system("shadowenv", "trust", out: File::NULL, err: File::NULL)
-      end
+      system("shadowenv", "trust", chdir: shadowenv.search_root.to_s, out: File::NULL, err: File::NULL)
 
       true
     end

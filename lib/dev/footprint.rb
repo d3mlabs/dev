@@ -3,11 +3,11 @@
 
 require "open3"
 require "pathname"
-require_relative "build_container"
 require_relative "deps/cmake_integration"
 require_relative "deps/luarocks_integration"
 require_relative "learnings/layout"
 require_relative "plan/workspace"
+require_relative "project_shadowenv"
 require_relative "shadowenv_python"
 require_relative "skills/layout"
 require_relative "ui"
@@ -49,7 +49,7 @@ module Dev
     # agent links.
     MANAGED_PATHS = T.let(
       [
-        *Dev::BuildContainer::GITIGNORE_FOOTPRINT,
+        *Dev::ProjectShadowenv::GITIGNORE_FOOTPRINT,
         *Dev::ShadowenvPython::GITIGNORE_FOOTPRINT,
         Dev::Deps::CmakeIntegration::GITIGNORE_FOOTPRINT,
         Dev::Deps::LuaRocksIntegration::GITIGNORE_FOOTPRINT,

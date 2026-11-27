@@ -3,7 +3,6 @@
 
 require "digest"
 require "etc"
-require "fileutils"
 require "pathname"
 require "securerandom"
 require "tmpdir"
@@ -156,21 +155,9 @@ module Dev
     # lisp names one build host's prefixes (`/opt/homebrew` against
     # Linuxbrew's; the host's compiler flags), so the container must not
     # read the host's `.shadowenv.d`, nor write into it. The container's
-    # is a dev-owned, gitignored sibling in the checkout, keyed by side as
-    # the venv link is (`.venv` / `.venv-container`, dev#399), and
-    # bind-mounted over the host's at the one path shadowenv reads: inside,
-    # `.shadowenv.d` *is* `.shadowenv.d-container`, and every lisp writer
-    # (ShadowenvFile) writes its own side's directory without knowing. Both
-    # directories are created on the host before the mount, by the host's
-    # user: docker makes a missing mount source or target itself, as root,
-    # and a root-owned directory in the checkout is one neither side can
-    # write.
-    SHADOWENV_DIR = ".shadowenv.d"
-    CONTAINER_SHADOWENV_DIR = ".shadowenv.d-container"
-    # Both sides' directories as the repo-relative .gitignore lines covering
-    # them — beside the paths they cover, collected by Dev::Footprint. A
-    # lisp names one machine's prefixes; neither directory ever commits.
-    GITIGNORE_FOOTPRINT = T.let(["#{SHADOWENV_DIR}/", "#{CONTAINER_SHADOWENV_DIR}/"].freeze, T::Array[String])
+    # is nested under a dev-owned, gitignored sibling in the same checkout,
+    # and every shadowenv invocation inside is pointed at it
+    # (ProjectShadowenv); nothing is mounted over anything.
 
     # @return [Dev::ContainerEngine] the engine every docker invocation rides
     sig { returns(Dev::ContainerEngine) }
@@ -389,8 +376,7 @@ module Dev
 
     # Build a docker run command for executing a command in a one-shot
     # container of the image. The container mounts its own data root, the
-    # checkout at its own path (CONTAINER_SHADOWENV_DIR over the host's
-    # shadowenv directory) and the declared volumes, and runs the command,
+    # checkout at its own path and the declared volumes, and runs the command,
     # word for word, in the checkout: no shell between, so nothing is
     # quoted on the way in.
     #
@@ -561,12 +547,9 @@ module Dev
       end
     end
 
-    # The checkout's mounts: the tree at its own path, and the container's
-    # shadowenv directory over the host's (see CONTAINER_SHADOWENV_DIR).
-    # Both shadowenv directories are made on the host first, so the mount
-    # finds them owned by the host's user rather than making them as root.
-    # The path is the checkout's canonical one (workspace_path), the one
-    # its container is named for.
+    # The checkout's mount: the tree at its own path. The path is the
+    # checkout's canonical one (workspace_path), the one its container is
+    # named for.
     #
     # @param project_root [Pathname] the checkout
     # @return [Array<String>] docker `-v` flags
@@ -575,21 +558,7 @@ module Dev
     def checkout_flags(project_root)
       assert_local_mounts!
       checkout = Pathname(self.class.workspace_path(project_root))
-      make_shadowenv_dirs(project_root)
-      ["-v", "#{checkout}:#{checkout}", "-v", "#{checkout / CONTAINER_SHADOWENV_DIR}:#{checkout / SHADOWENV_DIR}"]
-    end
-
-    # Make the checkout's two shadowenv directories on the host, as the
-    # host's user: the mount's source and its destination. Docker makes a
-    # missing bind path itself, as root, and does so on every start, not
-    # only at creation — so this runs before both.
-    #
-    # @param project_root [Pathname] the checkout
-    # @return [void]
-    sig { params(project_root: Pathname).void }
-    def make_shadowenv_dirs(project_root)
-      checkout = Pathname(self.class.workspace_path(project_root))
-      FileUtils.mkdir_p([checkout / SHADOWENV_DIR, checkout / CONTAINER_SHADOWENV_DIR])
+      ["-v", "#{checkout}:#{checkout}"]
     end
 
     # The working directory a command inside runs from: the mounted
@@ -633,25 +602,7 @@ module Dev
       end
 
       if exists
-        # A (re)start re-binds the mounts recorded at creation; a bind
-        # source that has gone since (the checkout recreated — a fresh clone
-        # over a checkpointed runner's container, a cleaned tree) would be
-        # made by docker, as root, and the container's user could not write
-        # its shadowenv directory. The same directories are made first, as
-        # at creation.
-        make_shadowenv_dirs(project_root)
-        if !container_running?(name)
-          start_container(name)
-        elsif !shadowenv_mount_live?(name, project_root)
-          # The shadowenv mount sits *inside* the mounted checkout, over
-          # `.shadowenv.d`, which the host can delete under a running
-          # container (actions/checkout's `git clean -ffdx`, a developer's).
-          # The mount stays on the deleted entry; the recreated directory
-          # has none, and the container's lisp writers would write straight
-          # through to the host's `.shadowenv.d` — Linuxbrew paths on the
-          # host's project PATH. A restart re-binds it over the new one.
-          restart_container(name)
-        end
+        start_container(name) unless container_running?(name)
       else
         create_service_container(name, image_tag, project_root:, volumes:)
       end
@@ -874,35 +825,9 @@ module Dev
       @engine.run(["start", name], out: File::NULL, err: File::NULL)
     end
 
-    # Stop and start the container: docker re-binds its recorded mounts
-    # on the way up, over whatever the host has at their paths now.
-    sig { params(name: String).void }
-    def restart_container(name)
-      @engine.run(["restart", name], out: File::NULL, err: File::NULL)
-    end
-
-    # Whether the running container still has its shadowenv directory
-    # mounted (see CONTAINER_SHADOWENV_DIR): the checkout's `.shadowenv.d`,
-    # at its container path, is a mount point in the container's own
-    # `/proc/self/mountinfo`. A mount whose directory the host deleted
-    # shows there under the deleted entry's name, not the path, so a
-    # recreated directory with no mount on it reads as dead. The path is
-    # the script's argument, never spliced into it.
-    #
-    # @param name [String] the running service container
-    # @param project_root [Pathname] the checkout
-    # @return [Boolean]
-    sig { params(name: String, project_root: Pathname).returns(T::Boolean) }
-    def shadowenv_mount_live?(name, project_root)
-      mount_point = Pathname(self.class.workspace_path(project_root)) / SHADOWENV_DIR
-      script = "awk -v p=\"$1\" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo"
-      @engine.run(["exec", name, "sh", "-c", script, "sh", mount_point.to_s], out: File::NULL, err: File::NULL)
-    end
-
     # Create the detached, idle service container: its own data root, the
-    # checkout at its own path (its shadowenv directory the container's,
-    # see CONTAINER_SHADOWENV_DIR), any extra volumes (e.g. the engine),
-    # the label contract, the inside marker (inherited by every `docker
+    # checkout at its own path, any extra volumes (e.g. the engine), the
+    # label contract, the inside marker (inherited by every `docker
     # exec`), and `sleep infinity` so it stays up.
     #
     # `--init`: docker's init (tini) is PID 1 and `sleep` its child. Every

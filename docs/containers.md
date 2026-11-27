@@ -206,17 +206,17 @@ At creation the container gets:
   crosses the VM boundary as virtiofs while the data root stays on the
   VM's disk.
 - **Its own `.shadowenv.d/`.** The host's activation lisps bind the
-  host's interpreters, so the host's `.shadowenv.d-container/` (ignored)
-  is mounted over `.shadowenv.d/` inside: the container's `dev up`
-  writes its lisps there, and the host never reads them. Both
-  directories are created on the host before the mount, so docker never
-  creates them as root. The mount sits inside the mounted checkout, so
-  the host can delete the directory under a running container
-  (`actions/checkout`'s `git clean -ffdx`, a developer's); before reusing
-  a running container, `dev up` asks it whether `.shadowenv.d/` is still
-  a mount point and restarts it when not, which re-binds the mount over
-  the recreated directory. Without that the container's lisps would land
-  in the host's `.shadowenv.d/`.
+  host's interpreters, so the container's live apart: nested under the
+  checkout's `.shadowenv.d-container/` (ignored), at
+  `.shadowenv.d-container/.shadowenv.d/`, where the container's `dev up`
+  writes them and the host never reads them. Every shadowenv invocation
+  inside is pointed there — `shadowenv exec --dir <checkout>/.shadowenv.d-container`,
+  `shadowenv trust` run in it — through one object, `ProjectShadowenv`,
+  that the lisp writers, `ShadowenvTrust` and both spawn seams consult.
+  Nothing is mounted over anything: when the host deletes the directory
+  under a running container (`actions/checkout`'s `git clean -ffdx`, a
+  developer's), the container's next `dev deps install` rewrites it, as
+  the host's does its own.
 - **The host's dev at the host's exact version**, installed through
   Linuxbrew into the prefix volume on first use and whenever the version
   differs.

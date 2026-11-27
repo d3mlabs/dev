@@ -3,16 +3,19 @@
 
 require "open3"
 require "pathname"
+require_relative "../project_shadowenv"
 require_relative "toolchain_exec"
 
 module Dev
   module Deps
     # The spawn seam for subprocesses that must run under the project's
-    # provisioned toolchain: `shadowenv exec -- <command>` in the project
-    # root. The dev process's PATH is the invoking shell's — headless
-    # services (CI, runners) have no shadowenv hook — so a bare `bundle` or
-    # `gem` would resolve to whatever Ruby the host carries; `shadowenv
-    # exec` swaps in the project's.
+    # provisioned toolchain: `shadowenv exec --dir <search root> --
+    # <command>` in the project root. The dev process's PATH is the
+    # invoking shell's — headless services (CI, runners) have no shadowenv
+    # hook — so a bare `bundle` or `gem` would resolve to whatever Ruby the
+    # host carries; `shadowenv exec` swaps in the project's. `--dir` names
+    # this side's shadowenv (ProjectShadowenv): the project root on the
+    # host, the container's nested directory inside.
     #
     # Env hygiene is not this seam's job, and it clears nothing. A caller's
     # hostile activation (a harness's `bundle exec`, a sandbox's
@@ -34,6 +37,7 @@ module Dev
       sig { params(project_root: T.any(String, Pathname)).void }
       def initialize(project_root:)
         @project_root = T.let(Pathname(project_root), Pathname)
+        @shadowenv = T.let(ProjectShadowenv.new(@project_root), ProjectShadowenv)
       end
 
       # Run a command under the project's toolchain and capture its output.
@@ -48,7 +52,7 @@ module Dev
         ).returns([String, String, Process::Status])
       end
       def capture3(*command, env: {})
-        argv = ["shadowenv", "exec", "--", *command]
+        argv = ["shadowenv", "exec", "--dir", @shadowenv.search_root.to_s, "--", *command]
         T.unsafe(Open3).capture3(env, *argv, chdir: @project_root.to_s)
       end
     end

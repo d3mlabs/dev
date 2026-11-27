@@ -12,14 +12,15 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
   # A stand-in `shadowenv` with the real one's activation rule: with
   # __shadowenv_data in the env the project is "already active" and nothing
   # is applied; without it the project's lisp runs — here, setting GEM_HOME
-  # to the project's keg.
+  # to the project's keg. Its argv is the seam's: `exec --dir <root> --`.
   def install_rule_shadowenv(dir)
     bin = Pathname(dir) / "bin"
     FileUtils.mkdir_p(bin)
     shim = bin / "shadowenv"
     shim.write(<<~SH)
       #!/bin/sh
-      shift 2
+      [ "$1" = exec ] && [ "$2" = --dir ] && [ "$4" = -- ] || { echo "unexpected argv: $*" >&2; exit 2; }
+      shift 4
       if [ -z "${__shadowenv_data-}" ]; then
         export GEM_HOME="#{dir}/keg/lib/ruby/gems/4.0.0"
       fi
@@ -47,7 +48,7 @@ class Dev::Deps::ShadowenvExecTest < Minitest::Test
     Then "the child is spawned under shadowenv with exactly the caller's env"
     1 * Open3.capture3(
       { "BUNDLE_GEMFILE" => "#{dir}/Gemfile" },
-      "shadowenv", "exec", "--", "bundle", "install", chdir: dir
+      "shadowenv", "exec", "--dir", dir, "--", "bundle", "install", chdir: dir
     ) >> ["out", "err", status]
     result == ["out", "err", status]
 

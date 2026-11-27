@@ -17,7 +17,7 @@ nothing: the next `dev up` writes it again.
 | Path | Written by | What it holds |
 |---|---|---|
 | `.shadowenv.d/` | `dev up`, for every `dependencies.rb` directive that activates something (`ruby`, `python`, `brew`, `lua`, `llvm`, a `gh` tree with a `bin/`) | Activation lisps naming this machine's kegs, gem home and venv by absolute path |
-| `.shadowenv.d-container/` | `dev up` inside the build container | The container side's lisps; mounted over `.shadowenv.d/` inside the container |
+| `.shadowenv.d-container/` | `dev up` inside the build container | The container side's shadowenv: its `.shadowenv.d/` nested here, where `shadowenv exec --dir` is pointed inside the container |
 | `.venv` | `dev up`, with a `python` | Symlink to `<data root>/venv/<name>/host/<keg>` |
 | `.venv-container` | `dev up` inside the build container, with a `python` | Symlink to `<data root>/venv/<name>/container/<keg>` |
 | `build/_deps/` | `dev up`, with a `cmake` | One `<name>-src` symlink per dependency, to `<data root>/cmake/<host>/<path>/<sha>` |
@@ -96,7 +96,7 @@ constant is a change to this page.
 
 | Path | Owner |
 |---|---|
-| `.shadowenv.d/`, `.shadowenv.d-container/` | `Dev::BuildContainer::GITIGNORE_FOOTPRINT` (`SHADOWENV_DIR`, `CONTAINER_SHADOWENV_DIR`) |
+| `.shadowenv.d/`, `.shadowenv.d-container/` | `Dev::ProjectShadowenv::GITIGNORE_FOOTPRINT` (`DIR`, `CONTAINER_SEARCH_ROOT`) |
 | `.venv`, `.venv-container` | `Dev::ShadowenvPython::GITIGNORE_FOOTPRINT` (`HOST_VENV_DIR`, `CONTAINER_VENV_DIR`) |
 | `build/_deps/` | `Dev::Deps::CmakeIntegration::GITIGNORE_FOOTPRINT` (`SOURCES_DIR`) |
 | `lua_modules/` | `Dev::Deps::LuaRocksIntegration::GITIGNORE_FOOTPRINT` (`INSTALL_DIR`) |

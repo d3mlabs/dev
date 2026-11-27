@@ -173,8 +173,9 @@ branch and watches the run. `Transport::LocalContainer#with_workspace`
 yields the checkout itself as `Workspace::Mounted`; `LocalContainer#run`
 is a `docker exec` into the project's container, which `ProjectContainer`
 composes with the checkout bind-mounted at its own path and as the
-workdir (`BuildContainer#checkout_flags`, which also mounts the
-container's `.shadowenv.d-container/` over the host's `.shadowenv.d/`).
+workdir (`BuildContainer#checkout_flags`; the container's shadowenv is
+the directory nested under `.shadowenv.d-container/`, which
+`ProjectShadowenv` points shadowenv at inside).
 The same two steps carry a project command to the container
 (`CommandRunner#run_in_container`) and `dev up`'s in-container install
 (`ContainerUpCommand`), so no caller constructs a `SnapshotSync` or a
