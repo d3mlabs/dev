@@ -355,7 +355,9 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     pins = Dev::Deps::Lockfile.new(dir: root).read.to_h { |dep| [dep.name, [dep.version, dep.metadata["tap_commit"]]] }
     pins == { "cmake" => ["4.4.4", "0f1ba9ea"], "jq" => ["1.8", "7d2877eb"], "kimimaro" => ["5.8.5", nil] }
     $stdout.string.include?("dev: moved jq 1.7 → 1.8 (named)")
-    $stdout.string.include?("dev: kept 2 pins from deps.lock: cmake, kimimaro")
+    !$stdout.string.include?("cmake")
+    !$stdout.string.include?("kimimaro")
+    $stdout.string.include?("dev: lockfiles updated — now run dev up to install.")
 
     Cleanup
     $stdout = old_stdout
@@ -484,6 +486,41 @@ class Dev::Cli::Builtins::UpdateDepsCommandTest < Minitest::Test
     pins == { "ai-flow" => ["1.3.0", "a" * 40], "ai-flow-newest" => ["1.4.0", "b" * 40] }
     $stdout.string.include?("dev: moved ai-flow 1.4.0 → 1.3.0 (series head v1 → 1.3.0)\n")
     $stdout.string.include?("dev: added ai-flow-newest 1.4.0 (greatest satisfying)\n")
+
+    Cleanup
+    $stdout = old_stdout
+    FileUtils.rm_rf(root)
+  end
+
+  test "call <name> whose pin is already what its rule chooses says so, and says the lock is current" do
+    Given "a lock on 1.3.0, which is where v1 points"
+    root = Pathname.new(Dir.mktmpdir("update-deps-unchanged-"))
+    File.write(root / "dependencies.rb", <<~RUBY)
+      require "dev/deps"
+      Dev::Deps.define do
+        gh "ai-flow", "^1", github: "d3mlabs/ai-flow", assets: "*.zip"
+      end
+    RUBY
+    locked = Dev::Deps::Dependency.new(name: "ai-flow", integration: :gh, group: :app, version: "1.3.0", hash: nil, source: "a" * 40,
+      metadata: { "repo" => "d3mlabs/ai-flow", "commit" => "a" * 40,
+                  "assets" => [{ "name" => "ai-flow-1.3.0.zip", "size" => 1, "sha256" => "a3" }], "asset_pattern" => "*.zip" })
+    Dev::Deps::Lockfile.new(dir: root).lock([locked], manifest_digest: Digest::SHA256.file((root / "dependencies.rb").to_s).hexdigest)
+    before = (root / "deps.lock").read
+    Dev::Deps::Registry.expects(:repositories).returns({ gh: ai_flow_repository })
+    Dev::Deps::Registry.stubs(:lockers).returns({})
+    command = Dev::Cli::Builtins::UpdateDepsCommand.new
+    old_stdout = $stdout
+    $stdout = StringIO.new
+
+    When "running dev deps update ai-flow"
+    command.call(args: parsed_args(command, ["ai-flow"]), context: build_context(root))
+
+    Then "the named pin is reported unchanged with the rule that confirmed it; the lock is byte-identical and said to be current"
+    (root / "deps.lock").read == before
+    $stdout.string.include?("dev: ai-flow 1.3.0 unchanged (series head v1 → 1.3.0)\n")
+    $stdout.string.include?("dev: deps.lock is current.\n")
+    !$stdout.string.include?("lockfiles updated")
+    !$stdout.string.include?("dev: kept")
 
     Cleanup
     $stdout = old_stdout
