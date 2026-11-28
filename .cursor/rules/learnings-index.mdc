@@ -114,6 +114,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  owns it; a path dev wrote in the store is not aliased — the docs name it
  for `rm -rf`, gc reclaims only what it placed.
  → .cursor/skills/learnings/one-release-alias/
+- [architecture/verb-follows-the-data] A verb that composes a child verb
+ which may dispatch (`release` running `package`) never reads the
+ child's output from this machine: the stage that needs the built tree
+ rides the child to its host as a flag, and only facts read from the
+ destination cross back — never the bytes.
+ → .cursor/skills/learnings/verb-follows-the-data/
 
 ## toolchain
 
