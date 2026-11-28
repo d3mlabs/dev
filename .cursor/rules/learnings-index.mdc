@@ -69,6 +69,12 @@ propose a retirement, a consolidation, or a glob-scoped sub-index split.
  project tree holds a symlink or a lisp path, and path-bound artifacts run
  by their store path.
  → .cursor/skills/learnings/installed-state-in-the-store/
+- [architecture/shared-store-modes-follow-the-writer] dev's `002` umask
+ covers only dev's own writes: a step that spawns a tool writing into the
+ data root (a builder, `cp -a`, a vendoring packager) opens what it wrote
+ to the group before returning, and removes a tree it must replace with
+ `rm_r` and a typed error naming owner and mode — never `rm_rf`.
+ → .cursor/skills/learnings/shared-store-modes-follow-the-writer/
 - [architecture/one-brew-prefix-resolution] `Settings.brew_prefix` is the
  one brew-prefix resolution (`RunnerUser.brew_path` for the binary): never
  a second probe of HOMEBREW_PREFIX, PATH, `brew --prefix`, or a directory
