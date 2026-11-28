@@ -116,7 +116,7 @@ Where the script runs is decided by the target's `environment:`; see
 ## `dev package`
 
 ```
-dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--runner L | --container] [--fetch]
+dev package [BUILD] [--target T] [--platform P] [--config C] [--no-build] [--runner L | --container] [--fetch] [--attach V]
 ```
 
 `package` implies `build`, make-like. For the selected build:
@@ -173,6 +173,20 @@ is skipped.
 brought back into this machine's store for the build, where `dev deploy`
 here reads them. Without it the artifact stays in the store of the host
 that packaged; see [`--fetch`](#--fetch).
+
+`--attach V` attaches the artifact to the GitHub release of version `V`
+from the host that packaged it — what `dev release` runs per release
+build ([The cut](#the-cut)). Before anything is built, the host checks
+the tree is clean, that `VERSION` (when the project keeps one) reads
+`V`, and that `vV` has a release on the forge (a draft `dev release`
+left, or one already published); each refusal names the fact. After the
+package, the archive goes up as `<build>-<V>.<ext>` (a split set's
+parts and a rewritten `MANIFEST`), replacing any asset of that name, and
+the build's entry — the asset's name, digest and build id — is recorded
+on the release's `release.json`, read back and rewritten in place. The
+artifact is also in that host's store, as any package's is; `--fetch`
+brings it here all the same. Under `--runner` the flag rides to the
+runner as part of the verb; the runner's `gh` identity is what uploads.
 
 ## `dev deploy <channel>`
 
@@ -366,8 +380,9 @@ cut landed, and this run resumes at the push.
 ┃   1. Bump VERSION 1.1.0 → 1.2.0
 ┃   2. Tag v1.2.0
 ┃   3. Push main + tag v1.2.0 to origin
-┃   4. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag
-┃   5. Create GitHub release v1.2.0 and attach 2 archives + release.json
+┃   4. Create GitHub release v1.2.0 as a draft
+┃   5. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag and attach, each from the host that packages it
+┃   6. Publish GitHub release v1.2.0 with release.json
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ? Proceed? (y/N)
 ```
@@ -390,20 +405,31 @@ release is never cut on an assumed yes.
    `Gemfile.lock` lines that mirror it when the project is a gem whose
    gemspec reads `VERSION`. HEAD is tagged `v1.2.0`. Resuming skips this.
 2. The branch and the tag are pushed to `origin`.
-3. Each release build, in declaration order, is packaged **at the tag**
-   by running `dev package <build>` as itself, so each dispatches by its
-   target's `environment:` and the builder has the terminal. The
-   resulting artifact must be current at the tag's commit; one packaged
-   elsewhere is refused. The bump commit makes every earlier artifact
-   stale, which is why the cut comes first and why the build ids read
-   `1.2.0+<tag sha>`.
-4. The archives are attached to the GitHub release as
+3. The GitHub release is created once, as a draft (`gh release create
+   --verify-tag --draft`, notes from the plan). A release the forge
+   already holds for the tag — a draft a failed run left, or one
+   published — is used as it is.
+4. Each release build, in declaration order, is packaged **at the tag
+   and attached** by running `dev package <build> --attach <version>` as
+   itself, so each dispatches by its target's `environment:` and the
+   builder has the terminal — on this machine, in the container, or on
+   a runner. The host that packages checks the tree is clean and at the
+   version before it builds, then uploads the archive to the draft as
    `<build>-<version>.<ext>` (`cellbound-3d-win64-release-1.2.0.zip`; a
    split set's parts as `<build>-<version>.tar.zst.00`, … with a
-   rewritten `<build>-<version>.MANIFEST`), with `release.json` beside
-   them. The release is created once, as a draft (`gh release create
-   --verify-tag --draft`, notes from the plan), the assets upload with
-   `--clobber`, and the draft is published last (`gh release edit
+   rewritten `<build>-<version>.MANIFEST`) with `--clobber`, and records
+   the build's entry on the draft's `release.json`. Nothing crosses back
+   from a remote host but those facts: this machine's store is no
+   waypoint, and a build placed on another host, or runner-only, is
+   released from here all the same. The bump commit makes every earlier
+   artifact stale, which is why the cut comes first and why the build ids
+   read `1.2.0+<tag sha>`.
+5. `release.json` is read back from the draft and each release build is
+   checked against it: its entry is on, its asset is among the release's,
+   and its build id was stamped from a clean tree at the tag's commit;
+   one attached from another tree is refused. The final `release.json`
+   — the tag, its commit, the archives in release order — is written
+   over the ledger, and the draft is published last (`gh release edit
    --draft=false`): a repository with immutable releases freezes the
    asset list the moment a release is published, so nothing publishes
    before the assets are on. A project with a channel whose publisher
@@ -428,13 +454,16 @@ cut from then on; one already cut stays mutable.
 
 A run that fails after the tag is pushed leaves the release uncreated or
 a draft; running it again resumes at the push, creates the draft if
-missing, re-uploads what a half-done run attached, and publishes. A
-release found already published takes the assets only where the
-repository still allows it: on one with immutable releases the list froze
-at publish, and the run fails naming the one remedy — release the next
-version.
+missing, packages and attaches each build again — a build whose artifact
+is current at the tag is not rebuilt, its upload replaces the last run's
+— and publishes. A release found already published takes the assets
+only where the repository still allows it: on one with immutable
+releases the list froze at publish, and the run fails naming the one
+remedy — release the next version.
 
-`release.json` is what `deploy --release` reads:
+`release.json` is what `deploy --release` reads. While the release is
+being cut it is also the draft's ledger: each attach adds its build's
+entry, and the publish writes it whole.
 
 ```json
 {
@@ -839,7 +868,7 @@ read by older devs](dev-yml.md#devyml-is-read-by-older-devs)).
 | `deploy gh --release V` | the above; release `V` immutable; `contents: write` for the series tag and the latest designation | a store artifact is refused naming `dev release`; a mutable release is refused naming the repository setting; a refused ref write is the heads' error |
 | `deploy --release V` | the above for every channel | stops at the first channel that refuses; name the channels to ship the rest |
 | `deploy status` | a channel; a repo `gh` reaches | the forge's refusal is the command's error |
-| `release` | a clean checkout on a branch with `origin`; the version not yet cut, or cut on HEAD (a resume); `release:` naming packageable builds; `contents: write`; a terminal or `--yes` | refuses before anything moves; packages each release build at the tag itself, so staleness cannot arise; a tag pushed with no release is what the retry resumes |
+| `release` | a clean checkout on a branch with `origin`; the version not yet cut, or cut on HEAD (a resume); `release:` naming packageable builds; `contents: write` here and on each host that packages; a terminal or `--yes` | refuses before anything moves; packages each release build at the tag and attaches it from the host that packaged, so staleness cannot arise and no store is a waypoint; a build the draft's `release.json` does not carry at the tag's commit is refused before publishing; a tag pushed with no release, or a draft, is what the retry resumes |
 
 ## Where a verb runs
 
@@ -949,9 +978,9 @@ and its output is the terminal's directly.
 
 **The invocation** the host runs is the one typed, with the build fully
 qualified (never a default the host would resolve differently), the
-seam's flags kept (`--no-build`; `deploy`'s `--config`, `--allow-stale`,
-`--force`, `--dry-run`) and the dispatch's consumed (`--runner`,
-`--container`, `--fetch`).
+seam's flags kept (`--no-build`, `--attach <version>`; `deploy`'s
+`--config`, `--allow-stale`, `--force`, `--dry-run`) and the dispatch's
+consumed (`--runner`, `--container`, `--fetch`).
 
 **`--runner <label>`** forces the remote dispatch to that label whatever
 the placement: a pool the org enrolled, another repo's runner, the repo's
@@ -968,7 +997,9 @@ and that host deploys from its own store. `package --fetch` brings the
 archive and `build-id.json` back into this machine's store directory for
 the build: from a runner, as the workflow artifact the job uploaded; from
 the container on a Mac, by `docker cp`. On a Linux host the container's
-data root is the host's, so the artifact is already there.
+data root is the host's, so the artifact is already there. A release
+needs none of this: `package --attach` puts the archive on the GitHub
+release from the host that packaged it, and `release` reads the forge.
 
 **A verb inside an Actions job never dispatches to a runner.** A runner
 that finds itself not to be the build's environment is misprovisioned,

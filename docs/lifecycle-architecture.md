@@ -36,7 +36,9 @@ One class per noun, none playing two roles.
 | Release cut | `Lifecycle::ReleaseCut` | The git half of `release`: a clean tree on a branch, the `VERSION` bump with the `Gemfile.lock` lines mirroring it (`Lifecycle::ProjectVersion.files`), the tag, the push. Read into a `Plan` first; resumable when HEAD is already tagged. |
 | Release assets | `Lifecycle::ReleaseAssets` | An artifact's archive under its release name, `<build>-<version>.<ext>` (a split set's parts and a rewritten `MANIFEST`), with the entry `release.json` records for it. |
 | Part list | `Lifecycle::PartList` | A split archive's `MANIFEST`: `<sha256>  <part>` per line, the shape `sha256sum -c` reads. Written by the archive, renamed by the release assets, read back by the release download. |
-| Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once (as latest, or not when a head owns that designation), assets uploaded with `--clobber`, downloaded back by name, its facts (`immutable`, `prerelease`) read back. Through `gh`. |
+| Release archive | `Lifecycle::GithubReleases` | The release on the forge: created once as a draft, assets uploaded with `--clobber`, listed and downloaded back by name, published (as latest, or not when a head owns that designation), its facts (`immutable`, `prerelease`) read back. Through `gh`. |
+| Release ledger | `Lifecycle::ReleaseLedger` | The draft's `release.json` while a release is being cut: read back from the forge, one build's entry recorded into it from wherever that build was packaged, completed whole before the publish. How a release's facts cross back from the hosts — one file, never the bytes. |
+| Release attachment | `Lifecycle::ReleaseAttachment` | What `package --attach <version>` does on the host that packaged: refuses before the build a tree that is dirty, not at the version, or whose tag has no release; after it, gathers the artifact under its release names (`ReleaseAssets`), uploads them, records the entry on the ledger. |
 | Heads on the forge | `Lifecycle::GithubHeads` | The gh channel's heads as the repo keeps them: one series tag `v<major>` per deployed series (read from the `v`-tag refs, created or force-moved through the git refs API) and GitHub's latest designation (`gh release edit --latest`). `Deps::GhPublisher` reads them into a candidate and moves them. |
 | Release archives | `Lifecycle::ReleaseArchives` | A cut release read back for `deploy --release`: `release.json` downloaded fresh, the selected archives downloaded into `.releases/<tag>/` and verified against its digests; a verified file is not fetched again, a failing one is removed and refused. |
 | Snapshot | `Lifecycle::Snapshot` | The working tree as a runner reaches it: a commit through a temporary index (`Lifecycle::SnapshotCommit`) on a `Lifecycle::SnapshotBranch` (`dev/build/<runner>/<id>`) at `origin`, for as long as the dispatch needs it. `Lifecycle::SnapshotSync` runs the step; `Lifecycle::SnapshotBranches` prunes the leftovers; `Lifecycle::WorkflowTriggers` reads the project's workflows for the `on: push` refusal. |
@@ -182,6 +184,15 @@ The same two steps carry a project command to the container
 mount of its own. The fan-out `deploy --release V`
 (`DeployAllCommand`) takes the same dispatch flags and runs each
 channel's deploy as a child invocation.
+
+`release` dispatches natively itself and runs `package <build> --attach
+<version>` per release build through the `LifecycleExecutor`, so each
+package resolves its own dispatch — the git state stays in the checkout
+the verb was typed in, and "package at the tag and attach" runs where
+the build's placement sends it. What crosses back from a remote host is
+the forge's state (`ReleaseLedger`), never the artifact: `release`
+reads it before publishing, in the same `after` whether every build ran
+here or none did.
 
 ## Adding a port implementation
 

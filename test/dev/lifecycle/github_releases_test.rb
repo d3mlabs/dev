@@ -285,6 +285,49 @@ class Dev::Lifecycle::GithubReleasesTest < Minitest::Test
     gh.calls.map(&:argv) == [["release", "view", "v1.2.0", "--json", "assets", "--jq", ".assets"]]
   end
 
+  test "asset_names lists what the release carries now, in the forge's order (dev#744)" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: [{ "name" => "rspock-1.2.0.gem", "url" => "https://x/gem" }, { "name" => "release.json", "url" => "https://x/r" }])
+
+    When
+    names = releases(gh).asset_names(TAG)
+
+    Then
+    names == ["rspock-1.2.0.gem", "release.json"]
+    gh.calls.map(&:argv) == [["release", "view", "v1.2.0", "--json", "assets", "--jq", ".assets"]]
+  end
+
+  test "asset_names of a release with nothing attached yet is empty" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: [])
+
+    Expect
+    releases(gh).asset_names(TAG) == []
+  end
+
+  test "asset_names of a tag with no release is the same refusal as asset_url's: nothing is served" do
+    Given
+    gh = FakeGh.new.refuses(["release", "view"], with: "release not found")
+
+    When
+    releases(gh).asset_names(TAG)
+
+    Then
+    error = raises(Dev::Lifecycle::GithubReleases::AssetMissingError)
+    error.message.include?("v1.2.0 has no release")
+  end
+
+  test "an asset list that is not a list is refused: the forge did not answer the assets" do
+    Given
+    gh = FakeGh.new.answers(["release", "view"], with: { "name" => "x" })
+
+    When
+    releases(gh).asset_names(TAG)
+
+    Then
+    raises(Dev::Lifecycle::GithubReleases::MalformedReleaseError)
+  end
+
   test "asset_url refuses when the release carries no asset of that name, listing what it carries" do
     Given
     gh = FakeGh.new.answers(["release", "view"], with: [{ "name" => "release.json", "url" => "https://x/release.json" }])

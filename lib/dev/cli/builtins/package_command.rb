@@ -44,6 +44,16 @@ module Dev
       # uploads. The packed archive crosses from the seam to `after`
       # through the env: the template's one channel between the stages.
       #
+      # `--attach <version>` is the verb's release form, what `dev
+      # release` runs per release build: after the stamp, the artifact is
+      # attached to the GitHub release of `v<version>` from the host that
+      # packaged it — the archive under its release name, the build's
+      # entry on the release's `release.json` — so a build whose
+      # placement dispatches reaches the release without its bytes ever
+      # crossing back (Lifecycle::ReleaseAttachment). The host refuses
+      # before building what could not be the release's: a dirty tree, a
+      # `VERSION` that is not the tag's, a tag with no release.
+      #
       # Before the archive is written, the packager presents the tree as
       # it will ship to every channel whose `targets:` names the build
       # (Lifecycle::Acceptance): a destination that installs the tree by
@@ -57,6 +67,7 @@ module Dev
         NAME = "package"
         NO_BUILD_FLAG = "--no-build"
         FETCH_FLAG = "--fetch"
+        ATTACH_FLAG = "--attach"
 
         # `package` reached a target that declares `packager: none`.
         class NotPackageableError < ArgumentError; end
@@ -96,6 +107,11 @@ module Dev
           sig { returns(T.nilable(String)) }
           attr_reader :build_skipped
 
+          # @return [Lifecycle::ReleaseTag, nil] the release the artifact is
+          #   attached to after the stamp; nil for a plain package
+          sig { returns(T.nilable(Lifecycle::ReleaseTag)) }
+          attr_reader :attach
+
           # @return [Lifecycle::PackedArchive, nil] what the seam wrote
           sig { returns(T.nilable(Lifecycle::PackedArchive)) }
           attr_accessor :packed
@@ -110,9 +126,10 @@ module Dev
               acceptance: Lifecycle::Acceptance,
               state: Lifecycle::GitState,
               build_skipped: T.nilable(String),
+              attach: T.nilable(Lifecycle::ReleaseTag),
             ).void
           end
-          def initialize(build:, stage:, archive_stem:, builder:, packager:, acceptance:, state:, build_skipped:)
+          def initialize(build:, stage:, archive_stem:, builder:, packager:, acceptance:, state:, build_skipped:, attach: nil)
             @build = build
             @stage = stage
             @archive_stem = archive_stem
@@ -121,6 +138,7 @@ module Dev
             @acceptance = acceptance
             @state = state
             @build_skipped = build_skipped
+            @attach = attach
             @packed = T.let(nil, T.nilable(Lifecycle::PackedArchive))
           end
 
@@ -139,6 +157,7 @@ module Dev
         # @param listing [BuildListing] what the usage and completion list
         # @param ports [Lifecycle::Ports] the targets' builders and packagers, the channels' publishers
         # @param store [Lifecycle::Store] where the artifact goes
+        # @param attachment [Lifecycle::ReleaseAttachment] the artifact onto its release, under `--attach`
         # @param channels [Array<Lifecycle::Channel>] the project's channels
         #   with a protocol; the ones accepting a build are shown its tree
         # @param clock [Proc] the packaging instant (injectable for tests)
@@ -151,6 +170,7 @@ module Dev
             listing: BuildListing,
             ports: Lifecycle::Ports,
             store: Lifecycle::Store,
+            attachment: Lifecycle::ReleaseAttachment,
             channels: T::Array[Lifecycle::Channel],
             clock: T.proc.returns(Time),
             step_outputs: Lifecycle::StepOutputs,
@@ -158,7 +178,7 @@ module Dev
           ).void
         end
         def initialize(
-          selector:, dispatcher:, listing:, ports:, store:, channels: [],
+          selector:, dispatcher:, listing:, ports:, store:, attachment:, channels: [],
           clock: -> { Time.now }, step_outputs: Lifecycle::StepOutputs.from_env, out: $stdout
         )
           super()
@@ -167,6 +187,7 @@ module Dev
           @listing = listing
           @ports = ports
           @store = store
+          @attachment = attachment
           @channels = channels
           @clock = clock
           @step_outputs = step_outputs
@@ -177,7 +198,7 @@ module Dev
         def desc
           "Package a build into its artifact\n" \
             "Builds first unless the artifact is current with the tree; the archive and build-id.json land in the store " \
-            "of the host that packaged (--fetch brings them back from a remote one)."
+            "of the host that packaged (--fetch brings them back from a remote one; --attach puts the archive on a release from there)."
         end
 
         sig { override.returns(T::Array[Cli::Positional]) }
@@ -189,7 +210,13 @@ module Dev
         def flags
           BuildSelector::FLAGS + [Cli::Flag.new(NO_BUILD_FLAG, desc: "package the stage as it is, without building first")] +
             DispatchResolver::FLAGS +
-            [Cli::Flag.new(FETCH_FLAG, desc: "after a remote package, download the artifact into this machine's store")]
+            [
+              Cli::Flag.new(FETCH_FLAG, desc: "after a remote package, download the artifact into this machine's store"),
+              Cli::Flag.new(
+                ATTACH_FLAG, takes_value: true,
+                desc: "attach the artifact to the GitHub release of this version from the host that packaged it (what `dev release` runs per build)",
+              ),
+            ]
         end
 
         sig { override.returns(T.nilable(Listing)) }
@@ -208,11 +235,16 @@ module Dev
           build = @selector.select(args)
           assert_packageable!(build.target)
           no_build = args.flag?(NO_BUILD_FLAG)
+          attach = args.value(ATTACH_FLAG)&.then { |version| Lifecycle::ReleaseTag.new(version) }
           dispatch = @dispatcher.dispatch_for(
             build, runner: args.value(DispatchResolver::RUNNER_FLAG), container: args.flag?(DispatchResolver::CONTAINER_FLAG),
           )
-          dispatch.dispatch(invocation(build, no_build:, fetch: args.flag?(FETCH_FLAG))) do
-            state = Lifecycle::GitState.read(context.project!.root)
+          dispatch.dispatch(invocation(build, no_build:, fetch: args.flag?(FETCH_FLAG), attach:)) do
+            root = context.project!.root
+            state = Lifecycle::GitState.read(root)
+            # Refused here, before the builder runs: an attach of what is
+            # not the release's would be a build for nothing.
+            @attachment.assert_attachable!(attach, state:, version: Lifecycle::ProjectVersion.declared(root)) if attach
             PackageEnv.new(
               build:,
               stage: @store.stage_dir(build),
@@ -222,6 +254,7 @@ module Dev
               acceptance: acceptance_for(build),
               state:,
               build_skipped: build_skipped(build, state, no_build:),
+              attach:,
             )
           end
         end
@@ -258,6 +291,11 @@ module Dev
           @out.puts "packaged #{artifact.name} → #{artifact.archive} (#{artifact.manifest.build_id})"
           deprecations(env).each { |line| @out.puts line }
           @step_outputs.artifact(artifact.name, files: packed.files + [artifact.dir / Lifecycle::Manifest::Artifact::FILE_NAME])
+          attach = env.attach
+          return if attach.nil?
+
+          entry = @attachment.attach(artifact, tag: attach)
+          @out.puts "attached #{entry.name} to #{attach}'s release (#{entry.build_id})"
         end
 
         private
@@ -273,17 +311,24 @@ module Dev
         end
 
         # The verb as a remote host runs it: the build fully qualified, the
-        # one flag the seam reads kept, and the artifact to bring back when
-        # `--fetch` asked — into the store directory the build has here.
+        # flags the seam and `after` read kept (`--no-build`; `--attach`,
+        # which the host carries out, the release being where it is), and
+        # the artifact to bring back when `--fetch` asked — into the store
+        # directory the build has here.
         #
         # @param build [Lifecycle::Build]
         # @param no_build [Boolean]
         # @param fetch [Boolean]
+        # @param attach [Lifecycle::ReleaseTag, nil]
         # @return [Lifecycle::VerbInvocation]
-        sig { params(build: Lifecycle::Build, no_build: T::Boolean, fetch: T::Boolean).returns(Lifecycle::VerbInvocation) }
-        def invocation(build, no_build:, fetch:)
+        sig do
+          params(build: Lifecycle::Build, no_build: T::Boolean, fetch: T::Boolean, attach: T.nilable(Lifecycle::ReleaseTag))
+            .returns(Lifecycle::VerbInvocation)
+        end
+        def invocation(build, no_build:, fetch:, attach:)
           words = [NAME, build.name]
           words << NO_BUILD_FLAG if no_build
+          words.push(ATTACH_FLAG, attach.version) if attach
           Lifecycle::VerbInvocation.new(
             words:, fetch: fetch ? Lifecycle::ArtifactFetch.new(name: build.name, into: @store.dir(build)) : nil,
           )
