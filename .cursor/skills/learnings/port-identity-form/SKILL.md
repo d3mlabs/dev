@@ -28,7 +28,7 @@ builder: env.builder&.name || "none"        # a sentinel in the stamp
 sig { params(target: Target).returns(Builder) }
 def builder_for(target) = target.builder ? ScriptBuilder.new(...) : @checkout_builder
 sig(:final) { params(build: Build, stage: Pathname).void }
-def build(build, stage) = (FileUtils.rm_rf(stage); stage.mkpath; fill(build, stage))
+def build(build, stage) = (empty(stage); stage.mkpath; fill(build, stage); share(stage))
 ```
 
 Before adding a nilable port or a "declares nothing" skip, name the
