@@ -242,7 +242,9 @@ class Dev::BinDevTest < Minitest::Test
 
   test "inside dev's own checkout with its lock installed, the installed shim hands off to the checkout's bin/dev under the checkout's shadowenv — from any directory within" do
     Given "a checkout that is dev (name: dev, bin/dev, lib/dev.rb) with a lock bundle check satisfies, and a shadowenv stub"
-    dir = Dir.mktmpdir("dev-bin-test-")
+    # The shim names the checkout by `pwd`, the physical path; macOS's
+    # tmpdir is reached through a symlink (/var -> /private/var).
+    dir = File.realpath(Dir.mktmpdir("dev-bin-test-"))
     checkout = build_dev_checkout(dir, lock_installed: true)
     env = { "PATH" => "#{write_stub_shadowenv(dir)}:#{File.dirname(RbConfig.ruby)}:#{ENV.fetch("PATH")}" }
 
