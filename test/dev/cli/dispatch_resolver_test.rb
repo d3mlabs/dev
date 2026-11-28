@@ -78,20 +78,28 @@ class Dev::Cli::DispatchResolverTest < Minitest::Test
     self.class.image(name: name, apt: apt)
   end
 
-  def resolver(inside_container: false, standing: nil, enrolled_online: false)
+  # A registry a job's identity cannot read: the runner's machine user has
+  # no admin on the repo, and GitHub answers the runners list with 404.
+  class UnreadableRegistry < Dev::RunnerRegistry
+    def available(scope:, label:)
+      raise Dev::RunnerRegistry::QueryError, "could not list the runners at #{scope}: gh: Not Found (HTTP 404)"
+    end
+  end
+
+  def resolver(inside_container: false, standing: nil, enrolled_online: false, inside_job: false, registry: ScriptedRegistry.new(online: enrolled_online))
     host_rule = Dev::Cli::HostRule.new(
       host_environment: Dev::HostEnvironment.new(path: @marker), inside_container: inside_container,
     )
     settings = Dev::Settings.new(config_path: @config, system_config_path: (@dir / "none.yml").to_s)
     settings.set(Dev::Settings::LIFECYCLE_RUNNER_KEY, standing) if standing
-    enrolled = Dev::EnrolledRunnerLookup.new(registry: ScriptedRegistry.new(online: enrolled_online), repo_resolver: -> { "d3mlabs/Cellbound-3D" })
+    enrolled = Dev::EnrolledRunnerLookup.new(registry: registry, repo_resolver: -> { "d3mlabs/Cellbound-3D" })
     remotes = Dev::Cli::RemoteDispatches.new(
       root: @dir, ui: typed_mock(Dev::Ui), out: StringIO.new,
       runs: Dev::Lifecycle::WorkflowRuns.new(gh: FakeGh.new(root: @dir)),
       containers: Dev::ProjectContainer.new(project_root: @dir),
-      inside_job: false,
+      inside_job: inside_job,
     )
-    Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: enrolled, settings: settings)
+    Dev::Cli::DispatchResolver.new(host_rule: host_rule, remotes: remotes, enrolled: enrolled, settings: settings, inside_job: inside_job)
   end
 
   test "a build placed on the host is native wherever dev runs" do
@@ -167,6 +175,44 @@ class Dev::Cli::DispatchResolverTest < Minitest::Test
     dispatch.transport.is_a?(Dev::Cli::Transport::LocalContainer)
     dispatch.transport.runner == "container"
     dispatch.transport.destination == "in cellbound-3d-linux (container)"
+  end
+
+  test "inside an Actions job, a host not provisioned from the image goes to its container without asking GitHub about runners — a job never dispatches a job" do
+    Given "a job on a bare runner host, the repo's runner online and a standing `lifecycle.runner` set"
+    placement = Dev::Cli::Placement::Image.new(image: image)
+
+    When
+    dispatch = resolver(inside_job: true, standing: "standing-pool", enrolled_online: true).resolve(placement, subject: "cellbound-3d-win64-dev")
+
+    Then
+    dispatch.is_a?(Dev::Cli::Dispatch::Remote)
+    dispatch.transport.is_a?(Dev::Cli::Transport::LocalContainer)
+    dispatch.transport.runner == "container"
+  end
+
+  test "inside an Actions job, the runners list the job's identity cannot read is never consulted" do
+    Given "a job whose gh identity gets 404 on the runners list (no admin on a private repo)"
+    placement = Dev::Cli::Placement::Image.new(image: image)
+
+    When
+    dispatch = resolver(inside_job: true, registry: UnreadableRegistry.new).resolve(placement, subject: "satisfactory-mod-base-linux64")
+
+    Then
+    dispatch.transport.is_a?(Dev::Cli::Transport::LocalContainer)
+  end
+
+  test "inside an Actions job, `--runner` still names a runner and the Actions transport is what refuses it" do
+    Given "the resolver, inside a job, named a runner"
+    placement = Dev::Cli::Placement::Image.new(image: image)
+    dispatch = resolver(inside_job: true).resolve(placement, subject: "x", runner: "win64-pool")
+    transport = dispatch.transport
+
+    When "the transport is asked whether it can leave"
+    transport.assert_ready!
+
+    Then "it is the runner's, and it is what refuses"
+    transport.is_a?(Dev::Cli::Transport::ActionsRunner)
+    raises(Dev::Cli::Transport::ActionsRunner::DispatchFromJobError)
   end
 
   test "a host provisioned from another image is not this image's host either: its container" do
