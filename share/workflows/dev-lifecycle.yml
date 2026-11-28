@@ -16,6 +16,13 @@
 # store. The job runs the verbs where it lands and leaves the artifact in
 # that host's data root (K10): the box deploys from its own store.
 #
+# A release rides the same input: `dev release` dispatches
+# `package <build> --attach <version>` per release build, and the job
+# attaches the archive to the version's GitHub release itself — with the
+# job's `gh` identity, under `contents: write` — and records the build's
+# entry on the release's `release.json`. Nothing is uploaded as a
+# workflow artifact for it; the operator's `release` reads the forge.
+#
 # Only `workflow_dispatch` triggers it: a snapshot branch push must run
 # nothing on its own (`Lifecycle::WorkflowTriggers` refuses the dispatch
 # otherwise), and the run is the one dev asked for.

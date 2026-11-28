@@ -2,9 +2,6 @@
 # frozen_string_literal: true
 
 require "pathname"
-require "stringio"
-require "time"
-require "tmpdir"
 require "uri"
 require "dev/cli/build_listing"
 require "dev/cli/command"
@@ -21,17 +18,28 @@ module Dev
       # is a clean tree, a bump
       # commit when the project keeps its version in source, the tag, the
       # push — resumable, so a retry whose cut already landed (HEAD tagged)
-      # finishes the release instead of cutting a second one. Then each
-      # release build (`release.targets`, or every build of every
-      # packageable target under `release: {}`) is packaged **at the tag** —
-      # `package` run as itself per build, so each dispatches by its own
-      # environment and the make-like rule applies (a bump commit makes
-      # every earlier artifact stale by construction, which is why the cut
-      # comes first) — and the archives are attached to the GitHub release
-      # as `<build>-<version>.<ext>` with `release.json` beside them.
-      # **Nothing is deployed**: distribution is `deploy <channel> --release
-      # <version>` per channel, a week later from the same bytes
-      # if need be.
+      # finishes the release instead of cutting a second one — and the
+      # GitHub release as a draft. Then each release build
+      # (`release.targets`, or every build of every packageable target
+      # under `release: {}`) is packaged **at the tag and attached** —
+      # `package <build> --attach <version>` run as itself per build, so
+      # each dispatches by its own environment and the make-like rule
+      # applies (a bump commit makes every earlier artifact stale by
+      # construction, which is why the cut comes first) — the archive
+      # landing on the draft as `<build>-<version>.<ext>` from the host
+      # that packaged it, with the build's entry on the draft's
+      # `release.json`. **Nothing is deployed**: distribution is `deploy
+      # <channel> --release <version>` per channel, a week later from the
+      # same bytes if need be.
+      #
+      # The verb follows the data: a stage runs where its input is, and
+      # only the outcome crosses back. The git state — bump, tag, push, the
+      # draft, the publish — is this checkout's and stays here; "package
+      # at the tag and attach" is one unit per build that runs wherever
+      # the build's placement sends it, and what comes back is the fact
+      # that the assets are on the draft, never the bytes. So a release
+      # whose build is host-placed elsewhere, or runner-only, cuts from
+      # here all the same, and this machine's store is no waypoint.
       #
       # The stage: `before` resolves the version (given, or the next of the
       # one in source — ProjectVersion.next) into the tag and reads the
@@ -44,24 +52,25 @@ module Dev
       # `Proceed?` unless `--yes`; with no terminal to ask at it refuses,
       # never proceeds silently or hangs. The verb orchestrates
       # from wherever it was invoked, so its own dispatch is native
-      # and each `package` resolves its own. The seam is the cut and the
-      # push, one step each under a `Cutting` frame, then `package` per
-      # release build in its own frame, each artifact read back from the
-      # store and checked current at the tag's commit — the project's
-      # builders and packagers run inside it, so a failure there leaves the
-      # tag pushed and the release uncreated for the retry to resume.
-      # `after`, under a `Publishing` frame, gathers the assets under their
-      # release names (ReleaseAssets), writes `release.json`
-      # (Manifest::Release: the tag, its commit, the archives with their
-      # build ids), creates the GitHub release when missing and uploads,
-      # replacing any asset a failed run half-attached; then the epilogue
-      # and the split's hint — nothing deployed, `deploy <channel>
-      # --release` ships it. The artifacts cross from the seam to `after`
-      # through the env: the template's one channel between the stages.
+      # and each `package` resolves its own. The seam is the cut, the
+      # push and the draft, one step each under a `Cutting` frame, then
+      # `package --attach` per release build in its own step — the
+      # project's builders and packagers run inside it, so a failure there
+      # leaves the tag pushed and the draft for the retry to resume.
+      # `after`, under a `Publishing` frame, reads the draft's ledger back
+      # (ReleaseLedger) and checks every release build's entry is on it
+      # with its asset and a build id from a clean tree at the tag's
+      # commit — the same guarantee the local store check gave, enforced
+      # against what the forge holds — completes `release.json`
+      # (Manifest::Release: the tag, its commit, the archives in release
+      # order) and publishes the draft; then the epilogue and the split's
+      # hint — nothing deployed, `deploy <channel> --release` ships it. The
+      # release's page crosses from the seam to `after` through the env:
+      # the template's one channel between the stages.
       #
       # A release moves no head. On a project deploying through the gh
       # channel the forge's latest designation is that channel's head, so
-      # the release is created with `--latest=false` and `deploy gh`
+      # the release is published with `--latest=false` and `deploy gh`
       # designates it. And a head is only safe on a release the forge has
       # frozen: the epilogue warns when the release came out mutable,
       # naming the repository setting that freezes the next one.
@@ -72,13 +81,19 @@ module Dev
         # needs a `VERSION` to bump from.
         class VersionArgumentError < ArgumentError; end
 
-        # A release build's artifact is not in this machine's store at the
-        # tag's commit after `package` ran — it was packaged elsewhere, or
-        # the tree moved under the cut.
+        # A release build has no entry on the draft's `release.json`, or
+        # its asset is not on the release, after `package --attach` ran —
+        # the attach did not land.
+        class NotAttachedError < RuntimeError; end
+
+        # A release build's entry on the draft was not packaged from a
+        # clean tree at the tag's commit — it was attached from another
+        # tree, or the tree moved under the cut.
         class ArtifactNotAtTagError < RuntimeError; end
 
-        # `after` ran before the seam packaged the builds — a wiring bug.
-        class NothingPackagedError < StandardError; end
+        # `after` ran before the seam found or created the GitHub release —
+        # a wiring bug.
+        class ReleaseNotCreatedError < StandardError; end
 
         # The operator answered no at the confirm: nothing was cut.
         class DeclinedError < RuntimeError; end
@@ -96,7 +111,7 @@ module Dev
         )
         CONFIRM = "Proceed?"
 
-        # What `before` resolves; the seam fills `artifacts` for `after`.
+        # What `before` resolves; the seam fills `release` for `after`.
         class ReleaseEnv
           extend T::Sig
 
@@ -111,23 +126,23 @@ module Dev
           sig { returns(T::Array[Lifecycle::Build]) }
           attr_reader :builds
 
-          # @return [Array<Lifecycle::Artifact>, nil] what the seam packaged
-          sig { returns(T.nilable(T::Array[Lifecycle::Artifact])) }
-          attr_accessor :artifacts
+          # @return [Lifecycle::GithubReleases::Found, nil] the GitHub release the seam found or created
+          sig { returns(T.nilable(Lifecycle::GithubReleases::Found)) }
+          attr_accessor :release
 
           sig { params(tag: Lifecycle::ReleaseTag, plan: Lifecycle::ReleaseCut::Plan, builds: T::Array[Lifecycle::Build]).void }
           def initialize(tag:, plan:, builds:)
             @tag = tag
             @plan = plan
             @builds = builds
-            @artifacts = T.let(nil, T.nilable(T::Array[Lifecycle::Artifact]))
+            @release = T.let(nil, T.nilable(Lifecycle::GithubReleases::Found))
           end
 
-          # @return [Array<Lifecycle::Artifact>]
-          # @raise [NothingPackagedError]
-          sig { returns(T::Array[Lifecycle::Artifact]) }
-          def artifacts!
-            @artifacts || raise(NothingPackagedError, "release #{@tag}: `after` ran before the seam packaged the builds")
+          # @return [Lifecycle::GithubReleases::Found]
+          # @raise [ReleaseNotCreatedError]
+          sig { returns(Lifecycle::GithubReleases::Found) }
+          def release!
+            @release || raise(ReleaseNotCreatedError, "release #{@tag}: `after` ran before the seam found or created the GitHub release")
           end
         end
 
@@ -135,39 +150,36 @@ module Dev
 
         # @param release [Lifecycle::ReleaseBuilds] what a release contains
         # @param cut [Lifecycle::ReleaseCut] the git half, over the checkout
-        # @param package [PackageCommand] the verb run per release build
-        # @param store [Lifecycle::Store] where `package` leaves the artifacts
+        # @param package [PackageCommand] the verb run per release build, with `--attach`
         # @param releases [Lifecycle::GithubReleases] the release archive on the forge
+        # @param ledger [Lifecycle::ReleaseLedger] the draft's `release.json`, where each attach records
         # @param listing [BuildListing] what the usage lists
         # @param designates_latest [Boolean] whether the forge may designate
         #   the release its latest; false on a project with a gh channel,
         #   whose head the designation is
         # @param executor [LifecycleExecutor] runs `package` as itself
-        # @param clock [Proc] the manifest's instant (injectable for tests)
         sig do
           params(
             release: Lifecycle::ReleaseBuilds,
             cut: Lifecycle::ReleaseCut,
             package: PackageCommand,
-            store: Lifecycle::Store,
             releases: Lifecycle::GithubReleases,
+            ledger: Lifecycle::ReleaseLedger,
             listing: BuildListing,
             designates_latest: T::Boolean,
             executor: LifecycleExecutor,
-            clock: T.proc.returns(Time),
           ).void
         end
-        def initialize(release:, cut:, package:, store:, releases:, listing:, designates_latest: true, executor: LifecycleExecutor.new, clock: -> { Time.now })
+        def initialize(release:, cut:, package:, releases:, ledger:, listing:, designates_latest: true, executor: LifecycleExecutor.new)
           super()
           @release = release
           @cut = cut
           @package = package
-          @store = store
           @releases = releases
+          @ledger = ledger
           @listing = listing
           @designates_latest = designates_latest
           @executor = executor
-          @clock = clock
         end
 
         sig { override.returns(String) }
@@ -224,36 +236,28 @@ module Dev
             ui.spin("Bumping #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}") { @cut.bump!(plan) } if bump
             ui.spin("Tagging #{plan.tag}") { @cut.tag!(plan) } unless plan.resuming
             ui.spin("Pushing #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}") { @cut.push!(plan) }
-            at_tag = Lifecycle::GitState.read(context.project!.root)
+            # The draft precedes packaging: each `package --attach` lands on it.
+            env.release = find_or_create(env, ui:)
             # `package` spawns the builder with the terminal (its output,
             # its progress bars): a step, never a spin.
-            env.artifacts = env.builds.map { |build| ui.step("Packaging #{build}") { package(build, at_tag:, context:) } }
+            env.builds.each { |build| ui.step("Packaging #{build} and attaching to #{plan.tag}") { package(build, tag: env.tag, context:) } }
           end
         end
 
         sig { override.params(env: ReleaseEnv, context: ExecutionContext).void }
         def after(env, context:)
           ui = context.ui
-          artifacts = env.artifacts!
+          page = env.release!
           sha = @cut.sha(env.tag)
-          Dir.mktmpdir("dev-release-") do |tmp|
-            dir = Pathname(tmp)
-            gathered = artifacts.map { |artifact| Lifecycle::ReleaseAssets.new(dir:).gather(artifact, tag: env.tag) }
-            manifest = Lifecycle::Manifest::Release.new(
-              stamp: Lifecycle::Manifest::Stamp.now(now: @clock.call), tag: env.tag.name, sha:, archives: gathered.map(&:archive),
-            )
-            url = ui.frame("Publishing #{env.tag}") do
-              ui.spin("Writing #{manifest.file_name}") { manifest.write(dir) }
-              page = find_or_create(env, ui:)
-              files = gathered.flat_map(&:files) + [dir / manifest.file_name]
-              ui.spin("Attaching #{files.map { |file| file.basename.to_s }.join(", ")}") { @releases.upload(env.tag, files) }
-              # Last, so the asset list a repository with immutable releases
-              # freezes at publish is the complete one (dev#679).
-              ui.spin("Publishing GitHub release #{env.tag}") { @releases.publish(env.tag, latest: @designates_latest) } if page.draft
-              page.url
-            end
-            report(env, sha, url, manifest, facts: @releases.facts(env.tag), ui:)
+          manifest = ui.frame("Publishing #{env.tag}") do
+            entries = ui.spin("Reading #{Lifecycle::ReleaseLedger::FILE_NAME} from #{env.tag}'s release") { attached_entries(env, sha:) }
+            completed = ui.spin("Writing #{Lifecycle::ReleaseLedger::FILE_NAME}") { @ledger.complete(env.tag, sha:, archives: entries) }
+            # Last, so the asset list a repository with immutable releases
+            # freezes at publish is the complete one (dev#679).
+            ui.spin("Publishing GitHub release #{env.tag}") { @releases.publish(env.tag, latest: @designates_latest) } if page.draft
+            completed
           end
+          report(env, sha, page.url, manifest, facts: @releases.facts(env.tag), ui:)
         end
 
         private
@@ -336,23 +340,20 @@ module Dev
         def steps(env)
           plan = env.plan
           bump = plan.bump
-          archives = env.builds.size
           [
             plan.resuming || bump.nil? ? nil : "Bump #{Lifecycle::ProjectVersion::FILE_NAME} #{bump.from} → #{bump.to}",
             plan.resuming ? nil : "Tag #{plan.tag}",
             "Push #{plan.branch} + tag #{plan.tag} to #{Lifecycle::ReleaseCut::REMOTE}",
-            "Package #{env.builds.map(&:name).join(", ")} at the tag",
-            "Create GitHub release #{plan.tag} and attach #{archives} archive#{"s" unless archives == 1} + " \
-              "#{Lifecycle::Manifest::Release::FILE_NAME}#{" (not latest: `deploy gh` designates it)" unless @designates_latest}",
+            "Create GitHub release #{plan.tag} as a draft",
+            "Package #{env.builds.map(&:name).join(", ")} at the tag and attach, each from the host that packages it",
+            "Publish GitHub release #{plan.tag} with #{Lifecycle::ReleaseLedger::FILE_NAME}" \
+              "#{" (not latest: `deploy gh` designates it)" unless @designates_latest}",
           ].compact
         end
 
-        # The GitHub release: the one a failed run already created (a
-        # resume attaches to it), else a new one with the plan's notes.
-        #
         # The tag's release: the one the forge holds (a draft a failed run
         # left, or one already published — a mutable repository still takes
-        # assets onto it), or a fresh draft.
+        # assets onto it), or a fresh draft with the plan's notes.
         #
         # @param env [ReleaseEnv]
         # @param ui [Ui]
@@ -391,23 +392,50 @@ module Dev
           end
         end
 
-        # `package` as itself for one release build, then its artifact from
-        # the store, which must be the tag's.
+        # `package <build> --attach <version>` as itself for one release
+        # build: it packages at the tag and attaches from wherever its
+        # placement runs it; what it left on the forge is `after`'s to read.
         #
         # @param build [Lifecycle::Build]
-        # @param at_tag [Lifecycle::GitState] the tree after the cut
+        # @param tag [Lifecycle::ReleaseTag]
         # @param context [ExecutionContext]
-        # @return [Lifecycle::Artifact]
-        # @raise [ArtifactNotAtTagError]
-        sig { params(build: Lifecycle::Build, at_tag: Lifecycle::GitState, context: ExecutionContext).returns(Lifecycle::Artifact) }
-        def package(build, at_tag:, context:)
-          @executor.execute(@package, args: Cli::ParsedArgs.new(words: [build.name], positionals: [build.name]), context:)
-          artifact = @store.artifact(build)
-          return artifact if artifact&.current?(at_tag)
+        # @return [void]
+        sig { params(build: Lifecycle::Build, tag: Lifecycle::ReleaseTag, context: ExecutionContext).void }
+        def package(build, tag:, context:)
+          attach = PackageCommand::ATTACH_FLAG
+          args = Cli::ParsedArgs.new(words: [build.name, attach, tag.version], positionals: [build.name], values: { attach => [tag.version] })
+          @executor.execute(@package, args:, context:)
+        end
 
-          raise ArtifactNotAtTagError,
-            "#{build} is not in this machine's store at #{at_tag.sha} after packaging — " \
-              "#{artifact ? "the store holds #{artifact.manifest.build_id}" : "it was packaged elsewhere"}; a release attaches what was packaged here"
+        # Every release build's entry on the draft's ledger, in release
+        # order, each checked as the local store check once was: the entry
+        # is on, its asset is on the release, and its build id was stamped
+        # from a clean tree at the tag's commit.
+        #
+        # @param env [ReleaseEnv]
+        # @param sha [String] the tag's commit
+        # @return [Array<Lifecycle::Manifest::Release::Archive>]
+        # @raise [NotAttachedError]
+        # @raise [ArtifactNotAtTagError]
+        sig { params(env: ReleaseEnv, sha: String).returns(T::Array[Lifecycle::Manifest::Release::Archive]) }
+        def attached_entries(env, sha:)
+          recorded = @ledger.read(env.tag)&.archives || []
+          assets = @releases.asset_names(env.tag)
+          at_tag = Lifecycle::GitState.new(sha: sha[0, Lifecycle::GitState::SHORT_SHA_LENGTH], dirty: false)
+          env.builds.map do |build|
+            entry = recorded.find { |archive| archive.build == build }
+            if entry.nil? || !assets.include?(entry.name)
+              raise NotAttachedError,
+                "#{build} is not attached to #{env.tag}'s release after packaging — " \
+                  "#{entry ? "#{entry.name} is on #{Lifecycle::ReleaseLedger::FILE_NAME} but not among the release's assets" : "it has no entry on #{Lifecycle::ReleaseLedger::FILE_NAME}"}"
+            end
+            unless entry.build_id.from?(at_tag)
+              raise ArtifactNotAtTagError,
+                "#{build} attached to #{env.tag} as #{entry.build_id}, not from a clean tree at #{at_tag.sha} — a release attaches what was packaged at its tag"
+            end
+
+            entry
+          end
         end
 
         # The epilogue: what was released from where, each archive, the

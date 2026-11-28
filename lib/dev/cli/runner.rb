@@ -545,14 +545,17 @@ module Dev
       # → build), one dispatcher (build → where it runs, natively or on a
       # remote host), one store under the data root, shared by both verbs so
       # they agree on every name. The project's `VERSION` file, when any,
-      # leads the build id. `deploy`, when the project has channels: the
+      # leads the build id. `package --attach` writes to the release archive
+      # on the forge through the release's ledger, the same the `release`
+      # verb reads back. `deploy`, when the project has channels: the
       # fan-out heading one command per channel, each selecting from the
       # same store or, under `--release`, from the same download of the
       # release's archives, dispatching by the channel's bound placement and
       # recording into one ledger on the forge, which `deploy status` reads
       # back per channel. `release`, when the project declares what one
       # contains: the cut over this checkout's git, the same `package`
-      # instance run per release build, the release archive on the forge.
+      # instance run per release build with `--attach`, the release archive
+      # and ledger on the forge.
       #
       # @param manifest [ProjectManifest]
       # @param project [ProjectContext]
@@ -576,23 +579,26 @@ module Dev
         # A channel bound with a fault has no publisher to show a tree to;
         # `deploy <channel>` is what refuses it.
         with_protocol = bindings.channels.values.select { |bound| bound.fault.nil? }.map(&:channel)
-        package = Builtins::PackageCommand.new(selector:, dispatcher:, listing:, ports:, store:, channels: with_protocol, out: @out)
+        # The release archive on the forge is reached by `package --attach`
+        # on any project with targets; nothing asks it until a verb does.
+        releases = @releases_factory.call(project.root)
+        ledger = Lifecycle::ReleaseLedger.new(releases:, targets:)
+        package = Builtins::PackageCommand.new(
+          selector:, dispatcher:, listing:, ports:, store:, channels: with_protocol, out: @out,
+          attachment: Lifecycle::ReleaseAttachment.new(releases:, ledger:),
+        )
         verbs = T.let({
           "build" => Builtins::BuildCommand.new(selector:, dispatcher:, listing:, ports:, store:, out: @out),
           "package" => package,
         }, T::Hash[String, Command])
-        # The forge's release archive is built lazily: a project with neither
-        # `release:` nor channels never asks for a Gh.
-        releases = T.let(nil, T.nilable(Lifecycle::GithubReleases))
         release = manifest.release
         if release
-          releases = @releases_factory.call(project.root)
           verbs["release"] = Builtins::ReleaseCommand.new(
             release:,
             cut: Lifecycle::ReleaseCut.new(git: Lifecycle::Git.new(root: project.root)),
             package:,
-            store:,
             releases:,
+            ledger:,
             listing:,
             # A publisher whose head is the forge's latest designation
             # moves it on `deploy`, so the cut must not.
@@ -602,7 +608,7 @@ module Dev
         return verbs if bindings.channels.empty?
 
         deployments = @deployments_factory.call(project.root)
-        release_archives = Lifecycle::ReleaseArchives.new(releases: releases || @releases_factory.call(project.root), store:, targets:)
+        release_archives = Lifecycle::ReleaseArchives.new(releases:, store:, targets:)
         channels = bindings.channels.to_h do |name, bound|
           command = Builtins::DeployCommand.new(
             channel: bound.channel,

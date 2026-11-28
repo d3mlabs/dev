@@ -39,6 +39,21 @@ class Dev::Lifecycle::BuildIdTest < Minitest::Test
     id.frozen?
   end
 
+  test "from? answers whether the id was stamped from a clean tree at the state's commit (dev#744): #{id} against #{sha.inspect}, dirty #{dirty}" do
+    Expect
+    Dev::Lifecycle::BuildId.new(id).from?(state(sha, dirty: dirty)) == expected
+
+    Where
+    id                                          | sha            | dirty | expected
+    "1.2.0+3f2a1c9d8e7b"                        | "3f2a1c9d8e7b" | false | true
+    "0.0.0+3f2a1c9d8e7b"                        | "3f2a1c9d8e7b" | false | true
+    "1.2.0+3f2a1c9d8e7b"                        | "000000000000" | false | false
+    "1.2.0+3f2a1c9d8e7b.dirty.20261104T120000Z" | "3f2a1c9d8e7b" | false | false
+    "1.2.0+unknown.20261104T120000Z"            | "3f2a1c9d8e7b" | false | false
+    "1.2.0+3f2a1c9d8e7b"                        | "3f2a1c9d8e7b" | true  | false
+    "1.2.0+3f2a1c9d8e7b"                        | nil            | true  | false
+  end
+
   test "a string outside the stamp's grammar is refused: #{value.inspect}" do
     When
     Dev::Lifecycle::BuildId.new(value)

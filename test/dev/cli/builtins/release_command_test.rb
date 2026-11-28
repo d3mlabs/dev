@@ -25,16 +25,17 @@ require "open3"
 require "pathname"
 require "stringio"
 require "support/answering_ui"
-require "support/fake_gh"
+require "support/release_forge_gh"
 require "time"
 require "tmpdir"
 
 # The verb end to end through the LifecycleExecutor: a real checkout with
 # a bare origin (the cut pushes to it), a real build script, a real store
-# in a temp data root and dev's own packagers under a real PackageCommand.
-# The forge is the one boundary scripted — a FakeGh that also keeps a copy
-# of what was uploaded, since the verb gathers its assets in a directory
-# it removes when done.
+# in a temp data root and dev's own packagers under a real PackageCommand,
+# run per build with `--attach`. The forge is the one boundary scripted —
+# a ReleaseForgeGh that keeps what each attach uploads and lists it back,
+# since the release reads its own facts from the forge, not from the
+# store.
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
   include SorbetHelper
@@ -43,6 +44,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
   CONFIG = Dev::Lifecycle::Config
   NOW = Time.utc(2026, 11, 6, 12, 30, 0)
   URL = "https://github.com/d3mlabs/cellbound-3d/releases/tag/v1.2.0"
+  FACTS_PATH = "repos/{owner}/{repo}/releases/tags/v1.2.0"
 
   # The repo has no enrolled runner online.
   class NoneEnrolled < Dev::EnrolledRunnerLookup
@@ -51,21 +53,17 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     end
   end
 
-  # A FakeGh that snapshots the files of a `release upload` into a kept
-  # directory before the verb's temp dir goes away.
-  class SnapshottingGh < FakeGh
-    attr_reader :uploads
-
-    def initialize(uploads:, root:)
-      super(root:)
-      @uploads = uploads
+  # Stands in for `package --attach` run elsewhere: instead of packaging,
+  # it leaves on the forge whatever the test says a host left — nothing,
+  # a stale entry — so the release's read-back is exercised on its own.
+  class LeavingExecutor < Dev::Cli::LifecycleExecutor
+    def initialize(&leave)
+      super()
+      @leave = leave
     end
 
-    def capture(argv, stdin: nil)
-      if argv.first(2) == ["release", "upload"]
-        argv[3..].reject { |word| word.start_with?("--") }.each { |file| FileUtils.cp(file, @uploads / File.basename(file)) }
-      end
-      super
+    def execute(verb, args:, context:)
+      @leave.call(args)
     end
   end
 
@@ -73,8 +71,6 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @root = Pathname(Dir.mktmpdir("release-command-"))
     @project = @root / "project"
     @origin = @root / "origin.git"
-    @uploads = @root / "uploads"
-    @uploads.mkpath
     @project.mkpath
     (@project / "build.sh").write(<<~SH)
       #!/bin/sh
@@ -94,7 +90,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     git("remote", "add", "origin", @origin.to_s)
     git("push", "-q", "-u", "origin", "main")
     @out = StringIO.new
-    @gh = SnapshottingGh.new(uploads: @uploads, root: @project)
+    @gh = ReleaseForgeGh.new(root: @project)
   end
 
   def teardown
@@ -182,17 +178,26 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     Dev::Cli::BuildListing.new(targets: targets, dispatcher: dispatcher)
   end
 
+  def releases
+    Dev::Lifecycle::GithubReleases.new(gh: @gh)
+  end
+
+  def ledger
+    Dev::Lifecycle::ReleaseLedger.new(releases:, targets:, clock: -> { NOW })
+  end
+
   def package
     Dev::Cli::Builtins::PackageCommand.new(
       selector: Dev::Cli::BuildSelector.new(targets: targets), dispatcher: dispatcher, listing: listing,
       ports: Dev::Lifecycle::Ports.new(project_root: @project), store: store, clock: -> { NOW }, out: @out,
+      attachment: Dev::Lifecycle::ReleaseAttachment.new(releases:, ledger:),
     )
   end
 
-  def command(release: release_builds, store: self.store, designates_latest: true)
+  def command(release: release_builds, designates_latest: true, executor: Dev::Cli::LifecycleExecutor.new)
     Dev::Cli::Builtins::ReleaseCommand.new(
-      release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:, store:,
-      releases: Dev::Lifecycle::GithubReleases.new(gh: @gh), listing:, clock: -> { NOW }, designates_latest:,
+      release:, cut: Dev::Lifecycle::ReleaseCut.new(git: Dev::Lifecycle::Git.new(root: @project)), package:,
+      releases:, ledger:, listing:, designates_latest:, executor:,
     )
   end
 
@@ -214,18 +219,15 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.answers(["release", "create"], with: "#{URL}\n")
   end
 
-  def forge_accepts_upload
-    @gh.answers(["release", "upload"], with: "")
-  end
-
   def forge_publishes
     @gh.answers(["release", "edit"], with: "#{URL}\n")
   end
 
   # The forge holds a release for the tag: a draft a failed run left, or
-  # one already published.
-  def forge_has_release(draft:)
-    @gh.answers(["release", "view"], with: { "url" => URL, "isDraft" => draft })
+  # one already published. Answered once per asker: the cut's own lookup,
+  # then each `package --attach`'s guard.
+  def forge_has_release(draft:, times: 1)
+    times.times { @gh.answers(["release", "view"], with: { "url" => URL, "isDraft" => draft }) }
   end
 
   # The release as the forge holds it once cut: frozen, on a repo with
@@ -234,14 +236,54 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.answers(["api", "repos/{owner}/{repo}/releases/tags/#{tag}"], with: { "immutable" => immutable, "prerelease" => false })
   end
 
-  test "a fresh cut: bumps VERSION, tags, pushes, packages each release build at the tag, creates the release and attaches the archives" do
-    Given
+  # A fresh cut's forge: no release, a draft created, each of the two
+  # release builds attaching to it, the publish, the facts.
+  def forge_for_fresh_cut(tag = "v1.2.0", immutable: true)
     forge_has_no_release
     forge_creates
-    forge_accepts_upload
+    forge_has_release(draft: true, times: 2)
     forge_publishes
-    forge_reports("v1.2.0")
+    forge_reports(tag, immutable:)
+  end
 
+  # What the verb asked the forge, one word per call, uploads by name:
+  # the protocol in the order it ran.
+  def forge_log
+    @gh.calls.map do |call|
+      argv = call.argv
+      case argv.first(2)
+      when ["release", "view"] then argv[3..4] == ["--json", "assets"] ? "assets" : "find"
+      when ["release", "create"] then "create"
+      when ["release", "upload"] then "upload #{argv[3..].reject { |word| word.start_with?("--") }.map { |file| File.basename(file) }.join(" ")}"
+      when ["release", "download"] then "download"
+      when ["release", "edit"] then "publish"
+      else "facts"
+      end
+    end
+  end
+
+  # One attach as `package --attach` leaves it: the archive uploaded, the entry recorded.
+  ATTACH = ["upload %s", "assets", "download", "upload release.json"].freeze
+  # The first attach finds no release.json to read back.
+  FIRST_ATTACH = ["upload %s", "assets", "upload release.json"].freeze
+  # The publish: the ledger read back, completed, the draft published, the facts read.
+  PUBLISH = ["assets", "download", "assets", "upload release.json", "publish", "facts"].freeze
+
+  def attach_log(archive, first: false)
+    (first ? FIRST_ATTACH : ATTACH).map { |step| format(step, archive) }
+  end
+
+  def ledger_on_forge(tag)
+    Dev::Lifecycle::Manifest::Release.from_json_hash(JSON.parse(@gh.attached(tag).fetch("release.json")), targets:)
+  end
+
+  def gh_call(verb)
+    @gh.calls.find { |call| call.argv.first(2) == ["release", verb] }
+  end
+
+  test "a fresh cut: bumps VERSION, tags, pushes, drafts the release, packages each release build at the tag and attaches it from there, publishes" do
+    Given
+    forge_for_fresh_cut
     base = head
 
     When
@@ -258,32 +300,32 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     store.artifact(build("cellbound-3d-linux64-release")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
     store.artifact(build("cellbound-3d-server-linux64")).manifest.build_id == Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}")
 
-    # the forge was asked for the release, given a draft with the notes, then the renamed archives and release.json,
-    # then the draft published — the asset list is complete when it freezes (dev#679) — then read back
-    @gh.calls.map { |call| call.argv.first(3) } ==
-      [["release", "view", "v1.2.0"], ["release", "create", "v1.2.0"], ["release", "upload", "v1.2.0"],
-       ["release", "edit", "v1.2.0"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
-    @gh.calls[1].argv.include?("--verify-tag")
-    @gh.calls[1].argv.include?("--draft")
-    @gh.calls[3].argv == ["release", "edit", "v1.2.0", "--draft=false"]
-    @gh.calls[1].stdin == "Release v1.2.0."
-    @gh.calls[2].argv.map { |word| File.basename(word) }[3..] ==
-      ["cellbound-3d-linux64-release-1.2.0.zip", "cellbound-3d-server-linux64-1.2.0.zip", "release.json", "--clobber"]
+    # the forge: asked for the release, given a draft with the notes; then each attach — the guard's lookup,
+    # the archive, the ledger read and recorded; then the publish, the ledger completed before the draft
+    # is published so the asset list a repository with immutable releases freezes is the complete one (dev#679)
+    forge_log == ["find", "create", "find", *attach_log("cellbound-3d-linux64-release-1.2.0.zip", first: true),
+                  "find", *attach_log("cellbound-3d-server-linux64-1.2.0.zip"), *PUBLISH]
+    gh_call("create").argv.include?("--verify-tag")
+    gh_call("create").argv.include?("--draft")
+    gh_call("create").stdin == "Release v1.2.0."
+    gh_call("edit").argv == ["release", "edit", "v1.2.0", "--draft=false"]
+    gh_call("upload").argv.last == "--clobber"
 
-    # the uploaded archives are the store's bytes; release.json names the tag, its commit and each archive with its build id
-    (@uploads / "cellbound-3d-linux64-release-1.2.0.zip").read == store.artifact(build("cellbound-3d-linux64-release")).archive.read
-    manifest = Dev::Lifecycle::Manifest::Release.read(@uploads, targets: targets)
+    # the release's assets are the store's bytes; release.json names the tag, its commit and each archive with its build id
+    @gh.attached("v1.2.0").keys.sort == ["cellbound-3d-linux64-release-1.2.0.zip", "cellbound-3d-server-linux64-1.2.0.zip", "release.json"]
+    @gh.attached("v1.2.0").fetch("cellbound-3d-linux64-release-1.2.0.zip") == store.artifact(build("cellbound-3d-linux64-release")).archive.binread
+    manifest = ledger_on_forge("v1.2.0")
     manifest.tag == "v1.2.0"
     manifest.sha == head
     manifest.archives.map(&:to_json_hash) == [
       { "build" => "cellbound-3d-linux64-release", "name" => "cellbound-3d-linux64-release-1.2.0.zip",
-        "sha256" => Digest::SHA256.file((@uploads / "cellbound-3d-linux64-release-1.2.0.zip").to_s).hexdigest, "build_id" => "1.2.0+#{short_head}" },
+        "sha256" => Digest::SHA256.hexdigest(@gh.attached("v1.2.0").fetch("cellbound-3d-linux64-release-1.2.0.zip")), "build_id" => "1.2.0+#{short_head}" },
       { "build" => "cellbound-3d-server-linux64", "name" => "cellbound-3d-server-linux64-1.2.0.zip",
-        "sha256" => Digest::SHA256.file((@uploads / "cellbound-3d-server-linux64-1.2.0.zip").to_s).hexdigest, "build_id" => "1.2.0+#{short_head}" },
+        "sha256" => Digest::SHA256.hexdigest(@gh.attached("v1.2.0").fetch("cellbound-3d-server-linux64-1.2.0.zip")), "build_id" => "1.2.0+#{short_head}" },
     ]
 
     # the UI (dev#514): the plan frame with the base line, then the cut's steps, the publish's, the epilogue
-    @out.string.lines.first(10).join == <<~OUT
+    @out.string.lines.first(11).join == <<~OUT
       Release: 1.1.0 → 1.2.0
       Base: main @ #{base[0, 12]} — first release, no previous tag (in sync with origin/main)
       Notes:
@@ -292,15 +334,16 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
         1. Bump VERSION 1.1.0 → 1.2.0
         2. Tag v1.2.0
         3. Push main + tag v1.2.0 to origin
-        4. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag
-        5. Create GitHub release v1.2.0 and attach 2 archives + release.json
+        4. Create GitHub release v1.2.0 as a draft
+        5. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag and attach, each from the host that packages it
+        6. Publish GitHub release v1.2.0 with release.json
     OUT
-    @out.string.include?("Cutting v1.2.0\n✓ Bumping VERSION 1.1.0 → 1.2.0\n✓ Tagging v1.2.0\n✓ Pushing main + tag v1.2.0 to origin\n")
-    @out.string.include?("Packaging cellbound-3d-linux64-release\npackaged cellbound-3d-linux64-release → ")
-    @out.string.include?("✓ Packaging cellbound-3d-linux64-release\nPackaging cellbound-3d-server-linux64\npackaged cellbound-3d-server-linux64 → ")
-    @out.string.include?("✓ Packaging cellbound-3d-server-linux64\nPublishing v1.2.0\n")
-    @out.string.include?("Publishing v1.2.0\n✓ Writing release.json\n✓ Creating GitHub release v1.2.0\n" \
-      "✓ Attaching cellbound-3d-linux64-release-1.2.0.zip, cellbound-3d-server-linux64-1.2.0.zip, release.json\n")
+    @out.string.include?("Cutting v1.2.0\n✓ Bumping VERSION 1.1.0 → 1.2.0\n✓ Tagging v1.2.0\n✓ Pushing main + tag v1.2.0 to origin\n" \
+      "✓ Creating GitHub release v1.2.0\nPackaging cellbound-3d-linux64-release and attaching to v1.2.0\npackaged cellbound-3d-linux64-release → ")
+    @out.string.include?("attached cellbound-3d-linux64-release-1.2.0.zip to v1.2.0's release (1.2.0+#{short_head})\n" \
+      "✓ Packaging cellbound-3d-linux64-release and attaching to v1.2.0\nPackaging cellbound-3d-server-linux64 and attaching to v1.2.0\n")
+    @out.string.include?("✓ Packaging cellbound-3d-server-linux64 and attaching to v1.2.0\nPublishing v1.2.0\n" \
+      "✓ Reading release.json from v1.2.0's release\n✓ Writing release.json\n✓ Publishing GitHub release v1.2.0\n")
     @out.string.lines.last(4).join == <<~OUT
       ✓ v1.2.0 released! (#{short_head}, from main) → #{URL}
         cellbound-3d-linux64-release-1.2.0.zip (1.2.0+#{short_head})
@@ -312,28 +355,20 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
 
   test "a project with a gh channel cuts its release as not latest — `deploy gh` designates it — and the plan says so (dev#655)" do
     Given
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v1.2.0")
+    forge_for_fresh_cut
 
     When
     execute(command(designates_latest: false), "1.2.0")
 
     Then "the designation is withheld where the release is published — the draft's publish — not at its creation"
-    @gh.calls[3].argv == ["release", "edit", "v1.2.0", "--draft=false", "--latest=false"]
-    @out.string.include?("  5. Create GitHub release v1.2.0 and attach 2 archives + release.json (not latest: `deploy gh` designates it)\n")
+    gh_call("edit").argv == ["release", "edit", "v1.2.0", "--draft=false", "--latest=false"]
+    @out.string.include?("  6. Publish GitHub release v1.2.0 with release.json (not latest: `deploy gh` designates it)\n")
     @out.string.lines.last == "Nothing deployed — ship it: dev deploy <channel> --release 1.2.0\n"
   end
 
   test "a release the forge reports mutable is warned about, naming the repository setting, before the deploy hint: no head may point at it (dev#655)" do
     Given
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v1.2.0", immutable: false)
+    forge_for_fresh_cut(immutable: false)
 
     When
     execute(command, "1.2.0")
@@ -346,8 +381,8 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     OUT
   end
 
-  test "a retry after the forge refused resumes the cut: nothing re-cut, the artifacts current, the existing release's assets replaced" do
-    Given "a first run that cut, pushed and packaged, then lost the forge"
+  test "a retry after the forge refused the draft resumes the cut: nothing re-cut, nothing was packaged before the draft, the release goes on from there" do
+    Given "a first run that cut and pushed, then lost the forge on the draft"
     forge_has_no_release
     @gh.refuses(["release", "create"], with: "HTTP 502")
     begin
@@ -356,70 +391,99 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
       nil
     end
     tagged = head
+    runs_before = build_runs
     @out.truncate(0)
     @out.rewind
     @gh.calls.clear
-    forge_has_release(draft: false)
-    forge_accepts_upload
-    forge_reports("v1.2.0")
+    forge_for_fresh_cut
 
     When
     execute(command, "1.2.0")
 
-    Then "HEAD is the one cut; the builds were not rebuilt (current at the tag); the release found, not created; upload clobbers, nothing to publish"
+    Then "HEAD is the one cut; the builds packaged at it now; the draft created, attached to, published"
+    runs_before.empty?
     head == tagged
     git("log", "--oneline").lines.size == 2
     build_runs == ["cellbound-3d", "cellbound-3d-server"]
-    @gh.calls.map { |call| call.argv.first(2) } == [["release", "view"], ["release", "upload"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
-    @gh.calls[1].argv.last == "--clobber"
+    forge_log.first(2) == ["find", "create"]
+    forge_log.last(2) == ["publish", "facts"]
     @out.string.lines.first(2).join == "Resuming v1.2.0\nBase: main @ #{tagged[0, 12]} — HEAD already tagged, nothing to cut (in sync with origin/main)\n"
-    @out.string.include?("  1. Push main + tag v1.2.0 to origin\n  2. Package cellbound-3d-linux64-release, cellbound-3d-server-linux64 at the tag\n")
+    @out.string.include?("  1. Push main + tag v1.2.0 to origin\n  2. Create GitHub release v1.2.0 as a draft\n")
     !@out.string.include?("Bumping")
-    @out.string.include?("✓ Creating GitHub release v1.2.0\n") == false
-    @out.string.include?("✓ GitHub release v1.2.0 exists — attaching to it\n")
     @out.string.include?("✓ v1.2.0 released! (#{tagged[0, 12]}, from main) → #{URL}\n")
   end
 
-  test "a retry that finds the draft a failed run left attaches to it and publishes it (dev#679)" do
-    Given "a first run that created the draft, then lost the forge on the upload"
+  test "a retry that finds the draft a failed run left attaches to it — the build already attached is not rebuilt, its upload clobbered — and publishes it (dev#679)" do
+    Given "a first run that drafted and attached the first build, then lost the forge before the second"
     forge_has_no_release
     forge_creates
-    @gh.refuses(["release", "upload"], with: "HTTP 502")
+    forge_has_release(draft: true)
+    @gh.refuses(["release", "view"], with: "HTTP 502")
     begin
       execute(command, "1.2.0")
     rescue Dev::Lifecycle::GithubReleases::ApiError
       nil
     end
+    runs_before = build_runs
+    attached_before = @gh.attached("v1.2.0").keys.sort
     @out.truncate(0)
     @out.rewind
     @gh.calls.clear
-    forge_has_release(draft: true)
-    forge_accepts_upload
+    forge_has_release(draft: true, times: 3)
     forge_publishes
     forge_reports("v1.2.0")
 
     When
     execute(command, "1.2.0")
 
-    Then "found, attached, published — the same sequence as a fresh cut minus the create"
-    @gh.calls.map { |call| call.argv.first(2) } ==
-      [["release", "view"], ["release", "upload"], ["release", "edit"], ["api", "repos/{owner}/{repo}/releases/tags/v1.2.0"]]
+    Then "found, each build attached (the first current at the tag, so not rebuilt), the ledger complete, published"
+    runs_before == ["cellbound-3d"]
+    attached_before == ["cellbound-3d-linux64-release-1.2.0.zip", "release.json"]
+    build_runs == ["cellbound-3d", "cellbound-3d-server"]
+    forge_log == ["find", "find", *attach_log("cellbound-3d-linux64-release-1.2.0.zip"),
+                  "find", *attach_log("cellbound-3d-server-linux64-1.2.0.zip"), *PUBLISH]
+    ledger_on_forge("v1.2.0").archives.map(&:build) == release_builds.builds
     @out.string.include?("✓ GitHub release v1.2.0 exists as a draft — attaching to it and publishing\n")
     @out.string.include?("✓ v1.2.0 released!")
+  end
+
+  test "a retry onto a release already published on a mutable repository attaches onto it: nothing to publish" do
+    Given "the cut landed, the release published without its assets"
+    forge_has_no_release
+    @gh.refuses(["release", "create"], with: "HTTP 502")
+    begin
+      execute(command, "1.2.0")
+    rescue Dev::Lifecycle::GithubReleases::ApiError
+      nil
+    end
+    @out.truncate(0)
+    @out.rewind
+    @gh.calls.clear
+    forge_has_release(draft: false, times: 3)
+    forge_reports("v1.2.0")
+
+    When
+    execute(command, "1.2.0")
+
+    Then "the publish's protocol minus the publish"
+    forge_log.first(2) == ["find", "find"]
+    forge_log.last(5) == ["assets", "download", "assets", "upload release.json", "facts"]
+    gh_call("edit").nil?
+    @out.string.include?("✓ GitHub release v1.2.0 exists — attaching to it\n")
+    @out.string.include?("✓ v1.2.0 released! (#{short_head}, from main) → #{URL}\n")
   end
 
   test "a retry onto a release already published and frozen fails with the fact and the remedy: the assets cannot be completed (dev#679)" do
     Given "the release published before its assets were on — the v0.9.0 shape"
     forge_has_no_release
-    forge_creates
-    @gh.refuses(["release", "upload"], with: "HTTP 502")
+    @gh.refuses(["release", "create"], with: "HTTP 502")
     begin
       execute(command, "1.2.0")
     rescue Dev::Lifecycle::GithubReleases::ApiError
       nil
     end
     @gh.calls.clear
-    forge_has_release(draft: false)
+    forge_has_release(draft: false, times: 2)
     @gh.refuses(["release", "upload"], with: "HTTP 422: Cannot upload assets to an immutable release.")
 
     When
@@ -436,11 +500,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     git("rm", "-q", "VERSION")
     commit("no version in source")
     before = head
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v0.1.0")
+    forge_for_fresh_cut("v0.1.0")
 
     When
     execute(command, "0.1.0")
@@ -451,8 +511,8 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @out.string.lines.first == "Release: v0.1.0\n"
     @out.string.include?("  1. Tag v0.1.0\n  2. Push main + tag v0.1.0 to origin\n")
     !@out.string.include?("Bump")
-    store.artifact(build("cellbound-3d-server-linux64")).manifest.build_id ==
-      Dev::Lifecycle::BuildId.new("#{Dev::Lifecycle::BuildId::DEFAULT_SEMVER}+#{before[0, 12]}")
+    ledger_on_forge("v0.1.0").archives.map(&:build_id).uniq ==
+      [Dev::Lifecycle::BuildId.new("#{Dev::Lifecycle::BuildId::DEFAULT_SEMVER}+#{before[0, 12]}")]
   end
 
   test "the base line names the previous tag and the commits since, and the checkout's drift from origin as last fetched (dev#514)" do
@@ -462,11 +522,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     commit("fix a")
     git("push", "-q", "origin", "main")
     commit("fix b")
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v1.2.0")
+    forge_for_fresh_cut
     base = head
 
     When
@@ -475,7 +531,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     Then
     @out.string.lines[1] == "Base: main @ #{base[0, 12]} — 2 commits since v1.1.0 (1 ahead of origin/main, unpushed)\n"
     @out.string.lines[2..4].join == "Notes:\n  #{base[0, 7]} fix b\n  #{git("rev-parse", "HEAD~2").strip[0, 7]} fix a\n"
-    @gh.calls[1].stdin == "#{base[0, 7]} fix b\n#{git("rev-parse", "HEAD~2").strip[0, 7]} fix a"
+    gh_call("create").stdin == "#{base[0, 7]} fix b\n#{git("rev-parse", "HEAD~2").strip[0, 7]} fix a"
   end
 
   test "the confirm: without --yes the terminal is asked after the plan and a no cuts nothing; without a terminal the verb refuses and says how (dev#514): #{what}" do
@@ -501,11 +557,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
 
   test "a yes at the terminal is the same release as --yes" do
     Given
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v1.2.0")
+    forge_for_fresh_cut
     ui = AnsweringUi.new(out: @out, answer: true)
 
     When
@@ -540,11 +592,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
 
   test "no version, or a bump word, releases the next version of the one in source — #{what}: 1.1.0 → #{expected} (dev#525)" do
     Given
-    forge_has_no_release
-    forge_creates
-    forge_accepts_upload
-    forge_publishes
-    forge_reports("v#{expected}")
+    forge_for_fresh_cut("v#{expected}")
 
     When
     execute(command, *words)
@@ -553,7 +601,7 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @out.string.lines.first == "Release: 1.1.0 → #{expected}\n"
     (@project / "VERSION").read == "#{expected}\n"
     origin_refs == ["refs/heads/main", "refs/tags/v#{expected}"]
-    @gh.calls[1].argv.first(3) == ["release", "create", "v#{expected}"]
+    gh_call("create").argv.first(3) == ["release", "create", "v#{expected}"]
 
     Where
     what                 | words     | expected
@@ -626,25 +674,61 @@ class Dev::Cli::Builtins::ReleaseCommandTest < Minitest::Test
     @gh.calls.empty?
   end
 
-  test "an artifact that is not the tag's after packaging is refused: a release attaches what was packaged here, at the tag" do
-    Given "a store that answers packaging with an artifact of another commit"
-    elsewhere = Dev::Lifecycle::Store.new(project_name: "cellbound-3d", targets: targets, data_root: (@root / "other-data").to_s)
-    stale_build = build("cellbound-3d-linux64-release")
-    elsewhere.dir(stale_build).mkpath
-    (elsewhere.dir(stale_build) / "cellbound-3d-linux64-release.zip").write("old")
-    Dev::Lifecycle::Manifest::Artifact.new(
-      stamp: Dev::Lifecycle::Manifest::Stamp.now(now: NOW), build: stale_build,
-      state: Dev::Lifecycle::GitState.new(sha: "000000000000", dirty: false), packaged_at: NOW, builder: "script", builder_version: nil,
-      build_id: Dev::Lifecycle::BuildId.new("1.1.0+000000000000"), archive: "cellbound-3d-linux64-release.zip", archive_sha256: "x",
-    ).write(elsewhere.dir(stale_build))
+  test "what the hosts left on the draft is verified before publishing — #{what}: the draft stays, nothing published (dev#744)" do
+    Given "a `package --attach` that ran elsewhere and left the draft as described"
+    forge_has_no_release
+    forge_creates
+    tag = Dev::Lifecycle::ReleaseTag.new("1.2.0")
+    left = LeavingExecutor.new do |args|
+      next unless records && args.positionals == ["cellbound-3d-linux64-release"]
+
+      entry = Dev::Lifecycle::Manifest::Release::Archive.new(
+        build: build("cellbound-3d-linux64-release"), name: "cellbound-3d-linux64-release-1.2.0.zip", sha256: "x",
+        build_id: Dev::Lifecycle::BuildId.new("1.2.0+#{short_head}"),
+      )
+      ledger.record(tag, entry, sha: head)
+    end
 
     When
-    execute(command(store: elsewhere), "1.2.0")
+    execute(command(executor: left), "1.2.0")
+
+    Then
+    error = raises(Dev::Cli::Builtins::ReleaseCommand::NotAttachedError)
+    error.message.include?(said)
+    gh_call("edit").nil?
+    build_runs.empty?
+
+    Where
+    what                                         | records | said
+    "a build with no entry on release.json"      | false   | "it has no entry on release.json"
+    "an entry whose asset is not on the release" | true    | "cellbound-3d-linux64-release-1.2.0.zip is on release.json but not among the release's assets"
+  end
+
+  test "an entry attached from another tree than the tag's is refused before publishing: a release attaches what was packaged at its tag (dev#744)" do
+    Given "a host that attached the build from a stale tree"
+    forge_has_no_release
+    forge_creates
+    tag = Dev::Lifecycle::ReleaseTag.new("1.2.0")
+    left = LeavingExecutor.new do |args|
+      name = "#{args.positionals.first}-1.2.0.zip"
+      Dir.mktmpdir do |dir|
+        archive = Pathname(dir) / name
+        archive.write("old")
+        releases.upload(tag, [archive])
+      end
+      entry = Dev::Lifecycle::Manifest::Release::Archive.new(
+        build: build(args.positionals.first), name:, sha256: "x", build_id: Dev::Lifecycle::BuildId.new("1.1.0+000000000000"),
+      )
+      ledger.record(tag, entry, sha: "0" * 40)
+    end
+
+    When
+    execute(command(executor: left), "1.2.0")
 
     Then
     error = raises(Dev::Cli::Builtins::ReleaseCommand::ArtifactNotAtTagError)
-    error.message.include?("the store holds 1.1.0+000000000000")
-    @gh.calls.empty?
+    error.message.include?("cellbound-3d-linux64-release attached to v1.2.0 as 1.1.0+000000000000, not from a clean tree at #{short_head}")
+    gh_call("edit").nil?
   end
 
   test "the usage lists the release builds under their own heading, each with where it runs" do

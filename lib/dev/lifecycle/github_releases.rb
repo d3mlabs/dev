@@ -238,6 +238,20 @@ module Dev
         raise ApiError, e.message
       end
 
+      # The names of a tag's release assets, as the forge lists them now —
+      # what a cut reads back to see that every attach landed.
+      #
+      # @param tag [ReleaseTag]
+      # @return [Array<String>]
+      # @raise [AssetMissingError] a tag with no release
+      # @raise [ApiError]
+      # @raise [MalformedReleaseError] gh answered with something other than the assets
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag).returns(T::Array[String]) }
+      def asset_names(tag)
+        assets(tag).map { |entry| entry["name"].to_s }
+      end
+
       # The public download url of one of a tag's release assets, as the
       # forge states it, so dev carries no knowledge of GitHub's url layout.
       #
@@ -250,14 +264,33 @@ module Dev
       # @raise [Gh::GhMissingError]
       sig { params(tag: ReleaseTag, name: String).returns(URI::Generic) }
       def asset_url(tag, name)
-        assets = JSON.parse(@gh.capture(["release", "view", tag.name, "--json", "assets", "--jq", ".assets"]))
-        asset = assets.find { |entry| entry["name"] == name }
+        listed = assets(tag)
+        asset = listed.find { |entry| entry["name"] == name }
         if asset.nil?
           raise AssetMissingError,
-            "#{tag}'s release carries no asset #{name} (it carries: #{assets.map { |entry| entry["name"] }.join(", ")})"
+            "#{tag}'s release carries no asset #{name} (it carries: #{listed.map { |entry| entry["name"] }.join(", ")})"
         end
 
         url(asset["url"].to_s)
+      end
+
+      private
+
+      # A tag's release assets as gh lists them: one object per asset,
+      # `name` and `url` among its fields.
+      #
+      # @param tag [ReleaseTag]
+      # @return [Array<Hash>]
+      # @raise [AssetMissingError] a tag with no release
+      # @raise [ApiError]
+      # @raise [MalformedReleaseError]
+      # @raise [Gh::GhMissingError]
+      sig { params(tag: ReleaseTag).returns(T::Array[T::Hash[String, T.untyped]]) }
+      def assets(tag)
+        listed = JSON.parse(@gh.capture(["release", "view", tag.name, "--json", "assets", "--jq", ".assets"]))
+        raise MalformedReleaseError, "gh answered with #{listed.class}, not #{tag}'s assets" unless listed.is_a?(Array)
+
+        listed
       rescue Gh::CommandFailedError => e
         raise AssetMissingError, "#{tag} has no release on the forge" if NOT_FOUND.match?(e.message)
 
@@ -265,8 +298,6 @@ module Dev
       rescue JSON::ParserError => e
         raise MalformedReleaseError, "gh answered with something other than #{tag}'s assets: #{e.message}"
       end
-
-      private
 
       # @param name [String] an asset's name
       # @return [String] the glob that matches exactly that name

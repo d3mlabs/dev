@@ -19,10 +19,12 @@ require "dev/settings"
 require "dev/cli/target_placement"
 require "digest"
 require "fileutils"
+require "json"
 require "open3"
 require "pathname"
 require "stringio"
 require "support/recording_publisher"
+require "support/release_forge_gh"
 require "support/scripted_remote"
 require "support/tool_tree_fixtures"
 require "time"
@@ -34,7 +36,9 @@ require "tmpdir"
 # packager. Every target is placed on the host of a linux64 machine; the
 # remote cases force the dispatch with `--runner` over a scripted forge.
 # The checkout also carries a self-contained tool tree, which the
-# channels accepting its target are shown before it is archived.
+# channels accepting its target are shown before it is archived. The
+# release archive `--attach` writes to is a second scripted forge that
+# keeps what is uploaded (ReleaseForgeGh).
 transform!(RSpock::AST::Transformation)
 class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   include SorbetHelper
@@ -78,6 +82,7 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     @out = StringIO.new
     @ui = typed_mock(Dev::Ui)
     @remote = ScriptedRemote.new(root: @project, ui: @ui, downloads: true)
+    @forge = ReleaseForgeGh.new(root: @project)
   end
 
   def teardown
@@ -164,17 +169,31 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
   def command(now: NOW, step_outputs: Dev::Lifecycle::StepOutputs.new(path: nil), channels: {})
     dispatcher = self.dispatcher
     publishers = channels.to_h { |channel, publisher| [channel.publisher.name, publisher] }
+    releases = Dev::Lifecycle::GithubReleases.new(gh: @forge)
     Dev::Cli::Builtins::PackageCommand.new(
       selector: Dev::Cli::BuildSelector.new(targets: targets),
       dispatcher: dispatcher,
       listing: Dev::Cli::BuildListing.new(targets: targets, dispatcher: dispatcher),
       ports: Dev::Lifecycle::Ports.new(project_root: @project, publishers:),
       store: store,
+      attachment: Dev::Lifecycle::ReleaseAttachment.new(
+        releases:, ledger: Dev::Lifecycle::ReleaseLedger.new(releases:, targets:, clock: -> { now }),
+      ),
       channels: channels.keys,
       clock: -> { now },
       step_outputs: step_outputs,
       out: @out,
     )
+  end
+
+  # The forge holds a draft release for the tag, as `dev release` leaves it before packaging.
+  def forge_has_draft(tag)
+    @forge.answers(["release", "view"], with: { "url" => "https://github.com/d3mlabs/cellbound-3d/releases/tag/#{tag}", "isDraft" => true })
+  end
+
+  # What the forge holds as the tag's `release.json`, read as the manifest.
+  def ledger_on_forge(tag)
+    Dev::Lifecycle::Manifest::Release.from_json_hash(JSON.parse(@forge.attached(tag).fetch("release.json")), targets:)
   end
 
   # An integration channel accepting the named targets.
@@ -517,6 +536,90 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     Dev::Lifecycle::StepOutputs.from_env({ "GITHUB_OUTPUT" => "/tmp/x" }).active?
   end
 
+  test "`--attach <version>` packages, then attaches the artifact to the version's release from here: the archive under its release name, the build's entry on release.json (dev#744)" do
+    Given "the tree at the release's version, and its draft on the forge"
+    (@project / "VERSION").write("1.3.0\n")
+    git("add", "VERSION")
+    commit("Bump version to 1.3.0")
+    forge_has_draft("v1.3.0")
+    the_build = build("cellbound-3d-linux64-release")
+
+    When
+    execute(command, "cellbound-3d-release", "--attach", "1.3.0")
+
+    Then "packaged as ever, then the attach, named after the stamp line"
+    artifact = store.artifact(the_build)
+    artifact.manifest.build_id == Dev::Lifecycle::BuildId.new("1.3.0+#{head}")
+    @forge.attached("v1.3.0").fetch("cellbound-3d-linux64-release-1.3.0.zip") == artifact.archive.binread
+    ledger = ledger_on_forge("v1.3.0")
+    ledger.tag == "v1.3.0"
+    ledger.sha == head
+    ledger.archives.map(&:to_json_hash) == [{
+      "build" => "cellbound-3d-linux64-release", "name" => "cellbound-3d-linux64-release-1.3.0.zip",
+      "sha256" => artifact.manifest.archive_sha256, "build_id" => "1.3.0+#{head}",
+    }]
+    # the forge: the release looked up before the build, the asset uploaded, the ledger read (empty) and uploaded
+    @forge.calls.map { |call| call.argv.first(3) } == [
+      ["release", "view", "v1.3.0"], ["release", "upload", "v1.3.0"], ["release", "view", "v1.3.0"], ["release", "upload", "v1.3.0"],
+    ]
+    @out.string.lines.last == "attached cellbound-3d-linux64-release-1.3.0.zip to v1.3.0's release (1.3.0+#{head})\n"
+  end
+
+  test "a project keeping no VERSION attaches by its tree alone, the build id at the default semver" do
+    Given
+    git("rm", "-q", "VERSION")
+    commit("no version in source")
+    forge_has_draft("v0.1.0")
+
+    When
+    execute(command, "site", "--attach", "0.1.0")
+
+    Then
+    ledger_on_forge("v0.1.0").archives.map(&:build_id).map(&:to_s) == ["#{Dev::Lifecycle::BuildId::DEFAULT_SEMVER}+#{head}"]
+  end
+
+  test "`--attach` of #{what} is refused before anything is built: a release attaches what was packaged at its tag" do
+    Given
+    (@project / "wip.txt").write("x") if dirty
+
+    When
+    execute(command, "cellbound-3d-release", "--attach", version)
+
+    Then
+    error = raises(Dev::Lifecycle::ReleaseAttachment::NotAtReleaseError)
+    error.message.include?(said)
+    build_runs == 0
+    @forge.calls.empty?
+    @out.string == ""
+
+    Where
+    what                          | dirty | version | said
+    "a dirty tree"                | true  | "1.2.3" | "the tree is not clean"
+    "a VERSION that is not the tag's" | false | "1.3.0" | "VERSION reads 1.2.3, not 1.3.0"
+  end
+
+  test "`--attach` to a version with no release on the forge is refused before anything is built, naming the `dev release` that creates it" do
+    Given
+    @forge.refuses(["release", "view"], with: "release not found")
+
+    When
+    execute(command, "cellbound-3d-release", "--attach", "1.2.3")
+
+    Then
+    error = raises(Dev::Lifecycle::ReleaseAttachment::NoReleaseError)
+    error.message.include?("`dev release 1.2.3` creates it")
+    build_runs == 0
+  end
+
+  test "`--attach` with a version that cannot name a tag is the tag's refusal" do
+    When
+    execute(command, "cellbound-3d-release", "--attach", "1.2/3")
+
+    Then
+    raises(Dev::Lifecycle::ReleaseTag::InvalidVersionError)
+    build_runs == 0
+  end
+
   test "`--runner` sends `package <build>#{suffix}` to the label; nothing is built, packaged or reported here" do
     Given
     @remote.install_workflow
@@ -534,9 +637,23 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     @out.string == ""
 
     Where
-    extra          | suffix
-    []             | ""
-    ["--no-build"] | " --no-build"
+    extra                 | suffix
+    []                    | ""
+    ["--no-build"]        | " --no-build"
+    ["--attach", "1.2.3"] | " --attach 1.2.3"
+  end
+
+  test "`--attach` under a remote dispatch is the host's to carry out: the release is asked nothing from here" do
+    Given
+    @remote.install_workflow
+
+    When
+    execute(command, "cellbound-3d-release", "--runner", "linux-pool", "--attach", "1.2.3")
+
+    Then
+    _ * @ui.print_remote_crossing
+    @remote.dispatched_verbs == "package cellbound-3d-linux64-release --attach 1.2.3"
+    @forge.calls.empty?
   end
 
   test "`--fetch` asks the workflow to upload, then downloads the artifact by the build's name into the build's store directory" do
@@ -564,13 +681,14 @@ class Dev::Cli::Builtins::PackageCommandTest < Minitest::Test
     @remote.dispatched_verbs.nil?
   end
 
-  test "the verb's traits: the selector's flags plus --no-build, --runner, --container and --fetch; only packageable targets are listed and completed" do
+  test "the verb's traits: the selector's flags plus --no-build, --runner, --container, --fetch and --attach; only packageable targets are listed and completed" do
     Given
     verb = command
 
     Expect
     verb.category == Dev::Cli::Command::Category::Lifecycle
-    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build", "--runner", "--container", "--fetch"]
+    verb.flags.map(&:name) == ["--target", "--platform", "--config", "--no-build", "--runner", "--container", "--fetch", "--attach"]
+    verb.flags.last.takes_value?
     verb.desc.lines.first.start_with?("Package a build into its artifact")
     verb.listing.heading == "Builds"
     verb.listing.subjects.map(&:name) == ["cellbound-3d-linux64-dev", "cellbound-3d-linux64-release", "rspock", "site", "ai-flow"]

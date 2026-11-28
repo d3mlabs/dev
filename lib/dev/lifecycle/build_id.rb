@@ -66,6 +66,18 @@ module Dev
         @value
       end
 
+      # Whether the id was derived from a clean tree at a state's commit —
+      # what a release checks of an entry it reads back from the forge,
+      # where the artifact's own stamp is not at hand: the build metadata
+      # is the bare sha exactly when the tree was clean at it.
+      #
+      # @param state [GitState] the tree the id must come from
+      # @return [Boolean] false for a dirty or unknown stamp, or another commit
+      sig { params(state: GitState).returns(T::Boolean) }
+      def from?(state)
+        state.clean? && @value.end_with?("+#{state.sha}")
+      end
+
       # @return [Array] the members that constitute identity
       sig { override.returns(T::Array[T.anything]) }
       def equality_members
