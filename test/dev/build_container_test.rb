@@ -817,6 +817,20 @@ class BuildContainerTest < Minitest::Test
     labels.all? { |key, value| engine.runs.last.each_cons(2).include?(["--label", "#{key}=#{value}"]) }
   end
 
+  test "create_service_container widens the pending-signal ulimit like a one-shot run (Rosetta pend_signal aborts)" do
+    Given "a recording engine"
+    engine = FakeContainerEngine.new
+
+    When "creating the service container"
+    build_container(engine: engine).create_service_container(
+      "dev-x", "img:tag", project_root: @checkout, volumes: [],
+    )
+
+    Then "the detached run carries the widened sigpending bucket — every build execs into this container"
+    run = engine.runs.last
+    run.each_cons(2).include?(["--ulimit", "sigpending=1000000"])
+  end
+
   test "create_service_container marks the container as inside, so every later docker exec inherits it" do
     Given "a recording engine"
     engine = FakeContainerEngine.new

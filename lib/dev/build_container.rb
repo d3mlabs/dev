@@ -113,8 +113,9 @@ module Dev
     # a 24GB VM). The bursts are transient — the queue drains in milliseconds
     # once a suspension completes — so a wide bucket absorbs them. The limit is
     # a cap, not a reservation: ~80 bytes of kernel memory per actually-queued
-    # signal, worst case ~80MB, nothing at rest. Applied to every build/prewarm
-    # run; harmless on native hosts.
+    # signal, worst case ~80MB, nothing at rest. Applied to every container
+    # dev runs — one-shot runs and the persisted service container alike;
+    # harmless on native hosts.
     SIGPENDING_ULIMIT = ["--ulimit", "sigpending=1000000"].freeze
 
     # Where the container's data root is mounted in every container dev
@@ -858,6 +859,13 @@ module Dev
     # every fork — the build's, the runner's — failed with EAGAIN
     # (satisfactory-mod-base run 42056469331). An init reaps them.
     #
+    # The sigpending ulimit is the one a one-shot run carries
+    # (SIGPENDING_ULIMIT): rlimits are per container, and every build on a
+    # persisted image execs into this one, so a service container without it
+    # puts UBT back under the RAM-scaled default — the Rosetta signal storm
+    # and the zombie deadlock it leaves (snappy, 2026-11-28: the log stops at
+    # "Building N action(s) started", a defunct clang++ under an idle dotnet).
+    #
     # @param one_shot [Boolean] `--rm`: the container goes when it stops
     sig do
       params(name: String, image_tag: String, project_root: Pathname, volumes: T::Array[String], one_shot: T::Boolean).void
@@ -866,6 +874,7 @@ module Dev
       env = container_env({})
       args = [
         "run", "-d", "--init", *(one_shot ? ["--rm"] : []), "--name", name,
+        *SIGPENDING_ULIMIT,
         *self.class.label_flags(image_tag, project_root),
         *data_root_flags,
         *checkout_flags(project_root),
