@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "dev/actions_job_context"
 require "dev/enrolled_runner_lookup"
 require "dev/settings"
 require_relative "flag"
@@ -32,16 +33,20 @@ module Dev
     # 5. Otherwise the verb leaves the machine: to the label `lifecycle.runner`
     #    names (`dev config set`, a standing `--runner`), else to the repo's
     #    enrolled runner when GitHub lists one online, else to the local
-    #    container — the degenerate runner, last.
+    #    container — the degenerate runner, last. Inside an Actions job
+    #    the two runner rows are not read: a job never dispatches a job,
+    #    so the job's host runs the verb in the project's container of the
+    #    image (the one host left), and GitHub is not asked about runners
+    #    with the job's identity, which may not be allowed to list them.
     #
     # The same rule CommandRunner places a project command by, read for a
     # verb: the verb never enters a container itself — its seam is a port in
     # this process — so a non-native image is not "run it in a container"
     # but "run the verb where the image is". Whether the host chosen can
     # carry the verb from here is the transport's to refuse
-    # (Transport#assert_ready!): a verb already inside an Actions job never
-    # leaves for a runner, and the Actions transport is the one that says
-    # so.
+    # (Transport#assert_ready!): `--runner` named from inside an Actions
+    # job still resolves to the runner, and the Actions transport is the
+    # one that says no.
     class DispatchResolver
       extend T::Sig
 
@@ -69,19 +74,22 @@ module Dev
       # @param remotes [RemoteDispatches] builds the dispatch for a host chosen here
       # @param enrolled [EnrolledRunnerLookup] whether the repo's enrolled runner is online
       # @param settings [Settings] the standing `lifecycle.runner`
+      # @param inside_job [Boolean] whether this dev runs inside an Actions job
       sig do
         params(
           host_rule: HostRule,
           remotes: RemoteDispatches,
           enrolled: EnrolledRunnerLookup,
           settings: Settings,
+          inside_job: T::Boolean,
         ).void
       end
-      def initialize(host_rule:, remotes:, enrolled: EnrolledRunnerLookup.new, settings: Settings.new)
+      def initialize(host_rule:, remotes:, enrolled: EnrolledRunnerLookup.new, settings: Settings.new, inside_job: ActionsJobContext.inside?)
         @host_rule = host_rule
         @remotes = remotes
         @enrolled = enrolled
         @settings = settings
+        @inside_job = inside_job
       end
 
       # Where a verb over a build placed at +placement+ executes.
@@ -124,10 +132,12 @@ module Dev
       # @param image [EnvironmentImage] the build's environment
       # @return [Dispatch]
       # @raise [HostRule::ContainerDriftError]
+      # @raise [RunnerRegistry::QueryError] outside a job, when GitHub cannot say whether the enrolled runner is online
       sig { params(image: EnvironmentImage).returns(Dispatch) }
       def resolve_image(image)
         @host_rule.assert_container_is!(image) if @host_rule.inside_container?
         return Dispatch::Native.new unless @host_rule.enters_container?(image)
+        return @remotes.local_container(image) if @inside_job
 
         label = @settings.lifecycle_runner || @enrolled.available&.label
         label ? @remotes.actions_runner(label) : @remotes.local_container(image)

@@ -877,10 +877,11 @@ When a verb runs, for the selected build:
 | `host` | any | **native** |
 | image *I* | `--container` | **remote** to the project's container of *I*, even on a host that could build natively |
 | image *I* | provisioned from *I* (the box, a hosted runner), or inside *I*'s container | **native** |
+| image *I* | neither; inside an Actions job | **remote** to the project's **container** of *I* — the two runner rows below are not read, and GitHub is not asked about runners with the job's identity |
 | image *I* | neither; `lifecycle.runner` set | **remote** to that label |
 | image *I* | neither; the repo's enrolled runner online | **remote** to the enrolled runner |
 | image *I* | neither; nothing standing | **remote** to the project's **container** of *I*. The container is brought up by `dev up`; a verb that reaches for it while the engine is down is refused before anything is pushed. |
-| any | inside an Actions job, and the row above is a runner | refused: a job never dispatches a job |
+| any | inside an Actions job, and `--runner` named one | refused: a job never dispatches a job |
 
 **The enrolled runner** is what bare `dev runner register` makes: a runner
 at the repo's scope carrying the repo's name as label. It is available
@@ -970,13 +971,16 @@ the build: from a runner, as the workflow artifact the job uploaded; from
 the container on a Mac, by `docker cp`. On a Linux host the container's
 data root is the host's, so the artifact is already there.
 
-**A verb inside an Actions job never dispatches to a runner.** A runner
-that finds itself not to be the build's environment is misprovisioned,
-and the runner transport says so — naming the runner it would have left
-for — rather than dispatching onto itself or between two runners
-forever. The container is not a runner: a job that reaches for the
-project's container of its image runs there, over the job's own checkout
-mounted, the way `dev up` already installs that container's dependencies.
+**A verb inside an Actions job never dispatches to a runner.** The
+resolver does not read `lifecycle.runner` or look the enrolled runner up
+from inside a job — the job's identity may not even be allowed to list
+the repo's runners — so a job on a host not provisioned from the image
+runs the verb in the project's container of it, over the job's own
+checkout mounted, the way `dev up` already installs that container's
+dependencies. Only `--runner` named from inside a job still resolves to
+a runner, and the runner transport refuses it — naming the runner it
+would have left for — rather than dispatching onto itself or between two
+runners forever.
 
 ### The sync step
 
