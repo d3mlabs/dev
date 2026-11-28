@@ -26,6 +26,15 @@ and moves `~/.dev` into it (except `state`). A root you cannot write
 belongs to another identity; dev names the fix (`usermod -aG dev <user>`
 and a new login) and never re-owns it.
 
+What dev itself writes is group-writable (a `002` umask). What a tool dev
+spawns writes follows the tool — `cp -a` keeps its source's modes, a
+toolchain its own umask — and only the owner can change a mode, so where
+a tool writes into the root for dev, dev opens the result to the group
+afterwards, as the writer: a build's stage after the builder returns
+([`dev build`](lifecycle.md#dev-build)). An entry left without the
+group's write bit is reported, with its owner and mode, by the next user
+who has to remove it.
+
 Everything in the store embeds absolute paths — Unreal's build state is
 warm only at the path it was compiled at, venvs record theirs — so one
 tree must read the same from every account that builds on the host.
@@ -44,7 +53,7 @@ Design notes:
 | `venv/<project>/<host\|container>/<keg>/` | Project venvs |
 | `cache/<sha256>` | Content-addressed downloads (tarballs, mod archives) |
 | `tool-caches/<tool>/` | Download caches handed to bundler, brew and pip |
-| `artifacts/<project>/<build>/` | `install/`, the archive, and `build-id.json` from `dev build` / `dev package` |
+| `artifacts/<project>/<build>/` | `stage/`, the archive, and `build-id.json` from `dev build` / `dev package` |
 | `artifacts/<project>/.<channel>/` | A deploy channel's scratch |
 | `artifacts/<project>/.releases/v<version>/` | Verified downloads of a release's archives |
 

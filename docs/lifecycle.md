@@ -100,7 +100,20 @@ The stage is fresh before any builder runs: dev empties and recreates
 the directory, so a file a previous build left is gone whether the
 builder is a script or the checkout, and no script needs a `find -delete`
 of its own. A toolchain's incremental state belongs in its build
-directory, not the stage.
+directory, not the stage. A previous stage dev cannot remove stops the
+build before the builder runs, naming the directory that blocks, its
+owner and mode, and the user running dev — never a build on top of it.
+
+In a [shared store](data-root.md#the-linux-root-is-shared) the stage is
+written by whichever user builds — the runner user through a dispatched
+job, you natively — and the next build may be the other's. dev's own
+writes are group-writable; what the builder's tool writes follows the
+tool (`cp -a` keeps its source's modes, a toolchain its umask), and only
+the owner can change a mode. So after the builder returns, dev opens
+what it wrote to the group: directories `g+rwxs`, files `g+rw`, symlinks
+and entries of another owner left as they are. An entry another owner
+left without the group's write bit — a builder that ran a container as
+root — is what the next build's error names.
 
 For one release the stage is also exported as `DEV_INSTALL`, its earlier
 name: a script written for it still builds, and `dev build` (or `dev
